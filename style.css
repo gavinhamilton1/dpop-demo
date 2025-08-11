@@ -89,6 +89,12 @@ button:hover {
     color: #856404;
 }
 
+.info {
+    background-color: #d1ecf1;
+    border: 1px solid #bee5eb;
+    color: #0c5460;
+}
+
 .devices-section {
     margin-top: 40px;
 }

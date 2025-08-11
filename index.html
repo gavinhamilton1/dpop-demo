@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Device Registration Demo</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/crypto.js"></script>
 </head>
 <body>
     <div class="container">
@@ -13,7 +14,8 @@
         <form id="registerForm">
             <div class="form-group">
                 <label for="publicKey">Public Key:</label>
-                <textarea id="publicKey" name="publicKey" placeholder="Enter your public key here..." required></textarea>
+                <textarea id="publicKey" name="publicKey" placeholder="Enter your public key here or generate one..." required></textarea>
+                <button type="button" onclick="generateNewKey()" style="margin-top: 10px;">Generate New Key Pair</button>
             </div>
             <button type="submit">Register Device</button>
         </form>
@@ -28,6 +30,27 @@
     </div>
 
     <script>
+        async function generateNewKey() {
+            try {
+                showResult('Generating new key pair...', 'info');
+                
+                const keyData = await CryptoUtils.generateKeyPairWithId();
+                
+                document.getElementById('publicKey').value = keyData.publicKey;
+                
+                showResult(`New key pair generated! Key ID: ${keyData.keyId}`, 'success');
+                
+                console.log('Generated key pair:', {
+                    keyId: keyData.keyId,
+                    publicKey: keyData.publicKey
+                });
+                
+            } catch (error) {
+                showResult(`Error generating key: ${error.message}`, 'error');
+                console.error('Key generation error:', error);
+            }
+        }
+
         document.getElementById('registerForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
@@ -36,6 +59,12 @@
             
             if (!publicKey) {
                 showResult('Please enter a public key', 'error');
+                return;
+            }
+            
+            // Validate the public key format
+            if (!CryptoUtils.validatePublicKey(publicKey)) {
+                showResult('Invalid public key format. Please generate a new key or enter a valid base64-encoded public key.', 'error');
                 return;
             }
             
@@ -114,7 +143,7 @@
                         deviceDiv.innerHTML = `
                             <div class="device-info">
                                 <strong>Device ID:</strong> ${deviceId}<br>
-                                <strong>Public Key:</strong> ${deviceInfo.public_key.substring(0, 50)}...<br>
+                                <strong>Public Key:</strong> ${CryptoUtils.formatPublicKey(deviceInfo.public_key, 50)}<br>
                                 <strong>Registered:</strong> ${deviceInfo.registered_at}
                             </div>
                             <div class="device-actions">
