@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Registration Demo</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Device Registration Demo</h1>
+        
+        <form id="registerForm">
+            <div class="form-group">
+                <label for="publicKey">Public Key:</label>
+                <textarea id="publicKey" name="publicKey" placeholder="Enter your public key here..." required></textarea>
+            </div>
+            <button type="submit">Register Device</button>
+        </form>
+        
+        <div id="result" class="result"></div>
+        
+        <div class="devices-section">
+            <h2>Registered Devices</h2>
+            <button onclick="loadDevices()">Refresh Devices</button>
+            <div id="devicesList"></div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('registerForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const publicKey = document.getElementById('publicKey').value.trim();
+            const resultDiv = document.getElementById('result');
+            
+            if (!publicKey) {
+                showResult('Please enter a public key', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/register-device', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        public_key: publicKey
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    showResult(`Device registered successfully! Device ID: ${data.device_id}`, 'success');
+                    document.getElementById('publicKey').value = '';
+                    loadDevices(); // Refresh the devices list
+                } else {
+                    // Handle different error types
+                    if (response.status === 409) {
+                        showResult(`Duplicate device: ${data.detail}`, 'warning');
+                    } else {
+                        showResult(`Registration failed: ${data.detail || data.error}`, 'error');
+                    }
+                }
+            } catch (error) {
+                showResult(`Error: ${error.message}`, 'error');
+            }
+        });
+        
+        function showResult(message, type) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = message;
+            resultDiv.className = `result ${type}`;
+            resultDiv.style.display = 'block';
+        }
+        
+        async function removeDevice(deviceId) {
+            if (!confirm(`Are you sure you want to remove device ${deviceId}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/devices/${deviceId}`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showResult(`Device ${deviceId} successfully removed`, 'success');
+                    loadDevices(); // Refresh the devices list
+                } else {
+                    showResult(`Failed to remove device: ${data.detail || data.error}`, 'error');
+                }
+            } catch (error) {
+                showResult(`Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function loadDevices() {
+            try {
+                const response = await fetch('/devices');
+                const data = await response.json();
+                
+                const devicesList = document.getElementById('devicesList');
+                
+                if (data.success && Object.keys(data.devices).length > 0) {
+                    devicesList.innerHTML = '';
+                    Object.entries(data.devices).forEach(([deviceId, deviceInfo]) => {
+                        const deviceDiv = document.createElement('div');
+                        deviceDiv.className = 'device-item';
+                        deviceDiv.innerHTML = `
+                            <div class="device-info">
+                                <strong>Device ID:</strong> ${deviceId}<br>
+                                <strong>Public Key:</strong> ${deviceInfo.public_key.substring(0, 50)}...<br>
+                                <strong>Registered:</strong> ${deviceInfo.registered_at}
+                            </div>
+                            <div class="device-actions">
+                                <button class="btn-danger" onclick="removeDevice('${deviceId}')">Remove</button>
+                            </div>
+                        `;
+                        devicesList.appendChild(deviceDiv);
+                    });
+                } else {
+                    devicesList.innerHTML = '<p>No devices registered yet.</p>';
+                }
+            } catch (error) {
+                console.error('Error loading devices:', error);
+            }
+        }
+        
+        // Load devices on page load
+        loadDevices();
+    </script>
+</body>
+</html> 
