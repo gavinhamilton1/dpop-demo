@@ -3,165 +3,221 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Device Registration Demo</title>
+    <title>Stronghold Session Demo</title>
     <link rel="stylesheet" href="/static/style.css">
-    <script src="/static/crypto.js"></script>
+    <script src="/static/stronghold-crypto.js"></script>
 </head>
 <body>
     <div class="container">
-        <h1>Device Registration Demo</h1>
+        <h1>Stronghold Session Demo</h1>
         
-        <form id="registerForm">
-            <div class="form-group">
-                <label for="publicKey">Public Key:</label>
-                <textarea id="publicKey" name="publicKey" placeholder="Enter your public key here or generate one..." required></textarea>
-                <button type="button" onclick="generateNewKey()" style="margin-top: 10px;">Generate New Key Pair</button>
-            </div>
-            <button type="submit">Register Device</button>
-        </form>
-        
-        <div id="result" class="result"></div>
-        
-        <div class="devices-section">
-            <h2>Registered Devices</h2>
-            <button onclick="loadDevices()">Refresh Devices</button>
-            <div id="devicesList"></div>
+        <!-- Session Creation Section -->
+        <div class="session-section">
+            <h2>Create Stronghold Session</h2>
+            <p>This implements the complete Stronghold-style session creation flow with ECDHE handshake, persistent browser identity, and DPoP authentication.</p>
+            
+            <button id="createSessionBtn" onclick="createSession()" class="btn-primary">Create Stronghold Session</button>
+            
+            <div id="sessionStatus" class="status-display"></div>
         </div>
-    </div>
+
+        <!-- Browser Identity Section -->
+        <div class="session-section">
+            <h2>Browser Identity</h2>
+            <div id="browserIdentityInfo" class="browser-identity-info">
+                <p>Loading browser identity...</p>
+            </div>
+            <button id="clearIdentityBtn" onclick="clearBrowserIdentity()" style="display: none;" class="btn-danger">Clear Browser Identity</button>
+        </div>
+        
+        <!-- Session Info Section -->
+        <div id="sessionInfo" class="session-info" style="display: none;">
+            <h2>Active Session</h2>
+            <div id="sessionDetails"></div>
+            
+            <div class="session-actions">
+                <button onclick="testAuthenticatedRequest()" class="btn-secondary">Test Authenticated Request</button>
+                <button onclick="clearSession()" class="btn-danger">Clear Session</button>
+            </div>
+        </div>
+        
 
     <script>
-        async function generateNewKey() {
-            try {
-                showResult('Generating new key pair...', 'info');
-                
-                const keyData = await CryptoUtils.generateKeyPairWithId();
-                
-                document.getElementById('publicKey').value = keyData.publicKey;
-                
-                showResult(`New key pair generated! Key ID: ${keyData.keyId}`, 'success');
-                
-                console.log('Generated key pair:', {
-                    keyId: keyData.keyId,
-                    publicKey: keyData.publicKey
-                });
-                
-            } catch (error) {
-                showResult(`Error generating key: ${error.message}`, 'error');
-                console.error('Key generation error:', error);
+        // Browser Identity Management
+        function loadBrowserIdentity() {
+            const identityInfo = document.getElementById('browserIdentityInfo');
+            const clearBtn = document.getElementById('clearIdentityBtn');
+            
+            const identity = Stronghold.getBrowserIdentity();
+            
+            if (identity) {
+                identityInfo.innerHTML = `
+                    <div class="identity-detail">
+                        <strong>Browser UUID:</strong> ${identity.browserUuid}
+                    </div>
+                    <div class="identity-detail">
+                        <strong>Fingerprint Hash:</strong> <span class="fingerprint-hash">${identity.fingerprintHash}</span>
+                    </div>
+                    <div class="identity-detail">
+                        <strong>Created:</strong> ${new Date(identity.createdAt).toLocaleString()}
+                    </div>
+                    <div class="identity-detail">
+                        <strong>User Agent:</strong> <span class="user-agent">${identity.fingerprint.full.userAgent}</span>
+                    </div>
+                    <div class="identity-detail">
+                        <strong>Platform:</strong> ${identity.fingerprint.full.platform}
+                    </div>
+                    <div class="identity-detail">
+                        <strong>Screen:</strong> ${identity.fingerprint.full.screen.width}x${identity.fingerprint.full.screen.height}
+                    </div>
+                    <div class="identity-detail">
+                        <strong>Timezone:</strong> ${identity.fingerprint.full.timezone}
+                    </div>
+                `;
+                clearBtn.style.display = 'inline-block';
+            } else {
+                identityInfo.innerHTML = '<p>No browser identity found. One will be created when you create a session.</p>';
+                clearBtn.style.display = 'none';
             }
         }
 
-        document.getElementById('registerForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const publicKey = document.getElementById('publicKey').value.trim();
-            const resultDiv = document.getElementById('result');
-            
-            if (!publicKey) {
-                showResult('Please enter a public key', 'error');
-                return;
+        function clearBrowserIdentity() {
+            if (confirm('Are you sure you want to clear your browser identity? This will remove all stored browser data and require a new identity to be created.')) {
+                Stronghold.clearBrowserIdentity();
+                loadBrowserIdentity();
             }
-            
-            // Validate the public key format
-            if (!CryptoUtils.validatePublicKey(publicKey)) {
-                showResult('Invalid public key format. Please generate a new key or enter a valid base64-encoded public key.', 'error');
-                return;
+        }
+
+        // JWT Decoding function
+        function decodeJWT(token) {
+            try {
+                const parts = token.split('.');
+                if (parts.length !== 3) {
+                    return 'Invalid JWT format';
+                }
+                
+                // Decode header
+                const header = JSON.parse(atob(parts[0] + '='.repeat((4 - parts[0].length % 4) % 4)));
+                
+                // Decode payload
+                const payload = JSON.parse(atob(parts[1] + '='.repeat((4 - parts[1].length % 4) % 4)));
+                
+                // Format timestamps
+                if (payload.iat) {
+                    payload.iat = `${payload.iat} (${new Date(payload.iat * 1000).toLocaleString()})`;
+                }
+                if (payload.exp) {
+                    payload.exp = `${payload.exp} (${new Date(payload.exp * 1000).toLocaleString()})`;
+                }
+                
+                return `Header:\n${JSON.stringify(header, null, 2)}\n\nPayload:\n${JSON.stringify(payload, null, 2)}`;
+            } catch (error) {
+                return `Error decoding JWT: ${error.message}`;
             }
+        }
+
+        // Stronghold Session Management
+        async function createSession() {
+            const btn = document.getElementById('createSessionBtn');
+            const status = document.getElementById('sessionStatus');
             
             try {
-                const response = await fetch('/register-device', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        public_key: publicKey
-                    })
-                });
+                btn.disabled = true;
+                btn.textContent = 'Creating Session...';
+                status.innerHTML = '<div class="info">Starting Stronghold session creation...</div>';
                 
-                const data = await response.json();
+                const session = await Stronghold.createStrongholdSession();
                 
-                if (response.ok && data.success) {
-                    showResult(`Device registered successfully! Device ID: ${data.device_id}`, 'success');
-                    document.getElementById('publicKey').value = '';
-                    loadDevices(); // Refresh the devices list
-                } else {
-                    // Handle different error types
-                    if (response.status === 409) {
-                        showResult(`Duplicate device: ${data.detail}`, 'warning');
-                    } else {
-                        showResult(`Registration failed: ${data.detail || data.error}`, 'error');
-                    }
-                }
+                status.innerHTML = '<div class="success">Stronghold session created successfully!</div>';
+                displaySessionInfo(session);
+                
+                // Refresh browser identity display after session creation
+                loadBrowserIdentity();
+                
             } catch (error) {
-                showResult(`Error: ${error.message}`, 'error');
+                console.error('Session creation failed:', error);
+                status.innerHTML = `<div class="error">Session creation failed: ${error.message}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Create Stronghold Session';
             }
+        }
+        
+        function displaySessionInfo(session) {
+            const sessionInfo = document.getElementById('sessionInfo');
+            const sessionDetails = document.getElementById('sessionDetails');
+            
+            sessionDetails.innerHTML = `
+                <div class="session-detail">
+                    <strong>Session ID:</strong> ${session.sessionId}
+                </div>
+                <div class="session-detail">
+                    <strong>Browser UUID:</strong> ${Stronghold.currentSession.browserUuid}
+                </div>
+                <div class="session-detail">
+                    <strong>Browser Identity Key ID:</strong> ${Stronghold.currentSession.browserIdentityKeyId}
+                </div>
+                <div class="session-detail">
+                    <strong>DPoP Key ID:</strong> ${Stronghold.currentSession.dpopKeyId}
+                </div>
+                <div class="session-detail">
+                    <strong>Session Token:</strong> <span class="token-preview">${session.sessionToken.substring(0, 50)}...</span>
+                </div>
+                <div class="session-detail">
+                    <strong>Complete Session Token:</strong>
+                    <div class="token-full" style="word-break: break-all; font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 10px; border-radius: 4px; margin-top: 5px; max-height: 200px; overflow-y: auto;">
+                        ${session.sessionToken}
+                    </div>
+                </div>
+                <div class="session-detail">
+                    <strong>Session Token (Decoded):</strong>
+                    <div class="token-decoded" style="font-family: monospace; font-size: 12px; background: #f0f8ff; padding: 10px; border-radius: 4px; margin-top: 5px; max-height: 300px; overflow-y: auto; border-left: 3px solid #007acc;">
+                        ${decodeJWT(session.sessionToken)}
+                    </div>
+                </div>
+            `;
+            
+            sessionInfo.style.display = 'block';
+        }
+        
+        async function testAuthenticatedRequest() {
+            const status = document.getElementById('sessionStatus');
+            
+            try {
+                status.innerHTML = '<div class="info">Testing authenticated request...</div>';
+                
+                const response = await Stronghold.makeAuthenticatedRequest(
+                    'POST',
+                    '/verify-dpop',
+                    { message: 'Hello from Stronghold session!' }
+                );
+                
+                status.innerHTML = `
+                    <div class="success">
+                        Authenticated request successful!<br>
+                        Session ID: ${response.session_id}<br>
+                        Browser UUID: ${response.browser_uuid}<br>
+                        Decrypted Payload: ${response.decrypted_payload}
+                    </div>
+                `;
+                
+            } catch (error) {
+                console.error('Authenticated request failed:', error);
+                status.innerHTML = `<div class="error">Authenticated request failed: ${error.message}</div>`;
+            }
+        }
+        
+        function clearSession() {
+            // Clear session state
+            window.location.reload();
+        }
+
+        // Load browser identity when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            loadBrowserIdentity();
         });
         
-        function showResult(message, type) {
-            const resultDiv = document.getElementById('result');
-            resultDiv.textContent = message;
-            resultDiv.className = `result ${type}`;
-            resultDiv.style.display = 'block';
-        }
-        
-        async function removeDevice(deviceId) {
-            if (!confirm(`Are you sure you want to remove device ${deviceId}?`)) {
-                return;
-            }
-            
-            try {
-                const response = await fetch(`/devices/${deviceId}`, {
-                    method: 'DELETE'
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    showResult(`Device ${deviceId} successfully removed`, 'success');
-                    loadDevices(); // Refresh the devices list
-                } else {
-                    showResult(`Failed to remove device: ${data.detail || data.error}`, 'error');
-                }
-            } catch (error) {
-                showResult(`Error: ${error.message}`, 'error');
-            }
-        }
-        
-        async function loadDevices() {
-            try {
-                const response = await fetch('/devices');
-                const data = await response.json();
-                
-                const devicesList = document.getElementById('devicesList');
-                
-                if (data.success && Object.keys(data.devices).length > 0) {
-                    devicesList.innerHTML = '';
-                    Object.entries(data.devices).forEach(([deviceId, deviceInfo]) => {
-                        const deviceDiv = document.createElement('div');
-                        deviceDiv.className = 'device-item';
-                        deviceDiv.innerHTML = `
-                            <div class="device-info">
-                                <strong>Device ID:</strong> ${deviceId}<br>
-                                <strong>Public Key:</strong> ${CryptoUtils.formatPublicKey(deviceInfo.public_key, 50)}<br>
-                                <strong>Registered:</strong> ${deviceInfo.registered_at}
-                            </div>
-                            <div class="device-actions">
-                                <button class="btn-danger" onclick="removeDevice('${deviceId}')">Remove</button>
-                            </div>
-                        `;
-                        devicesList.appendChild(deviceDiv);
-                    });
-                } else {
-                    devicesList.innerHTML = '<p>No devices registered yet.</p>';
-                }
-            } catch (error) {
-                console.error('Error loading devices:', error);
-            }
-        }
-        
-        // Load devices on page load
-        loadDevices();
+
     </script>
 </body>
 </html> 
