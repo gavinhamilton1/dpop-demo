@@ -39,6 +39,19 @@
                 <button onclick="testAuthenticatedRequest()" class="btn-secondary">Test Authenticated Request</button>
                 <button onclick="clearSession()" class="btn-danger">Clear Session</button>
             </div>
+            
+            <!-- Request/Response Details Section -->
+            <div id="requestResponseDetails" class="request-response-details" style="display: none; margin-top: 20px;">
+                <h3>Request/Response Details</h3>
+                <div class="detail-section">
+                    <h4>HTTP Request</h4>
+                    <div id="requestDetails" class="detail-content"></div>
+                </div>
+                <div class="detail-section">
+                    <h4>HTTP Response</h4>
+                    <div id="responseDetails" class="detail-content"></div>
+                </div>
+            </div>
         </div>
         
 
@@ -164,12 +177,6 @@
                     <strong>Session Token:</strong> <span class="token-preview">${session.sessionToken.substring(0, 50)}...</span>
                 </div>
                 <div class="session-detail">
-                    <strong>Complete Session Token:</strong>
-                    <div class="token-full" style="word-break: break-all; font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 10px; border-radius: 4px; margin-top: 5px; max-height: 200px; overflow-y: auto;">
-                        ${session.sessionToken}
-                    </div>
-                </div>
-                <div class="session-detail">
                     <strong>Session Token (Decoded):</strong>
                     <div class="token-decoded" style="font-family: monospace; font-size: 12px; background: #f0f8ff; padding: 10px; border-radius: 4px; margin-top: 5px; max-height: 300px; overflow-y: auto; border-left: 3px solid #007acc;">
                         ${decodeJWT(session.sessionToken)}
@@ -182,9 +189,29 @@
         
         async function testAuthenticatedRequest() {
             const status = document.getElementById('sessionStatus');
+            const requestResponseDetails = document.getElementById('requestResponseDetails');
+            const requestDetails = document.getElementById('requestDetails');
+            const responseDetails = document.getElementById('responseDetails');
             
             try {
                 status.innerHTML = '<div class="info">Testing authenticated request...</div>';
+                requestResponseDetails.style.display = 'none';
+                
+                // Capture request details before making the request
+                const requestInfo = {
+                    method: 'POST',
+                    url: '/verify-dpop',
+                    headers: {
+                        'Authorization': `DPoP ${Stronghold.currentSession.sessionToken}`,
+                        'DPoP': 'Will be generated',
+                        'Content-Type': 'application/json'
+                    },
+                    body: {
+                        encrypted_payload: 'Will be generated',
+                        browser_fingerprint_hash: Stronghold.getBrowserIdentity()?.fingerprintHash,
+                        dpop_nonce: Stronghold.currentSession.dpopNonce
+                    }
+                };
                 
                 const response = await Stronghold.makeAuthenticatedRequest(
                     'POST',
@@ -192,6 +219,7 @@
                     { message: 'Hello from Stronghold session!' }
                 );
                 
+                // Display success status
                 status.innerHTML = `
                     <div class="success">
                         Authenticated request successful!<br>
@@ -201,9 +229,54 @@
                     </div>
                 `;
                 
+                // Display detailed request/response information
+                requestDetails.innerHTML = `
+                    <div style="font-family: monospace; font-size: 12px; background: #f8f9fa; padding: 10px; border-radius: 4px; border-left: 3px solid #007acc;">
+                        <strong>${requestInfo.method} ${requestInfo.url}</strong><br><br>
+                        <strong>Headers:</strong><br>
+                        ${Object.entries(requestInfo.headers).map(([key, value]) => `${key}: ${key === 'DPoP' ? '[DPoP Proof JWT]' : value}`).join('<br>')}<br><br>
+                        <strong>Body:</strong><br>
+                        ${JSON.stringify(requestInfo.body, null, 2)}
+                    </div>
+                `;
+                
+                responseDetails.innerHTML = `
+                    <div style="font-family: monospace; font-size: 12px; background: #f0f8ff; padding: 10px; border-radius: 4px; border-left: 3px solid #28a745;">
+                        <strong>Status: 200 OK</strong><br><br>
+                        <strong>Response Body:</strong><br>
+                        ${JSON.stringify(response, null, 2)}
+                    </div>
+                `;
+                
+                requestResponseDetails.style.display = 'block';
+                
             } catch (error) {
                 console.error('Authenticated request failed:', error);
                 status.innerHTML = `<div class="error">Authenticated request failed: ${error.message}</div>`;
+                
+                // Try to extract error details
+                let errorDetails = error.message;
+                if (error.message.includes('Server response error:')) {
+                    try {
+                        const errorMatch = error.message.match(/Server response error: (.+)/);
+                        if (errorMatch) {
+                            const errorResponse = JSON.parse(errorMatch[1]);
+                            errorDetails = JSON.stringify(errorResponse, null, 2);
+                        }
+                    } catch (e) {
+                        // If parsing fails, use the original error message
+                    }
+                }
+                
+                responseDetails.innerHTML = `
+                    <div style="font-family: monospace; font-size: 12px; background: #fff3cd; padding: 10px; border-radius: 4px; border-left: 3px solid #ffc107;">
+                        <strong>Status: Error</strong><br><br>
+                        <strong>Error Details:</strong><br>
+                        ${errorDetails}
+                    </div>
+                `;
+                
+                requestResponseDetails.style.display = 'block';
             }
         }
         
