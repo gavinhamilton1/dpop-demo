@@ -84,21 +84,15 @@ async function generateBrowserIdentityKey() {
     try {
         console.log('generateBrowserIdentityKey: Starting...');
         
-        // Get or generate persistent browser UUID and fingerprint
+        // Get or generate persistent browser UUID
         let browserUuid = localStorage.getItem('stronghold_browser_uuid');
-        let browserFingerprint = localStorage.getItem('stronghold_browser_fingerprint');
         
-        if (!browserUuid || !browserFingerprint) {
+        if (!browserUuid) {
             browserUuid = crypto.randomUUID();
-            const fingerprint = await generateBrowserFingerprint();
-            browserFingerprint = JSON.stringify(fingerprint);
-            
             localStorage.setItem('stronghold_browser_uuid', browserUuid);
-            localStorage.setItem('stronghold_browser_fingerprint', browserFingerprint);
-            console.log('generateBrowserIdentityKey: Generated new persistent browser identity:', { browserUuid, fingerprint: fingerprint.hash });
+            console.log('generateBrowserIdentityKey: Generated new persistent browser UUID:', browserUuid);
         } else {
-            const fingerprint = JSON.parse(browserFingerprint);
-            console.log('generateBrowserIdentityKey: Using existing persistent browser identity:', { browserUuid, fingerprint: fingerprint.hash });
+            console.log('generateBrowserIdentityKey: Using existing persistent browser UUID:', browserUuid);
         }
         
         // Check if we already have a browser identity key in memory
@@ -375,11 +369,10 @@ async function decryptWithSessionKey(sessionKey, encryptedData) {
  * @param {string} dpopKeyId 
  * @param {string} method 
  * @param {string} url 
- * @param {string} accessToken 
  * @param {string} nonce 
  * @returns {Promise<string>} DPoP proof JWT
  */
-async function createDPoPProof(dpopKeyId, method, url, accessToken, nonce = null) {
+async function createDPoPProof(dpopKeyId, method, url, nonce = null) {
     try {
         console.log('createDPoPProof called with:', { dpopKeyId, method, url, nonce });
         
@@ -410,14 +403,11 @@ async function createDPoPProof(dpopKeyId, method, url, accessToken, nonce = null
         console.log('Date.now() / 1000:', dateNowSeconds, 'seconds');
         console.log('Current Date object:', new Date().toISOString());
         
-        const tokenHash = await sha256(accessToken);
-        console.log('Access token:', accessToken);
-        console.log('Calculated token hash:', tokenHash);
+        // No access token hash needed - using session-based authentication
         
         const payload = {
             jti: crypto.randomUUID(),
             iat: currentTime,
-            ath: tokenHash,
             htm: method,
             htu: url
         };
@@ -580,7 +570,7 @@ async function createStrongholdSession() {
         
         // Step 6: Prepare registration payload
         console.log('6. Preparing registration payload...');
-        const browserIdentityData = Stronghold.getBrowserIdentity();
+        const browserIdentityData = await Stronghold.getBrowserIdentity();
         // Get or generate browser UUID
         const storedBrowserUuid = loadBrowserUuidFromStorage();
         const browserUuid = storedBrowserUuid || crypto.randomUUID();
@@ -635,16 +625,9 @@ async function createStrongholdSession() {
             console.log('Session mapping (would be in HTTP-only cookie):', registrationData.session_mapping);
         }
         
-        // Step 9: Decrypt session token
-        console.log('9. Decrypting session token...');
-        console.log('Encrypted session token:', registrationData.encrypted_session_token.substring(0, 100) + '...');
-        const sessionToken = await decryptWithSessionKey(sessionEncryptionKey, registrationData.encrypted_session_token);
-        console.log('Decrypted session token:', sessionToken.substring(0, 100) + '...');
-        
         // Store session information in memory only
         currentSession = {
             sessionId: registrationData.session_id,
-            sessionToken: sessionToken,
             browserIdentityKeyId: browserIdentity.keyId,
             dpopKeyId: dpopKey.keyId,
             browserUuid: registrationPayload.browser_uuid,
@@ -653,8 +636,7 @@ async function createStrongholdSession() {
         
         console.log('Stronghold session created successfully!');
         return {
-            sessionId: registrationData.session_id,
-            sessionToken: sessionToken
+            sessionId: registrationData.session_id
         };
         
     } catch (error) {
@@ -695,7 +677,6 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
             currentSession.dpopKeyId,
             method,
             url,
-            currentSession.sessionToken,
             storedNonce
         );
         
@@ -705,27 +686,24 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
         const requestOptions = {
             method: method,
             headers: {
-                'Authorization': `DPoP ${currentSession.sessionToken}`,
                 'DPoP': dpopProof,
                 'Content-Type': 'application/json'
-            }
+            },
+            credentials: 'include'  // Include cookies for session management
         };
         
         // Get current browser fingerprint hash
-        const browserIdentityData = Stronghold.getBrowserIdentity();
+        const browserIdentityData = await Stronghold.getBrowserIdentity();
         
         // Add encrypted payload if provided
         let encryptedPayload = null;
         if (payload) {
             encryptedPayload = await encryptWithSessionKey(sessionEncryptionKey, JSON.stringify(payload));
             requestOptions.body = JSON.stringify({
-                encrypted_payload: encryptedPayload,
-                browser_fingerprint_hash: browserIdentityData.fingerprintHash
+                encrypted_payload: encryptedPayload
             });
         } else {
-            requestOptions.body = JSON.stringify({
-                browser_fingerprint_hash: browserIdentityData.fingerprintHash
-            });
+            requestOptions.body = JSON.stringify({});
         }
         
         // Add DPoP nonce to headers if available
@@ -746,11 +724,11 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
         
         const responseData = await response.json();
         
-        // Store new nonce if provided in response headers
-        // In a real implementation, this would come from response.headers.get('DPoP-Nonce')
-        if (responseData._dpop_nonce_header) {
-            console.log('Updating session nonce from:', currentSession.dpopNonce, 'to:', responseData._dpop_nonce_header);
-            currentSession.dpopNonce = responseData._dpop_nonce_header;
+        // Store new nonce from response headers as per RFC 9449
+        const dpopNonce = response.headers.get('DPoP-Nonce');
+        if (dpopNonce) {
+            console.log('Updating session nonce from:', currentSession.dpopNonce, 'to:', dpopNonce);
+            currentSession.dpopNonce = dpopNonce;
         }
         
         // Add the encrypted payload that was sent to the response for display purposes
@@ -758,17 +736,22 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
             responseData.encrypted_payload_sent = encryptedPayload;
             responseData.plaintext_payload_sent = JSON.stringify(payload, null, 2);
             
-            // Decrypt the received payload locally for display
-            if (responseData.encrypted_payload_received) {
+            // Decrypt the server response payload locally for display
+            if (responseData.encrypted_payload) {
                 try {
-                    const decryptedPayload = await decryptWithSessionKey(sessionEncryptionKey, responseData.encrypted_payload_received);
+                    const decryptedPayload = await decryptWithSessionKey(sessionEncryptionKey, responseData.encrypted_payload);
                     responseData.decrypted_payload = decryptedPayload;
                 } catch (error) {
-                    console.error('Error decrypting received payload:', error);
-                    responseData.decrypted_payload = 'Error decrypting payload';
+                    console.error('Error decrypting server payload:', error);
+                    responseData.decrypted_payload = 'Error decrypting server payload';
                 }
             }
         }
+        
+        // Add response headers for display purposes
+        responseData.response_headers = {
+            'DPoP-Nonce': dpopNonce || 'Not set'
+        };
         
         return responseData;
         
@@ -960,16 +943,16 @@ function base64ToArrayBuffer(base64) {
 }
 
 // Browser identity management functions
-function getBrowserIdentity() {
+async function getBrowserIdentity() {
     const browserUuid = localStorage.getItem('stronghold_browser_uuid');
-    const browserFingerprint = localStorage.getItem('stronghold_browser_fingerprint');
     
-    if (!browserUuid || !browserFingerprint) {
+    if (!browserUuid) {
         return null;
     }
     
     try {
-        const fingerprint = JSON.parse(browserFingerprint);
+        // Generate fingerprint fresh each time
+        const fingerprint = await generateBrowserFingerprint();
         return {
             browserUuid: browserUuid,
             fingerprint: fingerprint,
@@ -977,14 +960,13 @@ function getBrowserIdentity() {
             createdAt: fingerprint.full.timestamp
         };
     } catch (error) {
-        console.error('Error parsing browser fingerprint:', error);
+        console.error('Error generating browser fingerprint:', error);
         return null;
     }
 }
 
 function clearBrowserIdentity() {
     localStorage.removeItem('stronghold_browser_uuid');
-    localStorage.removeItem('stronghold_browser_fingerprint');
     
     // Also clear any in-memory browser identity keys
     const browserIdentityKeys = Array.from(privateKeyHandleStore.keys()).filter(keyId => keyId.startsWith('browser_identity_'));
@@ -1031,10 +1013,11 @@ function clearBrowserUuidFromStorage() {
     }
 }
 
-function getSecurityAudit() {
+async function getSecurityAudit() {
+    const browserIdentity = await getBrowserIdentity();
     const audit = {
         sessionExists: !!currentSession,
-        browserIdentityExists: !!getBrowserIdentity(),
+        browserIdentityExists: !!browserIdentity,
         sessionMappingExists: !!getSessionMapping(),
         sessionTokenValid: false,
         securityFeatures: {
@@ -1144,34 +1127,52 @@ async function initializeSession() {
                         
                         console.log('Fresh Session Encryption Key derived successfully');
                         
-                        // Step 5: Create a new session token manually for the existing session
-                        console.log('5. Creating new session token for existing session...');
+                        // Step 5: Get a proper session token from the server for the existing session
+                        console.log('5. Getting proper session token from server...');
                         
-                        const browserIdentityData = Stronghold.getBrowserIdentity();
+                        const browserIdentityData = await Stronghold.getBrowserIdentity();
                         
-                        // Create a simple JWT token for the existing session
-                        const sessionTokenPayload = {
-                            session_id: sessionData.session_id,
+                        // Prepare registration payload for the existing session
+                        const registrationPayload = {
+                            handshake_nonce: handshakeData.handshake_nonce,
+                            browser_identity_public_key: await exportPublicKey(browserIdentityKeyPair.publicKey),
+                            dpop_public_key: await exportPublicKey(dpopKeyPair.publicKey),
                             browser_uuid: storedBrowserUuid,
-                            fingerprint_hash: browserIdentityData.fingerprintHash,
-                            jti: crypto.randomUUID(),
-                            iat: Math.floor(Date.now() / 1000),
-                            exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours
+                            browser_fingerprint_hash: browserIdentityData.fingerprintHash
                         };
                         
-                        // For demo purposes, we'll create a simple token
-                        // In production, this would be signed by the server
-                        const sessionToken = btoa(JSON.stringify(sessionTokenPayload));
+                        const encryptedPayload = await encryptWithSessionKey(sessionEncryptionKey, JSON.stringify(registrationPayload));
+                        
+                        // Use the existing session registration endpoint
+                        const tokenResponse = await fetch('/register-session', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                handshake_nonce: handshakeData.handshake_nonce,
+                                browser_identity_public_key: await exportPublicKey(browserIdentityKeyPair.publicKey),
+                                dpop_public_key: await exportPublicKey(dpopKeyPair.publicKey),
+                                browser_uuid: storedBrowserUuid,
+                                browser_fingerprint_hash: browserIdentityData.fingerprintHash,
+                                encrypted_payload: encryptedPayload
+                            })
+                        });
+                        
+                        if (!tokenResponse.ok) {
+                            throw new Error('Failed to get session token: ' + tokenResponse.statusText);
+                        }
+                        
+                        const tokenData = await tokenResponse.json();
                         
                         // Step 6: Create new session object
                         console.log('6. Creating new session object...');
                         currentSession = {
                             sessionId: sessionData.session_id,
-                            sessionToken: sessionToken,
                             browserUuid: storedBrowserUuid,
                             browserIdentityKeyId: browserIdentityKeyId,
                             dpopKeyId: dpopKeyId,
-                            dpopNonce: handshakeData.handshake_nonce
+                            dpopNonce: tokenData.initial_dpop_nonce
                         };
                         
                         console.log('Session fully restored with fresh ECDHE handshake and SEK');

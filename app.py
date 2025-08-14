@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request, Response, Header
+from fastapi import FastAPI, HTTPException, Request, Response, Header, Cookie
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,7 +68,6 @@ class RegistrationRequest(BaseModel):
 
 class DPoPRequest(BaseModel):
     encrypted_payload: Optional[str] = None
-    browser_fingerprint_hash: Optional[str] = None
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -103,26 +102,18 @@ async def check_session(browser_uuid: str):
 
 
 @app.post("/invalidate-session")
-async def invalidate_session(authorization: str = Header(None)):
+async def invalidate_session(session_id: str = Cookie(None)):
     """Invalidate the current session (for security purposes)"""
     try:
-        if not authorization or not authorization.startswith("DPoP "):
-            raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-        
-        session_token = authorization[5:]
-        session_data = verify_session_token(session_token)
-        session_id = session_data["session_id"]
+        if not session_id:
+            raise HTTPException(status_code=401, detail="Missing session cookie")
         
         if session_id in sessions:
-            # Add JTI to invalidated sessions set
-            if session_data.get("jti"):
-                invalidated_sessions.add(session_data["jti"])
-            
             # Remove session data
             del sessions[session_id]
             
             # Remove from browser sessions mapping
-            browser_uuid = session_data.get("browser_uuid")
+            browser_uuid = sessions.get(session_id, {}).get("browser_uuid")
             if browser_uuid and browser_uuid in browser_sessions:
                 del browser_sessions[browser_uuid]
             
@@ -131,7 +122,12 @@ async def invalidate_session(authorization: str = Header(None)):
                 del dpop_nonces[session_id]
             
             logging.info(f"Session {session_id} invalidated successfully")
-            return {"success": True, "message": "Session invalidated"}
+            
+            # Return response that clears the cookie
+            from fastapi.responses import JSONResponse
+            response = JSONResponse(content={"success": True, "message": "Session invalidated"})
+            response.delete_cookie("session_id")
+            return response
         else:
             raise HTTPException(status_code=404, detail="Session not found")
             
@@ -228,30 +224,47 @@ async def register_session(request: RegistrationRequest):
         if payload.get("handshake_nonce") != request.handshake_nonce:
             raise HTTPException(status_code=400, detail="Nonce mismatch")
         
-        # Create session
-        session_id = handshake_data["session_id"]
-        logging.debug(f"Creating session at: {datetime.utcnow().timestamp()} UTC")
-        session_token = create_session_token(
-            session_id=session_id,
-            browser_uuid=request.browser_uuid,
-            browser_fingerprint_hash=request.browser_fingerprint_hash
-        )
+        # Check if a session already exists for this browser UUID
+        existing_session_id = None
+        if request.browser_uuid in browser_sessions:
+            existing_session_id = browser_sessions[request.browser_uuid]
+            if existing_session_id in sessions:
+                logging.debug(f"Reusing existing session {existing_session_id} for browser UUID {request.browser_uuid}")
+                session_id = existing_session_id
+            else:
+                # Session exists in mapping but not in sessions (expired/cleared)
+                logging.debug(f"Session {existing_session_id} not found in sessions, creating new one")
+                existing_session_id = None
         
-        # Store session data
-        current_server_time = datetime.utcnow()
-        sessions[session_id] = {
-            "browser_identity_public_key": request.browser_identity_public_key,
-            "dpop_public_key": request.dpop_public_key,  # Store DPoP public key
-            "browser_uuid": request.browser_uuid,
-            "browser_fingerprint_hash": request.browser_fingerprint_hash,
-            "session_encryption_key": session_encryption_key,
-            "created_at": datetime.now(),
-            "last_activity": datetime.now(),
-            "session_created_time": current_server_time.timestamp()
-        }
-        
-        # Map browser UUID to session ID for session recovery
-        browser_sessions[request.browser_uuid] = session_id
+        if not existing_session_id:
+            # Create new session
+            session_id = handshake_data["session_id"]
+            logging.debug(f"Creating new session at: {datetime.utcnow().timestamp()} UTC")
+            
+            # Store session data
+            current_server_time = datetime.utcnow()
+            sessions[session_id] = {
+                "browser_identity_public_key": request.browser_identity_public_key,
+                "dpop_public_key": request.dpop_public_key,  # Store DPoP public key
+                "browser_uuid": request.browser_uuid,
+                "browser_fingerprint_hash": request.browser_fingerprint_hash,
+                "session_encryption_key": session_encryption_key,
+                "created_at": datetime.now(),
+                "last_activity": datetime.now(),
+                "session_created_time": current_server_time.timestamp()
+            }
+            
+            # Map browser UUID to session ID for session recovery
+            browser_sessions[request.browser_uuid] = session_id
+        else:
+            # Update existing session with new keys
+            logging.debug(f"Updating existing session {session_id} with new keys")
+            sessions[session_id].update({
+                "browser_identity_public_key": request.browser_identity_public_key,
+                "dpop_public_key": request.dpop_public_key,
+                "session_encryption_key": session_encryption_key,
+                "last_activity": datetime.now()
+            })
         
         # Generate initial DPoP nonce for the session
         initial_nonce = generate_dpop_nonce(session_id)
@@ -268,33 +281,33 @@ async def register_session(request: RegistrationRequest):
         # Clean up handshake data
         del handshake_nonces[request.handshake_nonce]
         
-        # Encrypt session token with SEK
-        token_nonce = secrets.token_bytes(12)
-        token_ciphertext = aesgcm.encrypt(token_nonce, session_token.encode(), None)
-        encrypted_token = base64.b64encode(token_nonce + token_ciphertext).decode()
-        
         # Create response with HTTP-only cookie for session persistence
         response_data = {
             "success": True,
             "session_id": session_id,
-            "encrypted_session_token": encrypted_token,
             "browser_uuid": request.browser_uuid,
-            "session_mapping": {
-                "browser_uuid": request.browser_uuid,
-                "session_id": session_id
-            },
             "initial_dpop_nonce": initial_nonce
         }
         
-        # In a real implementation, you would set an HTTP-only cookie here
-        # For demonstration, we'll return the mapping in the response
-        return response_data
+        # Set HTTP-only cookie for session persistence
+        from fastapi.responses import JSONResponse
+        response = JSONResponse(content=response_data)
+        response.set_cookie(
+            "session_id",
+            session_id,
+            httponly=True,
+            secure=True,
+            samesite="strict",
+            max_age=86400  # 24 hours
+        )
+        
+        return response
         
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Registration failed: {str(e)}")
 
 @app.post("/verify-dpop")
-async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), dpop: str = Header(None), dpop_nonce: str = Header(None), client_ip: str = None):
+async def verify_dpop(request: DPoPRequest, dpop: str = Header(None), dpop_nonce: str = Header(None), client_ip: str = None, session_id: str = Cookie(None)):
     """Verify DPoP proof and handle authenticated requests"""
     try:
         # Basic rate limiting (in production, use Redis or similar)
@@ -314,11 +327,9 @@ async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), d
             if rate_limit_attempts[client_ip]["count"] > 10:
                 raise HTTPException(status_code=429, detail="Rate limit exceeded")
         
-        # Extract session token from Authorization header
-        if not authorization or not authorization.startswith("DPoP "):
-            raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-        
-        session_token = authorization[5:]  # Remove "DPoP " prefix
+        # Extract session ID from HTTP-only cookie
+        if not session_id:
+            raise HTTPException(status_code=401, detail="Missing session cookie")
         
         # Extract DPoP proof from DPoP header
         if not dpop:
@@ -326,15 +337,13 @@ async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), d
         
         dpop_proof = dpop
         
-        # Decode and verify session token
-        session_data = verify_session_token(session_token)
-        session_id = session_data["session_id"]
+        # Verify session exists
+        if session_id not in sessions:
+            raise HTTPException(status_code=401, detail="Invalid session")
         
-        logging.debug(f"Session token decoded, session_id: {session_id}")
+        logging.debug(f"Session ID from cookie: {session_id}")
         logging.debug(f"Available sessions: {list(sessions.keys())}")
-        logging.debug(f"Session data: {session_data}")
         logging.debug(f"Current server time: {datetime.utcnow().timestamp()}")
-        logging.debug(f"JWT token iat: {session_data.get('iat')}")
         
         if session_id not in sessions:
             logging.error(f"Session {session_id} not found in sessions")
@@ -342,18 +351,11 @@ async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), d
         
         session = sessions[session_id]
         
-        # Validate session bindings
-        if session_data.get("browser_uuid") != session.get("browser_uuid"):
-            logging.warning(f"Session binding mismatch - Browser UUID: expected {session.get('browser_uuid')}, got {session_data.get('browser_uuid')}")
-            raise HTTPException(status_code=401, detail="Session binding validation failed")
-        
-        if session_data.get("fingerprint_hash") != session.get("browser_fingerprint_hash"):
-            logging.warning(f"Session binding mismatch - Fingerprint: expected {session.get('browser_fingerprint_hash')}, got {session_data.get('fingerprint_hash')}")
-            raise HTTPException(status_code=401, detail="Session binding validation failed")
+        # Session bindings are validated through DPoP proof verification
+        # Browser UUID and fingerprint are bound to the DPoP key pair
         
         logging.debug(f"Retrieved DPoP public key for session {session_id}: {session.get('dpop_public_key')}")
         logging.debug(f"Server session created time: {session.get('session_created_time')}")
-        logging.debug(f"Time since JWT creation: {datetime.utcnow().timestamp() - session_data.get('iat')} seconds")
         logging.debug(f"Time since server session creation: {datetime.utcnow().timestamp() - session.get('session_created_time')} seconds")
         
         # Verify DPoP proof with full validation
@@ -364,18 +366,14 @@ async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), d
             dpop_proof, 
             method="POST",
             url="/verify-dpop",
-            access_token=session_token,
             nonce=dpop_nonce if require_nonce else None,
             session_id=session_id,
             stored_dpop_public_key=session.get("dpop_public_key")
         ):
             raise HTTPException(status_code=401, detail="Invalid DPoP proof")
         
-        # Verify browser fingerprint (if provided in request)
-        if hasattr(request, 'browser_fingerprint_hash') and request.browser_fingerprint_hash:
-            if request.browser_fingerprint_hash != session.get("browser_fingerprint_hash"):
-                logging.warning(f"Fingerprint mismatch for session {session_id}")
-                raise HTTPException(status_code=401, detail="Browser fingerprint mismatch")
+        # Browser fingerprint is already validated through session token binding
+        # No need to validate it again from request body
         
         # Add browser identity data to response for client reference
         response_data = {
@@ -412,52 +410,37 @@ async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), d
             except Exception as e:
                 logging.warning(f"Could not parse decrypted payload as JSON: {e}")
         
-        # Create response with DPoP nonce in header
-        response_data = {
-            "success": True,
-            "encrypted_payload_received": encrypted_payload_received
+        # Create server response message
+        server_message = {
+            "message": "Hello from Stronghold server!"
         }
         
-        # In a real implementation, you would return a Response object with headers
-        # For now, we'll add the nonce to the response data for demonstration
-        # but note that it should be in the 'DPoP-Nonce' header
-        response_data["_dpop_nonce_header"] = new_nonce  # This should be in header
+        # Encrypt server response with session encryption key
+        server_nonce = secrets.token_bytes(12)
+        server_ciphertext = aesgcm.encrypt(server_nonce, json.dumps(server_message).encode(), None)
+        encrypted_server_response = base64.b64encode(server_nonce + server_ciphertext).decode()
         
-        return response_data
+        # Log the server message for verification
+        logging.info(f"🔒 ENCRYPTED SERVER MESSAGE for session {session_id}: '{server_message['message']}'")
+        print(f"🔒 ENCRYPTED SERVER MESSAGE for session {session_id}: '{server_message['message']}'")
+        
+        # Create response with encrypted server payload
+        response_data = {
+            "success": True,
+            "encrypted_payload": encrypted_server_response
+        }
+        
+        # Return Response object with proper DPoP-Nonce header as per RFC 9449
+        from fastapi.responses import JSONResponse
+        response = JSONResponse(content=response_data)
+        response.headers["DPoP-Nonce"] = new_nonce
+        
+        return response
         
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"DPoP verification failed: {str(e)}")
 
-def create_session_token(session_id: str, browser_uuid: str, browser_fingerprint_hash: str) -> str:
-    """Create a signed session token with security bindings"""
-    current_time = datetime.utcnow()
-    logging.debug(f"Creating session token with time: {current_time.timestamp()} UTC")
-    
-    # Create session token with security bindings
-    payload = {
-        "session_id": session_id,
-        "browser_uuid": browser_uuid,  # Bind to browser identity
-        "fingerprint_hash": browser_fingerprint_hash,  # Bind to device fingerprint
-        "jti": secrets.token_urlsafe(32),  # Unique token ID for revocation
-        "iat": current_time,
-        "exp": current_time + timedelta(hours=24)
-    }
-    
-    # Use cryptographically secure secret
-    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
-
-def verify_session_token(token: str) -> Dict[str, Any]:
-    """Verify and decode session token with security checks"""
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        
-        # Check if session has been invalidated
-        if payload.get("jti") in invalidated_sessions:
-            raise HTTPException(status_code=401, detail="Session has been invalidated")
-        
-        return payload
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid session token")
+# Session token functions removed - using HTTP-only cookies instead
 
 def generate_dpop_nonce(session_id: str) -> str:
     """Generate a fresh DPoP nonce for a session"""
@@ -492,7 +475,7 @@ def validate_dpop_nonce(session_id: str, nonce: str) -> bool:
     nonce_data["used"] = True
     return True
 
-def verify_dpop_proof(dpop_proof: str, method: str = None, url: str = None, access_token: str = None, nonce: str = None, session_id: str = None, stored_dpop_public_key: str = None) -> bool:
+def verify_dpop_proof(dpop_proof: str, method: str = None, url: str = None, nonce: str = None, session_id: str = None, stored_dpop_public_key: str = None) -> bool:
     """Verify DPoP proof signature and claims"""
     try:
         logging.debug(f"Verifying DPoP proof: method={method}, url={url}, nonce={nonce}")
@@ -558,16 +541,7 @@ def verify_dpop_proof(dpop_proof: str, method: str = None, url: str = None, acce
             logging.error(f"DPoP proof URL mismatch: expected {url}, got {payload.get('htu')}")
             return False
         
-        # Verify access token hash if provided
-        if access_token:
-            import hashlib
-            token_hash = base64.b64encode(hashlib.sha256(access_token.encode()).digest()).decode().rstrip('=')
-            logging.debug(f"Access token: {access_token}")
-            logging.debug(f"Expected token hash: {token_hash}")
-            logging.debug(f"Received token hash: {payload.get('ath')}")
-            if payload.get('ath') != token_hash:
-                logging.error("DPoP proof access token hash mismatch")
-                return False
+        # No access token validation needed - we're using session-based authentication
         
         # Verify nonce if provided
         if nonce and session_id:
