@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stronghold Session Demo</title>
     <link rel="stylesheet" href="/static/style.css">
-    <script src="/static/stronghold-crypto.js"></script>
+    <script src="/static/stronghold.js"></script>
 </head>
 <body>
     <div class="container">
@@ -113,33 +113,7 @@
                 await loadBrowserIdentity();
         }
 
-        // JWT Decoding function
-        function decodeJWT(token) {
-            try {
-                const parts = token.split('.');
-                if (parts.length !== 3) {
-                    return 'Invalid JWT format';
-                }
-                
-                // Decode header
-                const header = JSON.parse(atob(parts[0] + '='.repeat((4 - parts[0].length % 4) % 4)));
-                
-                // Decode payload
-                const payload = JSON.parse(atob(parts[1] + '='.repeat((4 - parts[1].length % 4) % 4)));
-                
-                // Format timestamps
-                if (payload.iat) {
-                    payload.iat = `${payload.iat} (${new Date(payload.iat * 1000).toLocaleString()})`;
-                }
-                if (payload.exp) {
-                    payload.exp = `${payload.exp} (${new Date(payload.exp * 1000).toLocaleString()})`;
-                }
-                
-                return `Header:\n${JSON.stringify(header, null, 2)}\n\nPayload:\n${JSON.stringify(payload, null, 2)}`;
-            } catch (error) {
-                return `Error decoding JWT: ${error.message}`;
-            }
-        }
+
 
         // Stronghold Session Management
         async function createSession() {
@@ -361,7 +335,7 @@ ${response.decrypted_payload || 'No decrypted server response'}
                 
                 if (response.ok) {
                     alert('Session invalidated successfully on the server');
-                    clearBrowserIdentity();
+                    await clearBrowserIdentity();
                     
                     // Hide test section, browser identity section, and active session section
                     document.getElementById('testSection').style.display = 'none';
@@ -376,18 +350,31 @@ ${response.decrypted_payload || 'No decrypted server response'}
             }
         }
         
-        function clearSession() {
-            // Clear browser UUID from storage and memory
-            Stronghold.clearBrowserUuidFromStorage();
-            currentSession = null;
-            document.getElementById('sessionStatus').innerHTML = '<div class="info">Session cleared</div>';
-            document.getElementById('sessionDetails').innerHTML = '';
-            document.getElementById('requestResponseDetails').style.display = 'none';
-            
-            // Hide test section, browser identity section, and active session section
-            document.getElementById('testSection').style.display = 'none';
-            document.getElementById('browserIdentitySection').style.display = 'none';
-            document.getElementById('sessionInfo').style.display = 'none';
+        async function clearSession() {
+            try {
+                // Get browser UUID before clearing it
+                const browserUuid = await Stronghold.getBrowserUuid();
+                
+                // Clear browser UUID from storage and memory
+                await Stronghold.deleteBrowserUuid();
+                currentSession = null;
+                document.getElementById('sessionStatus').innerHTML = '<div class="info">Session cleared</div>';
+                document.getElementById('sessionDetails').innerHTML = '';
+                document.getElementById('requestResponseDetails').style.display = 'none';
+                
+                // Clear IndexedDB keys for this browser UUID
+                if (browserUuid) {
+                    await Stronghold.clearKeysByBrowserUuid(browserUuid);
+                }
+                
+                // Hide test section, browser identity section, and active session section
+                document.getElementById('testSection').style.display = 'none';
+                document.getElementById('browserIdentitySection').style.display = 'none';
+                document.getElementById('sessionInfo').style.display = 'none';
+            } catch (error) {
+                console.error('Error clearing session:', error);
+                alert('Error clearing session: ' + error.message);
+            }
         }
 
         // Load browser identity and session when page loads

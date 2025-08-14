@@ -3,114 +3,409 @@
  * Implements browser-only Stronghold-style session creation flow
  */
 
-
-// In-memory storage for private key handles (least secure, but simple)
+// In-memory storage for session private key handles
 const privateKeyHandleStore = new Map();
-
-// IndexedDB for persistent key storage
-let db = null;
 
 // Session state
 let currentSession = null;
 let sessionEncryptionKey = null;
 
-// Initialize IndexedDB
+// IndexedDB database name and version
+const DB_NAME = 'StrongholdCryptoDB';
+const DB_VERSION = 2; // Incremented to trigger schema upgrade
+const KEY_STORE = 'cryptoKeys';
+const BROWSER_UUID_KEY = 'browser_uuid';
+
+/**
+ * Initialize IndexedDB for key storage
+ * @returns {Promise<IDBDatabase>}
+ */
 async function initIndexedDB() {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('StrongholdKeys', 1);
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
         
         request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-            db = request.result;
-            resolve(db);
-        };
+        request.onsuccess = () => resolve(request.result);
         
         request.onupgradeneeded = (event) => {
             const db = event.target.result;
-            if (!db.objectStoreNames.contains('keys')) {
-                const store = db.createObjectStore('keys', { keyPath: 'id' });
+            
+            // Create object store for crypto keys
+            if (!db.objectStoreNames.contains(KEY_STORE)) {
+                const keyStore = db.createObjectStore(KEY_STORE, { keyPath: 'keyId' });
+                keyStore.createIndex('type', 'type', { unique: false });
+                keyStore.createIndex('browserUuid', 'browserUuid', { unique: false });
+            }
+            
+            // Create object store for browser UUID
+            if (!db.objectStoreNames.contains('browserData')) {
+                const browserStore = db.createObjectStore('browserData', { keyPath: 'key' });
             }
         };
     });
 }
 
-// Store key in IndexedDB
-async function storeKeyInIndexedDB(keyId, keyData) {
-    if (!db) await initIndexedDB();
-    
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['keys'], 'readwrite');
-        const store = transaction.objectStore('keys');
+/**
+ * Store a CryptoKey pair in IndexedDB
+ * @param {string} keyId - Unique identifier for the key
+ * @param {CryptoKey} privateKey - The private key to store
+ * @param {CryptoKey} publicKey - The public key to store
+ * @param {string} type - Type of key (e.g., 'browser_identity', 'dpop')
+ * @param {string} browserUuid - Associated browser UUID
+ * @returns {Promise<void>}
+ */
+async function storeCryptoKey(keyId, privateKey, publicKey, type, browserUuid) {
+    try {
+        const db = await initIndexedDB();
+        const transaction = db.transaction([KEY_STORE], 'readwrite');
+        const store = transaction.objectStore(KEY_STORE);
         
-        // Convert CryptoKey objects to exportable format
-        const exportableKeyData = {
-            id: keyId,
-            type: keyData.type || 'dpop',
-            timestamp: Date.now()
-        };
+        // Store the key pair as a single keyHandle object
+        await new Promise((resolve, reject) => {
+            const request = store.put({
+                keyId,
+                keyHandle: {
+                    privateKey,
+                    publicKey
+                },
+                type,
+                browserUuid,
+                createdAt: Date.now()
+            });
+            
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
         
-        // For now, we'll store the key in memory and just track the ID in IndexedDB
-        // In a real implementation, you'd want to store the actual key material
-        const request = store.put(exportableKeyData);
-        
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-    });
+        console.log(`Stored ${type} key pair with ID: ${keyId}`);
+    } catch (error) {
+        console.error('Error storing crypto key:', error);
+        throw error;
+    }
 }
 
-// Load keys from IndexedDB into memory
-async function loadKeysFromIndexedDB() {
-    if (!db) await initIndexedDB();
-    
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['keys'], 'readonly');
-        const store = transaction.objectStore('keys');
-        const request = store.getAll();
+/**
+ * Retrieve a CryptoKey pair from IndexedDB
+ * @param {string} keyId - Unique identifier for the key
+ * @returns {Promise<{keyHandle: {privateKey: CryptoKey, publicKey: CryptoKey}, type: string, browserUuid: string, createdAt: number} | null>}
+ */
+async function getCryptoKey(keyId) {
+    try {
+        const db = await initIndexedDB();
+        const transaction = db.transaction([KEY_STORE], 'readonly');
+        const store = transaction.objectStore(KEY_STORE);
         
-        request.onsuccess = () => {
-            console.log('Loaded key IDs from IndexedDB:', request.result);
-            resolve(request.result);
-        };
-        request.onerror = () => reject(request.error);
-    });
+        return new Promise((resolve, reject) => {
+            const request = store.get(keyId);
+            
+            request.onsuccess = () => {
+                const result = request.result;
+                if (result) {
+                    console.log(`Retrieved ${result.type} key pair with ID: ${keyId}`);
+                    resolve({
+                        keyHandle: result.keyHandle,
+                        type: result.type,
+                        browserUuid: result.browserUuid,
+                        createdAt: result.createdAt
+                    });
+                } else {
+                    console.log(`No key found with ID: ${keyId}`);
+                    resolve(null);
+                }
+            };
+            
+            request.onerror = () => reject(request.error);
+        });
+    } catch (error) {
+        console.error('Error retrieving crypto key:', error);
+        throw error;
+    }
 }
 
+/**
+ * Get all keys for a specific browser UUID
+ * @param {string} browserUuid - Browser UUID to search for
+ * @returns {Promise<Array>}
+ */
+async function getKeysByBrowserUuid(browserUuid) {
+    try {
+        const db = await initIndexedDB();
+        const transaction = db.transaction([KEY_STORE], 'readonly');
+        const store = transaction.objectStore(KEY_STORE);
+        const index = store.index('browserUuid');
+        
+        return new Promise((resolve, reject) => {
+            const request = index.getAll(browserUuid);
+            
+            request.onsuccess = () => {
+                console.log(`Retrieved ${request.result.length} keys for browser UUID: ${browserUuid}`);
+                resolve(request.result);
+            };
+            
+            request.onerror = () => reject(request.error);
+        });
+    } catch (error) {
+        console.error('Error retrieving keys by browser UUID:', error);
+        throw error;
+    }
+}
+
+/**
+ * Delete a CryptoKey from IndexedDB
+ * @param {string} keyId - Unique identifier for the key
+ * @returns {Promise<void>}
+ */
+async function deleteCryptoKey(keyId) {
+    try {
+        const db = await initIndexedDB();
+        const transaction = db.transaction([KEY_STORE], 'readwrite');
+        const store = transaction.objectStore(KEY_STORE);
+        
+        await new Promise((resolve, reject) => {
+            const request = store.delete(keyId);
+            
+            request.onsuccess = () => {
+                console.log(`Deleted key with ID: ${keyId}`);
+                resolve();
+            };
+            
+            request.onerror = () => reject(request.error);
+        });
+    } catch (error) {
+        console.error('Error deleting crypto key:', error);
+        throw error;
+    }
+}
+
+/**
+ * Clear all keys for a specific browser UUID
+ * @param {string} browserUuid - Browser UUID to clear keys for
+ * @returns {Promise<void>}
+ */
+async function clearKeysByBrowserUuid(browserUuid) {
+    try {
+        const keys = await getKeysByBrowserUuid(browserUuid);
+        const db = await initIndexedDB();
+        const transaction = db.transaction([KEY_STORE], 'readwrite');
+        const store = transaction.objectStore(KEY_STORE);
+        
+        for (const key of keys) {
+            await new Promise((resolve, reject) => {
+                const request = store.delete(key.keyId);
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+        }
+        
+        console.log(`Cleared ${keys.length} keys for browser UUID: ${browserUuid}`);
+    } catch (error) {
+        console.error('Error clearing keys by browser UUID:', error);
+        throw error;
+    }
+}
+
+/**
+ * Clean up expired keys from IndexedDB
+ * @returns {Promise<number>} Number of expired keys removed
+ */
+async function cleanupExpiredKeys() {
+    try {
+        const db = await initIndexedDB();
+        const transaction = db.transaction([KEY_STORE], 'readwrite');
+        const store = transaction.objectStore(KEY_STORE);
+        
+        const allKeys = await new Promise((resolve, reject) => {
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+        
+        const twoDaysInMs = 2 * 24 * 60 * 60 * 1000; // 2 days in milliseconds
+        const expiredKeys = allKeys.filter(key => {
+            const keyAge = Date.now() - key.createdAt;
+            return keyAge >= twoDaysInMs;
+        });
+        
+        let removedCount = 0;
+        for (const expiredKey of expiredKeys) {
+            await new Promise((resolve, reject) => {
+                const request = store.delete(expiredKey.keyId);
+                request.onsuccess = () => {
+                    removedCount++;
+                    resolve();
+                };
+                request.onerror = () => reject(request.error);
+            });
+        }
+        
+        if (removedCount > 0) {
+            console.log(`Cleaned up ${removedCount} expired keys from IndexedDB`);
+        }
+        
+        return removedCount;
+    } catch (error) {
+        console.error('Error cleaning up expired keys:', error);
+        throw error;
+    }
+}
+
+/**
+ * Verify key expiration and clean up if needed
+ * @param {Object} key - Key object from IndexedDB
+ * @returns {boolean} True if key is valid, false if expired
+ */
+function isKeyValid(key) {
+    const keyAge = Date.now() - key.createdAt;
+    const twoDaysInMs = 2 * 24 * 60 * 60 * 1000; // 2 days in milliseconds
+    return keyAge < twoDaysInMs;
+}
+
+/**
+ * Store browser UUID in IndexedDB
+ * @param {string} browserUuid - The browser UUID to store
+ * @returns {Promise<void>}
+ */
+async function storeBrowserUuid(browserUuid) {
+    try {
+        const db = await initIndexedDB();
+        const transaction = db.transaction(['browserData'], 'readwrite');
+        const store = transaction.objectStore('browserData');
+        
+        await new Promise((resolve, reject) => {
+            const request = store.put({
+                key: BROWSER_UUID_KEY,
+                value: browserUuid,
+                createdAt: Date.now()
+            });
+            
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+        
+        console.log('Browser UUID stored in IndexedDB');
+    } catch (error) {
+        console.error('Error storing browser UUID:', error);
+        throw error;
+    }
+}
+
+/**
+ * Retrieve browser UUID from IndexedDB
+ * @returns {Promise<string | null>}
+ */
+async function getBrowserUuid() {
+    try {
+        const db = await initIndexedDB();
+        const transaction = db.transaction(['browserData'], 'readonly');
+        const store = transaction.objectStore('browserData');
+        
+        return new Promise((resolve, reject) => {
+            const request = store.get(BROWSER_UUID_KEY);
+            
+            request.onsuccess = () => {
+                const result = request.result;
+                if (result) {
+                    console.log('Browser UUID retrieved from IndexedDB');
+                    resolve(result.value);
+                } else {
+                    console.log('No browser UUID found in IndexedDB');
+                    resolve(null);
+                }
+            };
+            
+            request.onerror = () => reject(request.error);
+        });
+    } catch (error) {
+        console.error('Error retrieving browser UUID:', error);
+        throw error;
+    }
+}
+
+/**
+ * Delete browser UUID from IndexedDB
+ * @returns {Promise<void>}
+ */
+async function deleteBrowserUuid() {
+    try {
+        const db = await initIndexedDB();
+        const transaction = db.transaction(['browserData'], 'readwrite');
+        const store = transaction.objectStore('browserData');
+        
+        await new Promise((resolve, reject) => {
+            const request = store.delete(BROWSER_UUID_KEY);
+            
+            request.onsuccess = () => {
+                console.log('Browser UUID deleted from IndexedDB');
+                resolve();
+            };
+            
+            request.onerror = () => reject(request.error);
+        });
+    } catch (error) {
+        console.error('Error deleting browser UUID:', error);
+        throw error;
+    }
+}
 
 /**
  * Generate a persistent, non-exportable browser identity key
- * @returns {Promise<{publicKey: string, keyId: string}>}
+ * @returns {Promise<{publicKey: string, keyId: string, browserUuid: string}>}
  */
 async function generateBrowserIdentityKey() {
     try {
         console.log('generateBrowserIdentityKey: Starting...');
         
         // Get or generate persistent browser UUID
-        let browserUuid = localStorage.getItem('stronghold_browser_uuid');
+        let browserUuid = await getBrowserUuid();
         
         if (!browserUuid) {
             browserUuid = crypto.randomUUID();
-            localStorage.setItem('stronghold_browser_uuid', browserUuid);
+            await storeBrowserUuid(browserUuid);
             console.log('generateBrowserIdentityKey: Generated new persistent browser UUID:', browserUuid);
         } else {
             console.log('generateBrowserIdentityKey: Using existing persistent browser UUID:', browserUuid);
         }
         
+        // First, try to load existing keys from IndexedDB for this browser UUID
+        console.log('generateBrowserIdentityKey: Checking for existing keys in IndexedDB...');
+        const existingKeys = await getKeysByBrowserUuid(browserUuid);
+        const browserIdentityKey = existingKeys.find(key => {
+            if (key.type === 'browser_identity') {
+                // Check if key is still valid (not expired)
+                return isKeyValid(key);
+            }
+            return false;
+        });
+        
+        if (browserIdentityKey) {
+            console.log('generateBrowserIdentityKey: Found valid existing browser identity key in IndexedDB');
+            
+            // Load the key into memory for use
+            privateKeyHandleStore.set(browserIdentityKey.keyId, {
+                privateKey: browserIdentityKey.keyHandle.privateKey,
+                publicKey: browserIdentityKey.keyHandle.publicKey
+            });
+            
+            // Export the public key for return
+            const publicKey = await exportPublicKey(browserIdentityKey.keyHandle.publicKey);
+            
+            return {
+                publicKey: publicKey,
+                keyId: browserIdentityKey.keyId,
+                browserUuid: browserUuid
+            };
+        }
+        
         // Check if we already have a browser identity key in memory
         console.log('generateBrowserIdentityKey: Checking for existing key in memory...');
-        console.log('generateBrowserIdentityKey: All keys in store:', Array.from(privateKeyHandleStore.keys()));
         const existingKeyId = Array.from(privateKeyHandleStore.keys()).find(keyId => keyId.startsWith('browser_identity_'));
-        console.log('generateBrowserIdentityKey: Found existing key ID:', existingKeyId);
         
         if (existingKeyId) {
-            // Return existing identity key from memory
             console.log('generateBrowserIdentityKey: Using existing key from memory...');
             const storedData = privateKeyHandleStore.get(existingKeyId);
             
-            // The stored data should contain the actual CryptoKey objects
             if (storedData && storedData.publicKey) {
-                // Export the public key
                 const publicKey = await exportPublicKey(storedData.publicKey);
-                
                 return {
                     publicKey: publicKey,
                     keyId: existingKeyId,
@@ -118,7 +413,6 @@ async function generateBrowserIdentityKey() {
                 };
             } else {
                 console.log('generateBrowserIdentityKey: Stored data missing publicKey, generating new key...');
-                // Remove the corrupted data and continue to generate new key
                 privateKeyHandleStore.delete(existingKeyId);
             }
         }
@@ -143,13 +437,18 @@ async function generateBrowserIdentityKey() {
         const publicKey = await exportPublicKey(keyPair.publicKey);
         console.log('Generated new browser identity public key:', publicKey);
 
-        // Store the private key handle and metadata in memory (ephemeral)
+        // Store the key in memory for immediate use
         console.log('generateBrowserIdentityKey: Storing key in memory...');
         privateKeyHandleStore.set(keyId, {
             privateKey: keyPair.privateKey,
-            publicKey: keyPair.publicKey  // Store the actual CryptoKey object, not the exported string
+            publicKey: keyPair.publicKey
         });
-        console.log('generateBrowserIdentityKey: Key stored in memory successfully');
+        
+        // Persist the key to IndexedDB for future page loads
+        console.log('generateBrowserIdentityKey: Persisting key to IndexedDB...');
+        await storeCryptoKey(keyId, keyPair.privateKey, keyPair.publicKey, 'browser_identity', browserUuid);
+        
+        console.log('generateBrowserIdentityKey: Key stored successfully');
         
         return {
             publicKey: publicKey,
@@ -163,12 +462,70 @@ async function generateBrowserIdentityKey() {
 }
 
 /**
- * Generate an ephemeral DPoP key pair
+ * Generate a DPoP key pair for session authentication
  * @returns {Promise<{publicKey: string, keyId: string}>}
  */
 async function generateDPoPKeyPair() {
     try {
+        // Get browser UUID for key association
+        const browserUuid = await getBrowserUuid();
+        if (!browserUuid) {
+            throw new Error('Browser UUID not found - cannot generate DPoP key');
+        }
+        
+        // First, try to load existing DPoP keys from IndexedDB for this browser UUID
+        console.log('generateDPoPKeyPair: Checking for existing DPoP keys in IndexedDB...');
+        const existingKeys = await getKeysByBrowserUuid(browserUuid);
+        const validDPoPKey = existingKeys.find(key => {
+            if (key.type === 'dpop') {
+                // Check if key is still valid (not expired)
+                return isKeyValid(key);
+            }
+            return false;
+        });
+        
+        if (validDPoPKey) {
+            console.log('generateDPoPKeyPair: Found valid existing DPoP key in IndexedDB');
+            
+            // Load the key into memory for use
+            privateKeyHandleStore.set(validDPoPKey.keyId, {
+                privateKey: validDPoPKey.keyHandle.privateKey,
+                publicKey: validDPoPKey.keyHandle.publicKey
+            });
+            
+            // Export the public key for return
+            const publicKey = await exportPublicKey(validDPoPKey.keyHandle.publicKey);
+            
+            return {
+                publicKey: publicKey,
+                keyId: validDPoPKey.keyId
+            };
+        }
+        
+        // Check if we already have a DPoP key in memory
+        console.log('generateDPoPKeyPair: Checking for existing key in memory...');
+        const existingKeyId = Array.from(privateKeyHandleStore.keys()).find(keyId => keyId.startsWith('dpop_'));
+        
+        if (existingKeyId) {
+            console.log('generateDPoPKeyPair: Using existing key from memory...');
+            const storedData = privateKeyHandleStore.get(existingKeyId);
+            
+            if (storedData && storedData.publicKey) {
+                const publicKey = await exportPublicKey(storedData.publicKey);
+                return {
+                    publicKey: publicKey,
+                    keyId: existingKeyId
+                };
+            } else {
+                console.log('generateDPoPKeyPair: Stored data missing publicKey, generating new key...');
+                privateKeyHandleStore.delete(existingKeyId);
+            }
+        }
+        
+        // Generate new DPoP key pair
+        console.log('generateDPoPKeyPair: Generating new key...');
         const keyId = `dpop_${crypto.randomUUID()}`;
+        console.log('generateDPoPKeyPair: New key ID:', keyId);
         
         const keyPair = await window.crypto.subtle.generateKey(
             {
@@ -179,14 +536,20 @@ async function generateDPoPKeyPair() {
             ["sign", "verify"]
         );
 
-        // Store both private and public key handles in memory (ephemeral)
+        // Store the key in memory for immediate use
+        console.log('generateDPoPKeyPair: Storing key in memory...');
         privateKeyHandleStore.set(keyId, {
             privateKey: keyPair.privateKey,
             publicKey: keyPair.publicKey
         });
+        
+        // Persist the key to IndexedDB with expiration
+        console.log('generateDPoPKeyPair: Persisting key to IndexedDB...');
+        await storeCryptoKey(keyId, keyPair.privateKey, keyPair.publicKey, 'dpop', browserUuid);
 
         // Export the public key
         const publicKey = await exportPublicKey(keyPair.publicKey);
+        console.log('Generated new DPoP public key:', publicKey);
         
         return {
             publicKey: publicKey,
@@ -572,12 +935,12 @@ async function createStrongholdSession() {
         console.log('6. Preparing registration payload...');
         const browserIdentityData = await Stronghold.getBrowserIdentity();
         // Get or generate browser UUID
-        const storedBrowserUuid = loadBrowserUuidFromStorage();
+        const storedBrowserUuid = await getBrowserUuid();
         const browserUuid = storedBrowserUuid || crypto.randomUUID();
         
-        // Save browser UUID to localStorage if it's new
+        // Save browser UUID to IndexedDB if it's new
         if (!storedBrowserUuid) {
-            saveBrowserUuidToStorage(browserUuid);
+            await storeBrowserUuid(browserUuid);
         }
         
         const registrationPayload = {
@@ -978,52 +1341,34 @@ async function getBrowserIdentity() {
     }
 }
 
-function clearBrowserIdentity() {
-    localStorage.removeItem('stronghold_browser_uuid');
-    
-    // Also clear any in-memory browser identity keys
-    const browserIdentityKeys = Array.from(privateKeyHandleStore.keys()).filter(keyId => keyId.startsWith('browser_identity_'));
-    browserIdentityKeys.forEach(keyId => privateKeyHandleStore.delete(keyId));
-    
-    console.log('Browser identity cleared');
+async function clearBrowserIdentity() {
+    try {
+        // Get the browser UUID before clearing it
+        const browserUuid = await getBrowserUuid();
+        
+        // Clear IndexedDB browser UUID
+        await deleteBrowserUuid();
+        
+        // Clear in-memory browser identity keys
+        const browserIdentityKeys = Array.from(privateKeyHandleStore.keys()).filter(keyId => keyId.startsWith('browser_identity_'));
+        browserIdentityKeys.forEach(keyId => privateKeyHandleStore.delete(keyId));
+        
+        // Clear IndexedDB keys for this browser UUID
+        if (browserUuid) {
+            await clearKeysByBrowserUuid(browserUuid);
+        }
+        
+        console.log('Browser identity cleared from memory and IndexedDB');
+    } catch (error) {
+        console.error('Error clearing browser identity:', error);
+        throw error;
+    }
 }
 
 function getSessionMapping() {
     // Session mapping would be retrieved from HTTP-only cookie in production
     // For demo purposes, return null since we're not storing it in localStorage
     return null;
-}
-
-function saveBrowserUuidToStorage(browserUuid) {
-    try {
-        localStorage.setItem('stronghold_browser_uuid', browserUuid);
-        console.log('Browser UUID saved to localStorage');
-    } catch (error) {
-        console.error('Error saving browser UUID to localStorage:', error);
-    }
-}
-
-function loadBrowserUuidFromStorage() {
-    try {
-        const browserUuid = localStorage.getItem('stronghold_browser_uuid');
-        if (browserUuid) {
-            console.log('Browser UUID loaded from localStorage');
-            return browserUuid;
-        }
-    } catch (error) {
-        console.error('Error loading browser UUID from localStorage:', error);
-        localStorage.removeItem('stronghold_browser_uuid');
-    }
-    return null;
-}
-
-function clearBrowserUuidFromStorage() {
-    try {
-        localStorage.removeItem('stronghold_browser_uuid');
-        console.log('Browser UUID cleared from localStorage');
-    } catch (error) {
-        console.error('Error clearing browser UUID from localStorage:', error);
-    }
 }
 
 async function getSecurityAudit() {
@@ -1064,7 +1409,14 @@ async function getSecurityAudit() {
 
 // Initialize session on page load
 async function initializeSession() {
-    const storedBrowserUuid = loadBrowserUuidFromStorage();
+    // Clean up any expired keys first
+    try {
+        await cleanupExpiredKeys();
+    } catch (error) {
+        console.warn('Failed to cleanup expired keys:', error);
+    }
+    
+    const storedBrowserUuid = await getBrowserUuid();
     console.log('Stored browser UUID:', storedBrowserUuid);
     if (storedBrowserUuid) {
         console.log('Browser UUID found in storage, checking for existing session...');
@@ -1199,7 +1551,7 @@ async function initializeSession() {
                         
                     } catch (error) {
                         console.error('Error restoring session with ECDHE renegotiation:', error);
-                        clearBrowserUuidFromStorage();
+                        await deleteBrowserUuid();
                         currentSession = null;
                         throw error;
                     }
@@ -1246,8 +1598,13 @@ if (typeof module !== 'undefined' && module.exports) {
         clearBrowserIdentity,
         getSessionMapping,
         getSecurityAudit,
-        clearBrowserUuidFromStorage,
         initializeSession,
+        cleanupExpiredKeys,
+        isKeyValid,
+        clearKeysByBrowserUuid,
+        storeBrowserUuid,
+        getBrowserUuid,
+        deleteBrowserUuid,
         get currentSession() { return currentSession; }
     };
 } 
