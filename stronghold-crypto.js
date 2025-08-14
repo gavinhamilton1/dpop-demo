@@ -583,7 +583,6 @@ async function createStrongholdSession() {
         const registrationPayload = {
             handshake_nonce: handshakeData.handshake_nonce,
             browser_identity_public_key: browserIdentity.publicKey,
-            dpop_public_key: dpopKey.publicKey,
             browser_uuid: browserUuid,
             browser_fingerprint_hash: browserIdentityData.fingerprintHash
         };
@@ -592,12 +591,20 @@ async function createStrongholdSession() {
         console.log('7. Encrypting registration payload...');
         const encryptedPayload = await encryptWithSessionKey(sessionEncryptionKey, JSON.stringify(registrationPayload));
         
-        // Step 8: Register session with server
-        console.log('8. Registering session with server...');
+        // Step 8: Create DPoP proof for registration
+        console.log('8. Creating DPoP proof for registration...');
+        const registrationDpopProof = await createDPoPProof(
+            dpopKey.keyId,
+            'POST',
+            '/register-session',
+            null  // No nonce for initial registration
+        );
+        
+        // Step 9: Register session with server
+        console.log('9. Registering session with server...');
         const requestBody = {
             handshake_nonce: handshakeData.handshake_nonce,
             browser_identity_public_key: browserIdentity.publicKey,
-            dpop_public_key: dpopKey.publicKey,
             browser_uuid: registrationPayload.browser_uuid,
             browser_fingerprint_hash: registrationPayload.browser_fingerprint_hash,
             encrypted_payload: encryptedPayload
@@ -608,6 +615,7 @@ async function createStrongholdSession() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'DPoP': registrationDpopProof
             },
             body: JSON.stringify(requestBody)
         });
@@ -1136,23 +1144,30 @@ async function initializeSession() {
                         const registrationPayload = {
                             handshake_nonce: handshakeData.handshake_nonce,
                             browser_identity_public_key: await exportPublicKey(browserIdentityKeyPair.publicKey),
-                            dpop_public_key: await exportPublicKey(dpopKeyPair.publicKey),
                             browser_uuid: storedBrowserUuid,
                             browser_fingerprint_hash: browserIdentityData.fingerprintHash
                         };
                         
                         const encryptedPayload = await encryptWithSessionKey(sessionEncryptionKey, JSON.stringify(registrationPayload));
                         
+                        // Create DPoP proof for session restoration
+                        const restorationDpopProof = await createDPoPProof(
+                            dpopKeyId,
+                            'POST',
+                            '/register-session',
+                            null  // No nonce for session restoration
+                        );
+                        
                         // Use the existing session registration endpoint
                         const tokenResponse = await fetch('/register-session', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
+                                'DPoP': restorationDpopProof
                             },
                             body: JSON.stringify({
                                 handshake_nonce: handshakeData.handshake_nonce,
                                 browser_identity_public_key: await exportPublicKey(browserIdentityKeyPair.publicKey),
-                                dpop_public_key: await exportPublicKey(dpopKeyPair.publicKey),
                                 browser_uuid: storedBrowserUuid,
                                 browser_fingerprint_hash: browserIdentityData.fingerprintHash,
                                 encrypted_payload: encryptedPayload

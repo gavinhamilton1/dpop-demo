@@ -61,7 +61,6 @@ class HandshakeRequest(BaseModel):
 class RegistrationRequest(BaseModel):
     handshake_nonce: str
     browser_identity_public_key: str
-    dpop_public_key: str
     browser_uuid: str
     browser_fingerprint_hash: str
     encrypted_payload: str
@@ -193,7 +192,7 @@ async def initiate_handshake(request: HandshakeRequest):
         raise HTTPException(status_code=400, detail=f"Handshake failed: {str(e)}")
 
 @app.post("/register-session")
-async def register_session(request: RegistrationRequest):
+async def register_session(request: RegistrationRequest, dpop: str = Header(None)):
     """Register browser identity and DPoP keys over E2EE channel"""
     try:
         # Verify handshake nonce exists and is valid
@@ -224,6 +223,51 @@ async def register_session(request: RegistrationRequest):
         if payload.get("handshake_nonce") != request.handshake_nonce:
             raise HTTPException(status_code=400, detail="Nonce mismatch")
         
+        # Extract DPoP public key from DPoP proof header
+        if not dpop:
+            raise HTTPException(status_code=400, detail="Missing DPoP header for registration")
+        
+        # Parse DPoP proof to extract public key
+        try:
+            parts = dpop.split('.')
+            if len(parts) != 3:
+                raise HTTPException(status_code=400, detail="Invalid DPoP proof format")
+            
+            # Decode header to get JWK
+            header_b64 = parts[0] + '=' * (4 - len(parts[0]) % 4)  # Add padding
+            header_json = base64.b64decode(header_b64).decode('utf-8')
+            header = json.loads(header_json)
+            
+            if 'jwk' not in header:
+                raise HTTPException(status_code=400, detail="DPoP proof missing jwk header")
+            
+            # Convert JWK to DER format for storage
+            jwk = header['jwk']
+            if jwk.get('kty') != 'EC' or jwk.get('crv') != 'P-256':
+                raise HTTPException(status_code=400, detail="DPoP proof jwk has wrong key type or curve")
+            
+            x_bytes = base64.b64decode(jwk['x'] + '=' * (4 - len(jwk['x']) % 4))
+            y_bytes = base64.b64decode(jwk['y'] + '=' * (4 - len(jwk['y']) % 4))
+            
+            # Create DER public key from JWK
+            from cryptography.hazmat.primitives.asymmetric import ec
+            jwk_public_numbers = ec.EllipticCurvePublicNumbers(
+                int.from_bytes(x_bytes, 'big'),
+                int.from_bytes(y_bytes, 'big'),
+                ec.SECP256R1()
+            )
+            jwk_public_key_obj = jwk_public_numbers.public_key()
+            
+            # Convert to DER format for storage
+            dpop_public_key_der = jwk_public_key_obj.public_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            dpop_public_key = base64.b64encode(dpop_public_key_der).decode()
+            
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to extract DPoP public key: {str(e)}")
+        
         # Check if a session already exists for this browser UUID
         existing_session_id = None
         if request.browser_uuid in browser_sessions:
@@ -245,7 +289,7 @@ async def register_session(request: RegistrationRequest):
             current_server_time = datetime.utcnow()
             sessions[session_id] = {
                 "browser_identity_public_key": request.browser_identity_public_key,
-                "dpop_public_key": request.dpop_public_key,  # Store DPoP public key
+                "dpop_public_key": dpop_public_key,  # Store DPoP public key from proof
                 "browser_uuid": request.browser_uuid,
                 "browser_fingerprint_hash": request.browser_fingerprint_hash,
                 "session_encryption_key": session_encryption_key,
@@ -261,7 +305,7 @@ async def register_session(request: RegistrationRequest):
             logging.debug(f"Updating existing session {session_id} with new keys")
             sessions[session_id].update({
                 "browser_identity_public_key": request.browser_identity_public_key,
-                "dpop_public_key": request.dpop_public_key,
+                "dpop_public_key": dpop_public_key,  # Use extracted DPoP public key
                 "session_encryption_key": session_encryption_key,
                 "last_activity": datetime.now()
             })
@@ -269,7 +313,7 @@ async def register_session(request: RegistrationRequest):
         # Generate initial DPoP nonce for the session
         initial_nonce = generate_dpop_nonce(session_id)
         
-        logging.debug(f"Stored DPoP public key for session {session_id}: {request.dpop_public_key}")
+        logging.debug(f"Stored DPoP public key for session {session_id}: {dpop_public_key}")
         logging.debug(f"Mapped browser UUID {request.browser_uuid} to session {session_id}")
         logging.debug(f"Generated initial nonce for session {session_id}: {initial_nonce}")
         
