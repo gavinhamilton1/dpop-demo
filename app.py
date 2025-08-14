@@ -44,6 +44,13 @@ async def add_security_headers(request: Request, call_next):
 sessions: Dict[str, Dict[str, Any]] = {}
 handshake_nonces: Dict[str, Dict[str, Any]] = {}
 dpop_nonces: Dict[str, Dict[str, Any]] = {}  # Store DPoP nonces per session
+browser_sessions: Dict[str, str] = {}  # Map browser_uuid to session_id
+invalidated_sessions: set = set()  # Track invalidated sessions
+rate_limit_attempts: Dict[str, Dict[str, Any]] = {}  # Rate limiting per IP
+
+# Generate cryptographically secure secret for JWT signing
+import os
+JWT_SECRET = os.environ.get('JWT_SECRET', secrets.token_urlsafe(64))
 server_private_key = ec.generate_private_key(ec.SECP256R1())
 server_public_key = server_private_key.public_key()
 
@@ -62,13 +69,72 @@ class RegistrationRequest(BaseModel):
 class DPoPRequest(BaseModel):
     encrypted_payload: Optional[str] = None
     browser_fingerprint_hash: Optional[str] = None
-    dpop_nonce: Optional[str] = None
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Serve the index.html page"""
     with open("index.html", "r") as f:
         return HTMLResponse(content=f.read())
+
+@app.get("/check-session/{browser_uuid}")
+async def check_session(browser_uuid: str):
+    """Check if a browser UUID has an existing session"""
+    try:
+        if browser_uuid in browser_sessions:
+            session_id = browser_sessions[browser_uuid]
+            if session_id in sessions:
+                session = sessions[session_id]
+                return {
+                    "has_session": True,
+                    "session_id": session_id,
+                    "browser_uuid": browser_uuid,
+                    "created_at": session["created_at"].isoformat(),
+                    "last_activity": session["last_activity"].isoformat()
+                }
+        
+        return {
+            "has_session": False,
+            "browser_uuid": browser_uuid
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Session check failed: {str(e)}")
+
+@app.post("/invalidate-session")
+async def invalidate_session(authorization: str = Header(None)):
+    """Invalidate the current session (for security purposes)"""
+    try:
+        if not authorization or not authorization.startswith("DPoP "):
+            raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+        
+        session_token = authorization[5:]
+        session_data = verify_session_token(session_token)
+        session_id = session_data["session_id"]
+        
+        if session_id in sessions:
+            # Add JTI to invalidated sessions set
+            if session_data.get("jti"):
+                invalidated_sessions.add(session_data["jti"])
+            
+            # Remove session data
+            del sessions[session_id]
+            
+            # Remove from browser sessions mapping
+            browser_uuid = session_data.get("browser_uuid")
+            if browser_uuid and browser_uuid in browser_sessions:
+                del browser_sessions[browser_uuid]
+            
+            # Clean up DPoP nonces
+            if session_id in dpop_nonces:
+                del dpop_nonces[session_id]
+            
+            logging.info(f"Session {session_id} invalidated successfully")
+            return {"success": True, "message": "Session invalidated"}
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Session invalidation failed: {str(e)}")
 
 @app.post("/handshake")
 async def initiate_handshake(request: HandshakeRequest):
@@ -163,12 +229,17 @@ async def register_session(request: RegistrationRequest):
         # Create session
         session_id = handshake_data["session_id"]
         logging.debug(f"Creating session at: {datetime.utcnow().timestamp()} UTC")
-        session_token = create_session_token(session_id=session_id)
+        session_token = create_session_token(
+            session_id=session_id,
+            browser_uuid=request.browser_uuid,
+            browser_fingerprint_hash=request.browser_fingerprint_hash
+        )
         
         # Store session data
         current_server_time = datetime.utcnow()
         sessions[session_id] = {
             "browser_identity_public_key": request.browser_identity_public_key,
+            "dpop_public_key": request.dpop_public_key,  # Store DPoP public key
             "browser_uuid": request.browser_uuid,
             "browser_fingerprint_hash": request.browser_fingerprint_hash,
             "session_encryption_key": session_encryption_key,
@@ -177,11 +248,20 @@ async def register_session(request: RegistrationRequest):
             "session_created_time": current_server_time.timestamp()
         }
         
+        # Map browser UUID to session ID for session recovery
+        browser_sessions[request.browser_uuid] = session_id
+        
+        # Generate initial DPoP nonce for the session
+        initial_nonce = generate_dpop_nonce(session_id)
+        
         logging.debug(f"Stored DPoP public key for session {session_id}: {request.dpop_public_key}")
+        logging.debug(f"Mapped browser UUID {request.browser_uuid} to session {session_id}")
+        logging.debug(f"Generated initial nonce for session {session_id}: {initial_nonce}")
         
         logging.debug(f"Session stored with ID: {session_id}")
         logging.debug(f"Total sessions: {len(sessions)}")
         logging.debug(f"Session keys: {list(sessions.keys())}")
+        logging.debug(f"Browser sessions: {browser_sessions}")
         
         # Clean up handshake data
         del handshake_nonces[request.handshake_nonce]
@@ -191,19 +271,47 @@ async def register_session(request: RegistrationRequest):
         token_ciphertext = aesgcm.encrypt(token_nonce, session_token.encode(), None)
         encrypted_token = base64.b64encode(token_nonce + token_ciphertext).decode()
         
-        return {
+        # Create response with HTTP-only cookie for session persistence
+        response_data = {
             "success": True,
             "session_id": session_id,
-            "encrypted_session_token": encrypted_token
+            "encrypted_session_token": encrypted_token,
+            "browser_uuid": request.browser_uuid,
+            "session_mapping": {
+                "browser_uuid": request.browser_uuid,
+                "session_id": session_id
+            },
+            "initial_dpop_nonce": initial_nonce
         }
+        
+        # In a real implementation, you would set an HTTP-only cookie here
+        # For demonstration, we'll return the mapping in the response
+        return response_data
         
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Registration failed: {str(e)}")
 
 @app.post("/verify-dpop")
-async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), dpop: str = Header(None)):
+async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), dpop: str = Header(None), dpop_nonce: str = Header(None), client_ip: str = None):
     """Verify DPoP proof and handle authenticated requests"""
     try:
+        # Basic rate limiting (in production, use Redis or similar)
+        if client_ip:
+            current_time = datetime.utcnow()
+            if client_ip not in rate_limit_attempts:
+                rate_limit_attempts[client_ip] = {"count": 0, "window_start": current_time}
+            
+            # Reset window if more than 1 minute has passed
+            if current_time - rate_limit_attempts[client_ip]["window_start"] > timedelta(minutes=1):
+                rate_limit_attempts[client_ip] = {"count": 0, "window_start": current_time}
+            
+            # Increment attempt count
+            rate_limit_attempts[client_ip]["count"] += 1
+            
+            # Block if more than 10 attempts per minute
+            if rate_limit_attempts[client_ip]["count"] > 10:
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        
         # Extract session token from Authorization header
         if not authorization or not authorization.startswith("DPoP "):
             raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
@@ -231,6 +339,16 @@ async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), d
             raise HTTPException(status_code=401, detail="Invalid session")
         
         session = sessions[session_id]
+        
+        # Validate session bindings
+        if session_data.get("browser_uuid") != session.get("browser_uuid"):
+            logging.warning(f"Session binding mismatch - Browser UUID: expected {session.get('browser_uuid')}, got {session_data.get('browser_uuid')}")
+            raise HTTPException(status_code=401, detail="Session binding validation failed")
+        
+        if session_data.get("fingerprint_hash") != session.get("browser_fingerprint_hash"):
+            logging.warning(f"Session binding mismatch - Fingerprint: expected {session.get('browser_fingerprint_hash')}, got {session_data.get('fingerprint_hash')}")
+            raise HTTPException(status_code=401, detail="Session binding validation failed")
+        
         logging.debug(f"Retrieved DPoP public key for session {session_id}: {session.get('dpop_public_key')}")
         logging.debug(f"Server session created time: {session.get('session_created_time')}")
         logging.debug(f"Time since JWT creation: {datetime.utcnow().timestamp() - session_data.get('iat')} seconds")
@@ -245,8 +363,9 @@ async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), d
             method="POST",
             url="/verify-dpop",
             access_token=session_token,
-            nonce=request.dpop_nonce if hasattr(request, 'dpop_nonce') and require_nonce else None,
-            session_id=session_id
+            nonce=dpop_nonce if require_nonce else None,
+            session_id=session_id,
+            stored_dpop_public_key=session.get("dpop_public_key")
         ):
             raise HTTPException(status_code=401, detail="Invalid DPoP proof")
         
@@ -270,7 +389,9 @@ async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), d
         
         # Handle encrypted payload if provided
         decrypted_payload = None
+        encrypted_payload_received = None
         if request.encrypted_payload:
+            encrypted_payload_received = request.encrypted_payload
             session_encryption_key = session["session_encryption_key"]
             aesgcm = AESGCM(session_encryption_key)
             
@@ -279,40 +400,59 @@ async def verify_dpop(request: DPoPRequest, authorization: str = Header(None), d
             ciphertext = encrypted_data[12:]
             
             decrypted_payload = aesgcm.decrypt(nonce, ciphertext, None)
+            
+            # Log the decrypted message for verification
+            try:
+                decrypted_json = json.loads(decrypted_payload.decode())
+                if 'message' in decrypted_json:
+                    logging.info(f"🔓 DECRYPTED MESSAGE from session {session_id}: '{decrypted_json['message']}'")
+                    print(f"🔓 DECRYPTED MESSAGE from session {session_id}: '{decrypted_json['message']}'")
+            except Exception as e:
+                logging.warning(f"Could not parse decrypted payload as JSON: {e}")
         
-        return {
+        # Create response with DPoP nonce in header
+        response_data = {
             "success": True,
-            "session_id": session_id,
-            "browser_uuid": session["browser_uuid"],
-            "browser_identity_public_key": session["browser_identity_public_key"],
-            "decrypted_payload": decrypted_payload.decode() if decrypted_payload else None,
-            "dpop_nonce": new_nonce
+            "encrypted_payload_received": encrypted_payload_received
         }
+        
+        # In a real implementation, you would return a Response object with headers
+        # For now, we'll add the nonce to the response data for demonstration
+        # but note that it should be in the 'DPoP-Nonce' header
+        response_data["_dpop_nonce_header"] = new_nonce  # This should be in header
+        
+        return response_data
         
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"DPoP verification failed: {str(e)}")
 
-def create_session_token(session_id: str) -> str:
-    """Create a signed session token with minimal sensitive data"""
+def create_session_token(session_id: str, browser_uuid: str, browser_fingerprint_hash: str) -> str:
+    """Create a signed session token with security bindings"""
     current_time = datetime.utcnow()
     logging.debug(f"Creating session token with time: {current_time.timestamp()} UTC")
     
+    # Create session token with security bindings
     payload = {
         "session_id": session_id,
+        "browser_uuid": browser_uuid,  # Bind to browser identity
+        "fingerprint_hash": browser_fingerprint_hash,  # Bind to device fingerprint
+        "jti": secrets.token_urlsafe(32),  # Unique token ID for revocation
         "iat": current_time,
         "exp": current_time + timedelta(hours=24)
     }
     
-    # In production, use a proper JWT library with the server's private key
-    # Note: Session token is signed but not encrypted. For additional security,
-    # consider encrypting with the Session Encryption Key (SEK) if the client
-    # can handle decryption.
-    return jwt.encode(payload, "server-secret-key", algorithm="HS256")
+    # Use cryptographically secure secret
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 def verify_session_token(token: str) -> Dict[str, Any]:
-    """Verify and decode session token"""
+    """Verify and decode session token with security checks"""
     try:
-        payload = jwt.decode(token, "server-secret-key", algorithms=["HS256"])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        
+        # Check if session has been invalidated
+        if payload.get("jti") in invalidated_sessions:
+            raise HTTPException(status_code=401, detail="Session has been invalidated")
+        
         return payload
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid session token")
@@ -350,7 +490,7 @@ def validate_dpop_nonce(session_id: str, nonce: str) -> bool:
     nonce_data["used"] = True
     return True
 
-def verify_dpop_proof(dpop_proof: str, method: str = None, url: str = None, access_token: str = None, nonce: str = None, session_id: str = None) -> bool:
+def verify_dpop_proof(dpop_proof: str, method: str = None, url: str = None, access_token: str = None, nonce: str = None, session_id: str = None, stored_dpop_public_key: str = None) -> bool:
     """Verify DPoP proof signature and claims"""
     try:
         logging.debug(f"Verifying DPoP proof: method={method}, url={url}, nonce={nonce}")
@@ -439,28 +579,45 @@ def verify_dpop_proof(dpop_proof: str, method: str = None, url: str = None, acce
         
         # Verify JWT signature
         try:
-            # Extract public key from DPoP proof header
-            if 'jwk' not in header:
-                logging.error("DPoP proof missing jwk in header")
+            # Use stored DPoP public key for verification
+            if not stored_dpop_public_key:
+                logging.error("No stored DPoP public key found for session")
                 return False
             
-            jwk = header['jwk']
-            if jwk.get('kty') != 'EC' or jwk.get('crv') != 'P-256':
-                logging.error("DPoP proof jwk has wrong key type or curve")
-                return False
+            # Import the stored DPoP public key
+            stored_public_key_bytes = base64.b64decode(stored_dpop_public_key)
+            dpop_public_key_obj = serialization.load_der_public_key(stored_public_key_bytes)
             
-            # Convert JWK to DER format for cryptography library
-            x_bytes = base64.b64decode(jwk['x'] + '=' * (4 - len(jwk['x']) % 4))
-            y_bytes = base64.b64decode(jwk['y'] + '=' * (4 - len(jwk['y']) % 4))
-            
-            # Create DER public key
-            from cryptography.hazmat.primitives.asymmetric import ec
-            public_numbers = ec.EllipticCurvePublicNumbers(
-                int.from_bytes(x_bytes, 'big'),
-                int.from_bytes(y_bytes, 'big'),
-                ec.SECP256R1()
-            )
-            dpop_public_key_obj = public_numbers.public_key()
+            # Verify that the JWT header contains the same public key (security check)
+            if 'jwk' in header:
+                jwk = header['jwk']
+                if jwk.get('kty') != 'EC' or jwk.get('crv') != 'P-256':
+                    logging.error("DPoP proof jwk has wrong key type or curve")
+                    return False
+                
+                # Convert JWK to DER format for comparison
+                x_bytes = base64.b64decode(jwk['x'] + '=' * (4 - len(jwk['x']) % 4))
+                y_bytes = base64.b64decode(jwk['y'] + '=' * (4 - len(jwk['y']) % 4))
+                
+                # Create DER public key from JWK
+                from cryptography.hazmat.primitives.asymmetric import ec
+                jwk_public_numbers = ec.EllipticCurvePublicNumbers(
+                    int.from_bytes(x_bytes, 'big'),
+                    int.from_bytes(y_bytes, 'big'),
+                    ec.SECP256R1()
+                )
+                jwk_public_key_obj = jwk_public_numbers.public_key()
+                
+                # Compare the public keys
+                if dpop_public_key_obj.public_bytes(
+                    encoding=serialization.Encoding.DER,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                ) != jwk_public_key_obj.public_bytes(
+                    encoding=serialization.Encoding.DER,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                ):
+                    logging.error("DPoP proof public key mismatch with stored key")
+                    return False
             
             # Create the signature input
             signature_input = f"{parts[0]}.{parts[1]}"

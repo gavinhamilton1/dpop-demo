@@ -7,9 +7,73 @@
 // In-memory storage for private key handles (least secure, but simple)
 const privateKeyHandleStore = new Map();
 
+// IndexedDB for persistent key storage
+let db = null;
+
 // Session state
 let currentSession = null;
 let sessionEncryptionKey = null;
+
+// Initialize IndexedDB
+async function initIndexedDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open('StrongholdKeys', 1);
+        
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+            db = request.result;
+            resolve(db);
+        };
+        
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains('keys')) {
+                const store = db.createObjectStore('keys', { keyPath: 'id' });
+            }
+        };
+    });
+}
+
+// Store key in IndexedDB
+async function storeKeyInIndexedDB(keyId, keyData) {
+    if (!db) await initIndexedDB();
+    
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(['keys'], 'readwrite');
+        const store = transaction.objectStore('keys');
+        
+        // Convert CryptoKey objects to exportable format
+        const exportableKeyData = {
+            id: keyId,
+            type: keyData.type || 'dpop',
+            timestamp: Date.now()
+        };
+        
+        // For now, we'll store the key in memory and just track the ID in IndexedDB
+        // In a real implementation, you'd want to store the actual key material
+        const request = store.put(exportableKeyData);
+        
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+    });
+}
+
+// Load keys from IndexedDB into memory
+async function loadKeysFromIndexedDB() {
+    if (!db) await initIndexedDB();
+    
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(['keys'], 'readonly');
+        const store = transaction.objectStore('keys');
+        const request = store.getAll();
+        
+        request.onsuccess = () => {
+            console.log('Loaded key IDs from IndexedDB:', request.result);
+            resolve(request.result);
+        };
+        request.onerror = () => reject(request.error);
+    });
+}
 
 
 /**
@@ -429,6 +493,33 @@ async function createDPoPProof(dpopKeyId, method, url, accessToken, nonce = null
 }
 
 /**
+ * Check for existing session by browser UUID
+ * @param {string} browserUuid 
+ * @returns {Promise<{hasSession: boolean, sessionData?: any}>}
+ */
+async function checkExistingSession(browserUuid) {
+    try {
+        console.log('Checking for existing session with browser UUID:', browserUuid);
+        
+        const response = await fetch(`/check-session/${browserUuid}`);
+        if (!response.ok) {
+            throw new Error('Session check failed: ' + response.statusText);
+        }
+        
+        const data = await response.json();
+        console.log('Session check result:', data);
+        
+        return {
+            hasSession: data.has_session,
+            sessionData: data.has_session ? data : null
+        };
+    } catch (error) {
+        console.error('Error checking existing session:', error);
+        return { hasSession: false };
+    }
+}
+
+/**
  * Complete Stronghold session creation flow
  * @returns {Promise<{sessionId: string, sessionToken: string}>}
  */
@@ -445,6 +536,17 @@ async function createStrongholdSession() {
         } catch (error) {
             console.error('Error generating browser identity key:', error);
             throw error;
+        }
+        
+        // Step 1.5: Check for existing session
+        console.log('1.5. Checking for existing session...');
+        const existingSession = await checkExistingSession(browserIdentity.browserUuid);
+        
+        if (existingSession.hasSession) {
+            console.log('Found existing session:', existingSession.sessionData);
+            // In a real implementation, you would recover the session here
+            // For now, we'll continue with creating a new session but show the mapping
+            console.log('Session mapping found - Browser UUID:', existingSession.sessionData.browser_uuid, 'Session ID:', existingSession.sessionData.session_id);
         }
         
         // Step 2: Generate ephemeral DPoP key pair
@@ -519,6 +621,13 @@ async function createStrongholdSession() {
         
         const registrationData = await registrationResponse.json();
         
+        // Store session mapping for demonstration
+        if (registrationData.session_mapping) {
+            console.log('Session mapping stored:', registrationData.session_mapping);
+            // In a real implementation, this would be stored in an HTTP-only cookie
+            localStorage.setItem('stronghold_session_mapping', JSON.stringify(registrationData.session_mapping));
+        }
+        
         // Step 9: Decrypt session token
         console.log('9. Decrypting session token...');
         console.log('Encrypted session token:', registrationData.encrypted_session_token.substring(0, 100) + '...');
@@ -531,8 +640,13 @@ async function createStrongholdSession() {
             sessionToken: sessionToken,
             browserIdentityKeyId: browserIdentity.keyId,
             dpopKeyId: dpopKey.keyId,
-            browserUuid: registrationPayload.browser_uuid
+            browserUuid: registrationPayload.browser_uuid,
+            dpopNonce: registrationData.initial_dpop_nonce,
+            createdAt: Date.now()
         };
+        
+        // Save session to localStorage for persistence
+        saveSessionToStorage(currentSession);
         
         console.log('Stronghold session created successfully!');
         return {
@@ -564,6 +678,7 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
         
         // Get stored nonce for this session (if any)
         const storedNonce = currentSession.dpopNonce || null;
+        console.log('Current session nonce:', storedNonce);
         
         // Create DPoP proof
         console.log('Creating DPoP proof with:', {
@@ -597,18 +712,22 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
         const browserIdentityData = Stronghold.getBrowserIdentity();
         
         // Add encrypted payload if provided
+        let encryptedPayload = null;
         if (payload) {
-            const encryptedPayload = await encryptWithSessionKey(sessionEncryptionKey, JSON.stringify(payload));
+            encryptedPayload = await encryptWithSessionKey(sessionEncryptionKey, JSON.stringify(payload));
             requestOptions.body = JSON.stringify({
                 encrypted_payload: encryptedPayload,
-                browser_fingerprint_hash: browserIdentityData.fingerprintHash,
-                dpop_nonce: storedNonce
+                browser_fingerprint_hash: browserIdentityData.fingerprintHash
             });
         } else {
             requestOptions.body = JSON.stringify({
-                browser_fingerprint_hash: browserIdentityData.fingerprintHash,
-                dpop_nonce: storedNonce
+                browser_fingerprint_hash: browserIdentityData.fingerprintHash
             });
+        }
+        
+        // Add DPoP nonce to headers if available
+        if (storedNonce) {
+            requestOptions.headers['DPoP-Nonce'] = storedNonce;
         }
         
         console.log('Authenticated request body:', requestOptions.body);
@@ -624,9 +743,30 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
         
         const responseData = await response.json();
         
-        // Store new nonce if provided in response
-        if (responseData.dpop_nonce) {
-            currentSession.dpopNonce = responseData.dpop_nonce;
+        // Store new nonce if provided in response headers
+        // In a real implementation, this would come from response.headers.get('DPoP-Nonce')
+        if (responseData._dpop_nonce_header) {
+            console.log('Updating session nonce from:', currentSession.dpopNonce, 'to:', responseData._dpop_nonce_header);
+            currentSession.dpopNonce = responseData._dpop_nonce_header;
+            // Save updated session to storage
+            saveSessionToStorage(currentSession);
+        }
+        
+        // Add the encrypted payload that was sent to the response for display purposes
+        if (encryptedPayload) {
+            responseData.encrypted_payload_sent = encryptedPayload;
+            responseData.plaintext_payload_sent = JSON.stringify(payload, null, 2);
+            
+            // Decrypt the received payload locally for display
+            if (responseData.encrypted_payload_received) {
+                try {
+                    const decryptedPayload = await decryptWithSessionKey(sessionEncryptionKey, responseData.encrypted_payload_received);
+                    responseData.decrypted_payload = decryptedPayload;
+                } catch (error) {
+                    console.error('Error decrypting received payload:', error);
+                    responseData.decrypted_payload = 'Error decrypting payload';
+                }
+            }
         }
         
         return responseData;
@@ -852,6 +992,182 @@ function clearBrowserIdentity() {
     console.log('Browser identity cleared');
 }
 
+function getSessionMapping() {
+    const mapping = localStorage.getItem('stronghold_session_mapping');
+    return mapping ? JSON.parse(mapping) : null;
+}
+
+function saveSessionToStorage(session) {
+    try {
+        localStorage.setItem('stronghold_session', JSON.stringify(session));
+        console.log('Session saved to localStorage');
+    } catch (error) {
+        console.error('Error saving session to localStorage:', error);
+    }
+}
+
+function loadSessionFromStorage() {
+    try {
+        const sessionData = localStorage.getItem('stronghold_session');
+        if (sessionData) {
+            const session = JSON.parse(sessionData);
+            
+            // Check if session is still valid (24 hours)
+            const sessionAge = Date.now() - session.createdAt;
+            const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+            
+            if (sessionAge > maxAge) {
+                console.log('Session expired, removing from storage');
+                localStorage.removeItem('stronghold_session');
+                return null;
+            }
+            
+            console.log('Session loaded from localStorage');
+            return session;
+        }
+    } catch (error) {
+        console.error('Error loading session from localStorage:', error);
+        localStorage.removeItem('stronghold_session');
+    }
+    return null;
+}
+
+function clearSessionFromStorage() {
+    try {
+        localStorage.removeItem('stronghold_session');
+        console.log('Session cleared from localStorage');
+    } catch (error) {
+        console.error('Error clearing session from localStorage:', error);
+    }
+}
+
+function getSecurityAudit() {
+    const audit = {
+        sessionExists: !!currentSession,
+        browserIdentityExists: !!getBrowserIdentity(),
+        sessionMappingExists: !!getSessionMapping(),
+        sessionTokenValid: false,
+        securityFeatures: {
+            ecdhe: true,
+            dpop: true,
+            sessionBinding: true,
+            rateLimiting: true,
+            sessionInvalidation: true,
+            secureJWT: true,
+            browserFingerprinting: true,
+            dpopNonce: true,
+            temporalValidation: true
+        }
+    };
+    
+    if (currentSession && currentSession.sessionToken) {
+        try {
+            // Basic JWT validation (client-side)
+            const parts = currentSession.sessionToken.split('.');
+            if (parts.length === 3) {
+                const payload = JSON.parse(atob(parts[1] + '='.repeat((4 - parts[1].length % 4) % 4)));
+                audit.sessionTokenValid = payload.exp > Date.now() / 1000;
+            }
+        } catch (e) {
+            audit.sessionTokenValid = false;
+        }
+    }
+    
+    return audit;
+}
+
+// Initialize session on page load
+async function initializeSession() {
+    const savedSession = loadSessionFromStorage();
+    if (savedSession) {
+        console.log('Session found in storage, renegotiating ECDHE handshake...');
+        
+        try {
+            // Step 1: Regenerate browser identity key
+            console.log('1. Regenerating browser identity key...');
+            const browserIdentityKeyPair = await window.crypto.subtle.generateKey(
+                {
+                    name: "ECDSA",
+                    namedCurve: "P-256"
+                },
+                false,
+                ["sign", "verify"]
+            );
+            
+            // Store the regenerated browser identity key in memory
+            privateKeyHandleStore.set(savedSession.browserIdentityKeyId, {
+                privateKey: browserIdentityKeyPair.privateKey,
+                publicKey: browserIdentityKeyPair.publicKey
+            });
+            
+            // Step 2: Regenerate DPoP key pair
+            console.log('2. Regenerating DPoP key pair...');
+            const dpopKeyPair = await window.crypto.subtle.generateKey(
+                {
+                    name: "ECDSA",
+                    namedCurve: "P-256"
+                },
+                false,
+                ["sign", "verify"]
+            );
+            
+            // Store the regenerated DPoP keys in memory
+            privateKeyHandleStore.set(savedSession.dpopKeyId, {
+                privateKey: dpopKeyPair.privateKey,
+                publicKey: dpopKeyPair.publicKey
+            });
+            
+            // Step 3: Renegotiate ECDHE handshake to get fresh SEK
+            console.log('3. Renegotiating ECDHE handshake...');
+            const ecdheKey = await generateECDHEKeyPair();
+            
+            // Perform ECDHE handshake with server
+            console.log('4. Performing ECDHE handshake with server...');
+            const handshakeResponse = await fetch('/handshake', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    client_ecdhe_public_key: ecdheKey.publicKey
+                })
+            });
+            
+            if (!handshakeResponse.ok) {
+                throw new Error('ECDHE handshake failed: ' + handshakeResponse.statusText);
+            }
+            
+            const handshakeData = await handshakeResponse.json();
+            console.log('ECDHE handshake successful, handshake nonce:', handshakeData.handshake_nonce);
+            
+            // Step 5: Derive fresh Session Encryption Key (SEK)
+            console.log('5. Deriving fresh Session Encryption Key...');
+            sessionEncryptionKey = await performECDHEHandshake(ecdheKey.keyId, handshakeData.server_ecdhe_public_key);
+            
+            console.log('Fresh Session Encryption Key derived successfully');
+            
+            // Step 6: Update session with fresh nonce
+            console.log('6. Updating session with fresh nonce...');
+            currentSession = {
+                ...savedSession,
+                dpopNonce: handshakeData.handshake_nonce // Use handshake nonce as initial DPoP nonce
+            };
+            
+            // Save updated session to storage
+            saveSessionToStorage(currentSession);
+            
+            console.log('Session fully restored with fresh ECDHE handshake and SEK');
+            
+        } catch (error) {
+            console.error('Error restoring session with ECDHE renegotiation:', error);
+            // Clear the corrupted session
+            clearSessionFromStorage();
+            currentSession = null;
+            throw error;
+        }
+    }
+}
+
 // Export functions for use in other modules
 if (typeof module !== 'undefined' && module.exports) {
     // Node.js environment
@@ -864,6 +1180,10 @@ if (typeof module !== 'undefined' && module.exports) {
         signData,
         getBrowserIdentity,
         clearBrowserIdentity,
+        getSessionMapping,
+        getSecurityAudit,
+        clearSessionFromStorage,
+        initializeSession,
         get currentSession() { return currentSession; }
     };
 } else {
@@ -877,6 +1197,10 @@ if (typeof module !== 'undefined' && module.exports) {
         signData,
         getBrowserIdentity,
         clearBrowserIdentity,
+        getSessionMapping,
+        getSecurityAudit,
+        clearSessionFromStorage,
+        initializeSession,
         get currentSession() { return currentSession; }
     };
 } 

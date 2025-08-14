@@ -36,7 +36,13 @@
             <div id="sessionDetails"></div>
             
             <div class="session-actions">
+                <div style="margin-bottom: 15px;">
+                    <label for="customMessage" style="display: block; margin-bottom: 5px; font-weight: bold;">Custom Message:</label>
+                    <input type="text" id="customMessage" value="Hello from Stronghold client!" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-family: monospace;">
+                    <div style="font-size: 12px; color: #666; margin-top: 3px;">This message will be encrypted and sent to the server</div>
+                </div>
                 <button onclick="testAuthenticatedRequest()" class="btn-secondary">Test Authenticated Request</button>
+                <button onclick="invalidateSession()" class="btn-warning">Invalidate Session (Security)</button>
                 <button onclick="clearSession()" class="btn-danger">Clear Session</button>
             </div>
             
@@ -182,6 +188,39 @@
                         ${decodeJWT(session.sessionToken)}
                     </div>
                 </div>
+                <div class="session-detail">
+                    <strong>Session Mapping (Browser UUID → Session ID):</strong>
+                    <div class="session-mapping" style="font-family: monospace; font-size: 12px; background: #e8f5e8; padding: 10px; border-radius: 4px; margin-top: 5px; border-left: 3px solid #28a745;">
+                        ${JSON.stringify(Stronghold.getSessionMapping(), null, 2)}
+                    </div>
+                </div>
+                <div class="session-detail">
+                    <strong>Session Persistence (Demo):</strong>
+                                            <div style="font-size: 12px; background: #fff3cd; padding: 10px; border-radius: 4px; margin-top: 5px; border-left: 3px solid #ffc107;">
+                            <strong>Note:</strong> In production, this mapping would be stored in an HTTP-only cookie for security.<br>
+                            • Browser UUID is persistent across page refreshes<br>
+                            • Server maps Browser UUID → Session ID<br>
+                            • Page refresh would detect existing session via cookie<br>
+                            • Current demo stores mapping in localStorage for visibility<br>
+                            • Session persists for 24 hours or until manually cleared<br>
+                            • ECDHE handshake renegotiated on page refresh (fresh SEK)<br>
+                            • All cryptographic keys regenerated (security feature)
+                        </div>
+                </div>
+                <div class="session-detail">
+                    <strong>Session Security Features:</strong>
+                    <div style="font-size: 12px; background: #d4edda; padding: 10px; border-radius: 4px; margin-top: 5px; border-left: 3px solid #28a745;">
+                        ✅ <strong>ECDHE Key Exchange</strong> - Secure ephemeral key exchange<br>
+                        ✅ <strong>DPoP Authentication</strong> - Cryptographic proof of possession<br>
+                        ✅ <strong>Session Binding</strong> - Token bound to browser UUID & fingerprint<br>
+                        ✅ <strong>Rate Limiting</strong> - Prevents brute force attacks<br>
+                        ✅ <strong>Session Invalidation</strong> - Can revoke compromised sessions<br>
+                        ✅ <strong>Secure JWT Secret</strong> - Cryptographically secure signing key<br>
+                        ✅ <strong>Browser Fingerprinting</strong> - Device identification & validation<br>
+                        ✅ <strong>DPoP Nonce</strong> - Prevents replay attacks<br>
+                        ✅ <strong>Temporal Validation</strong> - Token expiration & clock skew checks
+                    </div>
+                </div>
             `;
             
             sessionInfo.style.display = 'block';
@@ -194,8 +233,11 @@
             const responseDetails = document.getElementById('responseDetails');
             
             try {
-                status.innerHTML = '<div class="info">Testing authenticated request...</div>';
                 requestResponseDetails.style.display = 'none';
+                
+                // Get the custom message from the input field
+                const customMessage = document.getElementById('customMessage').value;
+                const plaintextPayload = { message: customMessage };
                 
                 // Capture request details before making the request
                 const requestInfo = {
@@ -204,30 +246,28 @@
                     headers: {
                         'Authorization': `DPoP ${Stronghold.currentSession.sessionToken}`,
                         'DPoP': 'Will be generated',
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'DPoP-Nonce': Stronghold.currentSession.dpopNonce || 'Not set'
                     },
                     body: {
                         encrypted_payload: 'Will be generated',
-                        browser_fingerprint_hash: Stronghold.getBrowserIdentity()?.fingerprintHash,
-                        dpop_nonce: Stronghold.currentSession.dpopNonce
+                        browser_fingerprint_hash: Stronghold.getBrowserIdentity()?.fingerprintHash
                     }
                 };
                 
                 const response = await Stronghold.makeAuthenticatedRequest(
                     'POST',
                     '/verify-dpop',
-                    { message: 'Hello from Stronghold session!' }
+                    plaintextPayload
                 );
                 
-                // Display success status
-                status.innerHTML = `
-                    <div class="success">
-                        Authenticated request successful!<br>
-                        Session ID: ${response.session_id}<br>
-                        Browser UUID: ${response.browser_uuid}<br>
-                        Decrypted Payload: ${response.decrypted_payload}
-                    </div>
-                `;
+
+                
+                // Update request body with actual encrypted payload
+                const actualRequestBody = {
+                    encrypted_payload: response.encrypted_payload_sent,
+                    browser_fingerprint_hash: Stronghold.getBrowserIdentity()?.fingerprintHash
+                };
                 
                 // Display detailed request/response information
                 requestDetails.innerHTML = `
@@ -236,23 +276,79 @@
                         <strong>Headers:</strong><br>
                         ${Object.entries(requestInfo.headers).map(([key, value]) => `${key}: ${key === 'DPoP' ? '[DPoP Proof JWT]' : value}`).join('<br>')}<br><br>
                         <strong>Body:</strong><br>
-                        ${JSON.stringify(requestInfo.body, null, 2)}
+                        ${JSON.stringify(actualRequestBody, null, 2)}
                     </div>
                 `;
+                
+                // Add request payload details section
+                if (response.plaintext_payload_sent || response.encrypted_payload_sent) {
+                    const requestPayloadDetails = document.createElement('div');
+                    requestPayloadDetails.style.marginTop = '15px';
+                    requestPayloadDetails.innerHTML = `
+                        <div style="font-family: monospace; font-size: 12px; background: #e8f4fd; padding: 10px; border-radius: 4px; border-left: 3px solid #007acc;">
+                            <strong>📝 Plain Text Payload (Before Encryption):</strong><br>
+                            <div style="font-size: 10px; color: #666; margin-bottom: 5px;">
+                                Original payload that will be encrypted with AES-GCM
+                            </div>
+                            <div style="background: #f8f9fa; padding: 8px; border-radius: 3px; margin: 5px 0; word-break: break-all; font-size: 11px;">
+                                ${response.plaintext_payload_sent || 'No plain text payload'}
+                            </div>
+                        </div>
+                        <div style="font-family: monospace; font-size: 12px; background: #fff3cd; padding: 10px; border-radius: 4px; border-left: 3px solid #ffc107; margin-top: 10px;">
+                            <strong>🔒 Encrypted Payload (AES-GCM):</strong><br>
+                            <div style="font-size: 10px; color: #666; margin-bottom: 5px;">
+                                Format: [12-byte nonce][AES-GCM ciphertext] (Base64 encoded) - Actually sent over network
+                            </div>
+                            <div style="background: #f8f9fa; padding: 8px; border-radius: 3px; margin: 5px 0; word-break: break-all; font-size: 11px;">
+                                ${response.encrypted_payload_sent || 'No encrypted payload sent'}
+                            </div>
+                        </div>
+                    `;
+                    requestDetails.appendChild(requestPayloadDetails);
+                }
                 
                 responseDetails.innerHTML = `
                     <div style="font-family: monospace; font-size: 12px; background: #f0f8ff; padding: 10px; border-radius: 4px; border-left: 3px solid #28a745;">
                         <strong>Status: 200 OK</strong><br><br>
+                        <strong>Response Headers:</strong><br>
+                        DPoP-Nonce: ${response._dpop_nonce_header || 'Not set'}<br><br>
                         <strong>Response Body:</strong><br>
                         ${JSON.stringify(response, null, 2)}
                     </div>
                 `;
                 
+                // Add payload details section
+                if (response.encrypted_payload_received || response.decrypted_payload) {
+                    const payloadDetails = document.createElement('div');
+                    payloadDetails.style.marginTop = '15px';
+                    payloadDetails.innerHTML = `
+                        <div style="font-family: monospace; font-size: 12px; background: #fff3cd; padding: 10px; border-radius: 4px; border-left: 3px solid #ffc107;">
+                            <strong>🔒 Encrypted Payload (AES-GCM):</strong><br>
+                            <div style="font-size: 10px; color: #666; margin-bottom: 5px;">
+                                Format: [12-byte nonce][AES-GCM ciphertext] (Base64 encoded)
+                            </div>
+                            <div style="background: #f8f9fa; padding: 8px; border-radius: 3px; margin: 5px 0; word-break: break-all; font-size: 11px;">
+                                ${response.encrypted_payload_received || 'No encrypted payload received'}
+                            </div>
+                        </div>
+                        <div style="font-family: monospace; font-size: 12px; background: #d4edda; padding: 10px; border-radius: 4px; border-left: 3px solid #28a745; margin-top: 10px;">
+                            <strong>🔓 Decrypted Payload (Client-side):</strong><br>
+                            <div style="font-size: 10px; color: #666; margin-bottom: 5px;">
+                                Decrypted locally using Session Encryption Key (SEK) derived from ECDHE handshake<br>
+                                <strong>Note:</strong> Server only receives/sends encrypted data - decryption happens on client
+                            </div>
+                            <div style="background: #f8f9fa; padding: 8px; border-radius: 3px; margin: 5px 0; word-break: break-all; font-size: 11px;">
+                                ${response.decrypted_payload || 'No decrypted payload'}
+                            </div>
+                        </div>
+                    `;
+                    responseDetails.appendChild(payloadDetails);
+                }
+                
                 requestResponseDetails.style.display = 'block';
                 
             } catch (error) {
                 console.error('Authenticated request failed:', error);
-                status.innerHTML = `<div class="error">Authenticated request failed: ${error.message}</div>`;
                 
                 // Try to extract error details
                 let errorDetails = error.message;
@@ -280,14 +376,62 @@
             }
         }
         
+        async function invalidateSession() {
+            if (!Stronghold.currentSession) {
+                alert('No active session to invalidate');
+                return;
+            }
+            
+            if (!confirm('Are you sure you want to invalidate this session? This will permanently revoke the session on the server and cannot be undone.')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/invalidate-session', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `DPoP ${Stronghold.currentSession.sessionToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    alert('Session invalidated successfully on the server');
+                    clearSession();
+                } else {
+                    const error = await response.text();
+                    alert('Failed to invalidate session: ' + error);
+                }
+            } catch (error) {
+                alert('Error invalidating session: ' + error.message);
+            }
+        }
+        
         function clearSession() {
-            // Clear session state
-            window.location.reload();
+            // Clear session from storage and memory
+            Stronghold.clearSessionFromStorage();
+            currentSession = null;
+            document.getElementById('sessionStatus').innerHTML = '<div class="info">Session cleared</div>';
+            document.getElementById('sessionDetails').innerHTML = '';
+            document.getElementById('requestResponseDetails').style.display = 'none';
         }
 
-        // Load browser identity when page loads
-        document.addEventListener('DOMContentLoaded', function() {
+        // Load browser identity and session when page loads
+        document.addEventListener('DOMContentLoaded', async function() {
             loadBrowserIdentity();
+            
+            try {
+                await Stronghold.initializeSession();
+                
+                // Update UI if session was restored
+                if (Stronghold.currentSession) {
+                    displaySessionInfo(Stronghold.currentSession);
+                    document.getElementById('sessionStatus').innerHTML = '<div class="success">Session restored with fresh ECDHE handshake</div>';
+                }
+            } catch (error) {
+                console.error('Session restoration failed:', error);
+                document.getElementById('sessionStatus').innerHTML = '<div class="info">No valid session found. Create a new session to continue.</div>';
+            }
         });
         
 

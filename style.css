@@ -96,6 +96,20 @@ button:disabled {
     background-color: #c82333;
 }
 
+.btn-warning {
+    background-color: #ffc107;
+    color: #212529;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin: 5px;
+}
+
+.btn-warning:hover {
+    background-color: #e0a800;
+}
+
 .result {
     margin-top: 20px;
 }
