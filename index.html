@@ -180,28 +180,31 @@
                     <strong>DPoP Key ID:</strong> ${Stronghold.currentSession.dpopKeyId}
                 </div>
                 <div class="session-detail">
-                    <strong>Session Token:</strong> <span class="token-preview">${session.sessionToken.substring(0, 50)}...</span>
+                    <strong>Session Token:</strong> <span class="token-preview">${session.sessionToken ? session.sessionToken.substring(0, 50) + '...' : 'Not available (session restored)'}</span>
                 </div>
                 <div class="session-detail">
                     <strong>Session Token (Decoded):</strong>
                     <div class="token-decoded" style="font-family: monospace; font-size: 12px; background: #f0f8ff; padding: 10px; border-radius: 4px; margin-top: 5px; max-height: 300px; overflow-y: auto; border-left: 3px solid #007acc;">
-                        ${decodeJWT(session.sessionToken)}
+                        ${session.sessionToken ? decodeJWT(session.sessionToken) : 'Session token not available (session restored from server)'}
                     </div>
                 </div>
                 <div class="session-detail">
                     <strong>Session Mapping (Browser UUID → Session ID):</strong>
                     <div class="session-mapping" style="font-family: monospace; font-size: 12px; background: #e8f5e8; padding: 10px; border-radius: 4px; margin-top: 5px; border-left: 3px solid #28a745;">
-                        ${JSON.stringify(Stronghold.getSessionMapping(), null, 2)}
+                        ${JSON.stringify({
+                            browser_uuid: session.browserUuid,
+                            session_id: session.sessionId
+                        }, null, 2)}
                     </div>
                 </div>
                 <div class="session-detail">
                     <strong>Session Persistence (Demo):</strong>
                                             <div style="font-size: 12px; background: #fff3cd; padding: 10px; border-radius: 4px; margin-top: 5px; border-left: 3px solid #ffc107;">
                             <strong>Note:</strong> In production, this mapping would be stored in an HTTP-only cookie for security.<br>
-                            • Browser UUID is persistent across page refreshes<br>
+                            • Browser UUID is persistent across page refreshes (stored in localStorage)<br>
                             • Server maps Browser UUID → Session ID<br>
-                            • Page refresh would detect existing session via cookie<br>
-                            • Current demo stores mapping in localStorage for visibility<br>
+                            • Page refresh detects existing session via browser UUID<br>
+                            • Session data stays on server (not stored in localStorage)<br>
                             • Session persists for 24 hours or until manually cleared<br>
                             • ECDHE handshake renegotiated on page refresh (fresh SEK)<br>
                             • All cryptographic keys regenerated (security feature)
@@ -397,7 +400,7 @@
                 
                 if (response.ok) {
                     alert('Session invalidated successfully on the server');
-                    clearSession();
+                    clearBrowserIdentity();
                 } else {
                     const error = await response.text();
                     alert('Failed to invalidate session: ' + error);
@@ -408,8 +411,8 @@
         }
         
         function clearSession() {
-            // Clear session from storage and memory
-            Stronghold.clearSessionFromStorage();
+            // Clear browser UUID from storage and memory
+            Stronghold.clearBrowserUuidFromStorage();
             currentSession = null;
             document.getElementById('sessionStatus').innerHTML = '<div class="info">Session cleared</div>';
             document.getElementById('sessionDetails').innerHTML = '';

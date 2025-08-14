@@ -100,6 +100,8 @@ async def check_session(browser_uuid: str):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Session check failed: {str(e)}")
 
+
+
 @app.post("/invalidate-session")
 async def invalidate_session(authorization: str = Header(None)):
     """Invalidate the current session (for security purposes)"""

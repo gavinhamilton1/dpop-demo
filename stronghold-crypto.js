@@ -581,11 +581,20 @@ async function createStrongholdSession() {
         // Step 6: Prepare registration payload
         console.log('6. Preparing registration payload...');
         const browserIdentityData = Stronghold.getBrowserIdentity();
+        // Get or generate browser UUID
+        const storedBrowserUuid = loadBrowserUuidFromStorage();
+        const browserUuid = storedBrowserUuid || crypto.randomUUID();
+        
+        // Save browser UUID to localStorage if it's new
+        if (!storedBrowserUuid) {
+            saveBrowserUuidToStorage(browserUuid);
+        }
+        
         const registrationPayload = {
             handshake_nonce: handshakeData.handshake_nonce,
             browser_identity_public_key: browserIdentity.publicKey,
             dpop_public_key: dpopKey.publicKey,
-            browser_uuid: browserIdentity.browserUuid || crypto.randomUUID(),
+            browser_uuid: browserUuid,
             browser_fingerprint_hash: browserIdentityData.fingerprintHash
         };
         
@@ -621,11 +630,9 @@ async function createStrongholdSession() {
         
         const registrationData = await registrationResponse.json();
         
-        // Store session mapping for demonstration
+        // Note: Session mapping would be stored in HTTP-only cookie in production
         if (registrationData.session_mapping) {
-            console.log('Session mapping stored:', registrationData.session_mapping);
-            // In a real implementation, this would be stored in an HTTP-only cookie
-            localStorage.setItem('stronghold_session_mapping', JSON.stringify(registrationData.session_mapping));
+            console.log('Session mapping (would be in HTTP-only cookie):', registrationData.session_mapping);
         }
         
         // Step 9: Decrypt session token
@@ -634,19 +641,15 @@ async function createStrongholdSession() {
         const sessionToken = await decryptWithSessionKey(sessionEncryptionKey, registrationData.encrypted_session_token);
         console.log('Decrypted session token:', sessionToken.substring(0, 100) + '...');
         
-        // Store session information
+        // Store session information in memory only
         currentSession = {
             sessionId: registrationData.session_id,
             sessionToken: sessionToken,
             browserIdentityKeyId: browserIdentity.keyId,
             dpopKeyId: dpopKey.keyId,
             browserUuid: registrationPayload.browser_uuid,
-            dpopNonce: registrationData.initial_dpop_nonce,
-            createdAt: Date.now()
+            dpopNonce: registrationData.initial_dpop_nonce
         };
-        
-        // Save session to localStorage for persistence
-        saveSessionToStorage(currentSession);
         
         console.log('Stronghold session created successfully!');
         return {
@@ -748,8 +751,6 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
         if (responseData._dpop_nonce_header) {
             console.log('Updating session nonce from:', currentSession.dpopNonce, 'to:', responseData._dpop_nonce_header);
             currentSession.dpopNonce = responseData._dpop_nonce_header;
-            // Save updated session to storage
-            saveSessionToStorage(currentSession);
         }
         
         // Add the encrypted payload that was sent to the response for display purposes
@@ -993,51 +994,40 @@ function clearBrowserIdentity() {
 }
 
 function getSessionMapping() {
-    const mapping = localStorage.getItem('stronghold_session_mapping');
-    return mapping ? JSON.parse(mapping) : null;
+    // Session mapping would be retrieved from HTTP-only cookie in production
+    // For demo purposes, return null since we're not storing it in localStorage
+    return null;
 }
 
-function saveSessionToStorage(session) {
+function saveBrowserUuidToStorage(browserUuid) {
     try {
-        localStorage.setItem('stronghold_session', JSON.stringify(session));
-        console.log('Session saved to localStorage');
+        localStorage.setItem('stronghold_browser_uuid', browserUuid);
+        console.log('Browser UUID saved to localStorage');
     } catch (error) {
-        console.error('Error saving session to localStorage:', error);
+        console.error('Error saving browser UUID to localStorage:', error);
     }
 }
 
-function loadSessionFromStorage() {
+function loadBrowserUuidFromStorage() {
     try {
-        const sessionData = localStorage.getItem('stronghold_session');
-        if (sessionData) {
-            const session = JSON.parse(sessionData);
-            
-            // Check if session is still valid (24 hours)
-            const sessionAge = Date.now() - session.createdAt;
-            const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-            
-            if (sessionAge > maxAge) {
-                console.log('Session expired, removing from storage');
-                localStorage.removeItem('stronghold_session');
-                return null;
-            }
-            
-            console.log('Session loaded from localStorage');
-            return session;
+        const browserUuid = localStorage.getItem('stronghold_browser_uuid');
+        if (browserUuid) {
+            console.log('Browser UUID loaded from localStorage');
+            return browserUuid;
         }
     } catch (error) {
-        console.error('Error loading session from localStorage:', error);
-        localStorage.removeItem('stronghold_session');
+        console.error('Error loading browser UUID from localStorage:', error);
+        localStorage.removeItem('stronghold_browser_uuid');
     }
     return null;
 }
 
-function clearSessionFromStorage() {
+function clearBrowserUuidFromStorage() {
     try {
-        localStorage.removeItem('stronghold_session');
-        console.log('Session cleared from localStorage');
+        localStorage.removeItem('stronghold_browser_uuid');
+        console.log('Browser UUID cleared from localStorage');
     } catch (error) {
-        console.error('Error clearing session from localStorage:', error);
+        console.error('Error clearing browser UUID from localStorage:', error);
     }
 }
 
@@ -1078,92 +1068,128 @@ function getSecurityAudit() {
 
 // Initialize session on page load
 async function initializeSession() {
-    const savedSession = loadSessionFromStorage();
-    if (savedSession) {
-        console.log('Session found in storage, renegotiating ECDHE handshake...');
+    const storedBrowserUuid = loadBrowserUuidFromStorage();
+    console.log('Stored browser UUID:', storedBrowserUuid);
+    if (storedBrowserUuid) {
+        console.log('Browser UUID found in storage, checking for existing session...');
         
         try {
-            // Step 1: Regenerate browser identity key
-            console.log('1. Regenerating browser identity key...');
-            const browserIdentityKeyPair = await window.crypto.subtle.generateKey(
-                {
-                    name: "ECDSA",
-                    namedCurve: "P-256"
-                },
-                false,
-                ["sign", "verify"]
-            );
-            
-            // Store the regenerated browser identity key in memory
-            privateKeyHandleStore.set(savedSession.browserIdentityKeyId, {
-                privateKey: browserIdentityKeyPair.privateKey,
-                publicKey: browserIdentityKeyPair.publicKey
-            });
-            
-            // Step 2: Regenerate DPoP key pair
-            console.log('2. Regenerating DPoP key pair...');
-            const dpopKeyPair = await window.crypto.subtle.generateKey(
-                {
-                    name: "ECDSA",
-                    namedCurve: "P-256"
-                },
-                false,
-                ["sign", "verify"]
-            );
-            
-            // Store the regenerated DPoP keys in memory
-            privateKeyHandleStore.set(savedSession.dpopKeyId, {
-                privateKey: dpopKeyPair.privateKey,
-                publicKey: dpopKeyPair.publicKey
-            });
-            
-            // Step 3: Renegotiate ECDHE handshake to get fresh SEK
-            console.log('3. Renegotiating ECDHE handshake...');
-            const ecdheKey = await generateECDHEKeyPair();
-            
-            // Perform ECDHE handshake with server
-            console.log('4. Performing ECDHE handshake with server...');
-            const handshakeResponse = await fetch('/handshake', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    client_ecdhe_public_key: ecdheKey.publicKey
-                })
-            });
-            
-            if (!handshakeResponse.ok) {
-                throw new Error('ECDHE handshake failed: ' + handshakeResponse.statusText);
+            const sessionCheckResponse = await fetch(`/check-session/${storedBrowserUuid}`);
+            console.log('Session check response status:', sessionCheckResponse.status);
+            if (sessionCheckResponse.ok) {
+                const sessionData = await sessionCheckResponse.json();
+                console.log('Session check response data:', sessionData);
+                if (sessionData.has_session) {
+                    console.log('Existing session found, renegotiating ECDHE handshake...');
+                    
+                    try {
+                        // Step 1: Generate new browser identity key
+                        console.log('1. Generating new browser identity key...');
+                        const browserIdentityKeyPair = await window.crypto.subtle.generateKey(
+                            {
+                                name: "ECDSA",
+                                namedCurve: "P-256"
+                            },
+                            false,
+                            ["sign", "verify"]
+                        );
+                        
+                        const browserIdentityKeyId = `browser_identity_${crypto.randomUUID()}`;
+                        privateKeyHandleStore.set(browserIdentityKeyId, {
+                            privateKey: browserIdentityKeyPair.privateKey,
+                            publicKey: browserIdentityKeyPair.publicKey
+                        });
+                        
+                        // Step 2: Generate new DPoP key pair
+                        console.log('2. Generating new DPoP key pair...');
+                        const dpopKeyPair = await window.crypto.subtle.generateKey(
+                            {
+                                name: "ECDSA",
+                                namedCurve: "P-256"
+                            },
+                            false,
+                            ["sign", "verify"]
+                        );
+                        
+                        const dpopKeyId = `dpop_${crypto.randomUUID()}`;
+                        privateKeyHandleStore.set(dpopKeyId, {
+                            privateKey: dpopKeyPair.privateKey,
+                            publicKey: dpopKeyPair.publicKey
+                        });
+                        
+                        // Step 3: Renegotiate ECDHE handshake
+                        console.log('3. Renegotiating ECDHE handshake...');
+                        const ecdheKey = await generateECDHEKeyPair();
+                        
+                        const handshakeResponse = await fetch('/handshake', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                client_ecdhe_public_key: ecdheKey.publicKey
+                            })
+                        });
+                        
+                        if (!handshakeResponse.ok) {
+                            throw new Error('ECDHE handshake failed: ' + handshakeResponse.statusText);
+                        }
+                        
+                        const handshakeData = await handshakeResponse.json();
+                        console.log('ECDHE handshake successful, handshake nonce:', handshakeData.handshake_nonce);
+                        
+                        // Step 4: Derive fresh Session Encryption Key (SEK)
+                        console.log('4. Deriving fresh Session Encryption Key...');
+                        sessionEncryptionKey = await performECDHEHandshake(ecdheKey.keyId, handshakeData.server_ecdhe_public_key);
+                        
+                        console.log('Fresh Session Encryption Key derived successfully');
+                        
+                        // Step 5: Create a new session token manually for the existing session
+                        console.log('5. Creating new session token for existing session...');
+                        
+                        const browserIdentityData = Stronghold.getBrowserIdentity();
+                        
+                        // Create a simple JWT token for the existing session
+                        const sessionTokenPayload = {
+                            session_id: sessionData.session_id,
+                            browser_uuid: storedBrowserUuid,
+                            fingerprint_hash: browserIdentityData.fingerprintHash,
+                            jti: crypto.randomUUID(),
+                            iat: Math.floor(Date.now() / 1000),
+                            exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours
+                        };
+                        
+                        // For demo purposes, we'll create a simple token
+                        // In production, this would be signed by the server
+                        const sessionToken = btoa(JSON.stringify(sessionTokenPayload));
+                        
+                        // Step 6: Create new session object
+                        console.log('6. Creating new session object...');
+                        currentSession = {
+                            sessionId: sessionData.session_id,
+                            sessionToken: sessionToken,
+                            browserUuid: storedBrowserUuid,
+                            browserIdentityKeyId: browserIdentityKeyId,
+                            dpopKeyId: dpopKeyId,
+                            dpopNonce: handshakeData.handshake_nonce
+                        };
+                        
+                        console.log('Session fully restored with fresh ECDHE handshake and SEK');
+                        
+                    } catch (error) {
+                        console.error('Error restoring session with ECDHE renegotiation:', error);
+                        clearBrowserUuidFromStorage();
+                        currentSession = null;
+                        throw error;
+                    }
+                } else {
+                    console.log('No existing session found for browser UUID');
+                }
+            } else {
+                console.log('Session check response not ok:', sessionCheckResponse.status);
             }
-            
-            const handshakeData = await handshakeResponse.json();
-            console.log('ECDHE handshake successful, handshake nonce:', handshakeData.handshake_nonce);
-            
-            // Step 5: Derive fresh Session Encryption Key (SEK)
-            console.log('5. Deriving fresh Session Encryption Key...');
-            sessionEncryptionKey = await performECDHEHandshake(ecdheKey.keyId, handshakeData.server_ecdhe_public_key);
-            
-            console.log('Fresh Session Encryption Key derived successfully');
-            
-            // Step 6: Update session with fresh nonce
-            console.log('6. Updating session with fresh nonce...');
-            currentSession = {
-                ...savedSession,
-                dpopNonce: handshakeData.handshake_nonce // Use handshake nonce as initial DPoP nonce
-            };
-            
-            // Save updated session to storage
-            saveSessionToStorage(currentSession);
-            
-            console.log('Session fully restored with fresh ECDHE handshake and SEK');
-            
         } catch (error) {
-            console.error('Error restoring session with ECDHE renegotiation:', error);
-            // Clear the corrupted session
-            clearSessionFromStorage();
-            currentSession = null;
-            throw error;
+            console.error('Error checking for existing session:', error);
         }
     }
 }
@@ -1182,7 +1208,7 @@ if (typeof module !== 'undefined' && module.exports) {
         clearBrowserIdentity,
         getSessionMapping,
         getSecurityAudit,
-        clearSessionFromStorage,
+        clearBrowserUuidFromStorage,
         initializeSession,
         get currentSession() { return currentSession; }
     };
@@ -1199,7 +1225,7 @@ if (typeof module !== 'undefined' && module.exports) {
         clearBrowserIdentity,
         getSessionMapping,
         getSecurityAudit,
-        clearSessionFromStorage,
+        clearBrowserUuidFromStorage,
         initializeSession,
         get currentSession() { return currentSession; }
     };
