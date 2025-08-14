@@ -761,6 +761,9 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
             'DPoP-Nonce': dpopNonce || 'Not set'
         };
         
+        // Add DPoP proof for display purposes
+        responseData.dpop_proof = dpopProof;
+        
         return responseData;
         
     } catch (error) {
@@ -843,18 +846,11 @@ async function generateBrowserFingerprint() {
         plugins: generatePluginFingerprint()
     };
     
-    // Create a hash of the fingerprint for consistent identification (without timestamp)
-    const fingerprintForHash = { ...fingerprint };
-    const hash = await generateFingerprintHash(fingerprintForHash);
-    
-    // Add timestamp to the full fingerprint for display purposes only
-    const fullFingerprint = {
-        ...fingerprint,
-        timestamp: Date.now()
-    };
+    // Create a hash of the fingerprint for consistent identification
+    const hash = await generateFingerprintHash(fingerprint);
     
     return {
-        full: fullFingerprint,
+        full: fingerprint,
         hash: hash
     };
 }
@@ -961,11 +957,20 @@ async function getBrowserIdentity() {
     try {
         // Generate fingerprint fresh each time
         const fingerprint = await generateBrowserFingerprint();
+        
+        // Generate or get existing browser identity key
+        const browserIdentityKey = await generateBrowserIdentityKey();
+        
+        // Generate DPoP key
+        const dpopKey = await generateDPoPKeyPair();
+        
         return {
             browserUuid: browserUuid,
             fingerprint: fingerprint,
             fingerprintHash: fingerprint.hash,
-            createdAt: fingerprint.full.timestamp
+            keysCreatedAt: Date.now(),
+            browserIdentityKeyId: browserIdentityKey.keyId,
+            dpopKeyId: dpopKey.keyId
         };
     } catch (error) {
         console.error('Error generating browser fingerprint:', error);

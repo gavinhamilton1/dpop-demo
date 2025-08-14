@@ -186,6 +186,14 @@ button:disabled {
     margin-bottom: 30px;
 }
 
+.test-section {
+    background-color: #f0f4ff;
+    padding: 20px;
+    border-radius: 8px;
+    border-left: 4px solid #6f42c1;
+    margin-bottom: 30px;
+}
+
 .session-detail {
     margin-bottom: 10px;
     padding: 8px;
@@ -253,8 +261,15 @@ button:disabled {
 }
 
 .detail-content {
-    max-height: 400px;
-    overflow-y: auto;
+    word-wrap: break-word;
+    word-break: break-all;
+    white-space: pre-wrap;
+    text-align: left;
+}
+
+.detail-content div {
+    white-space: pre-wrap;
+    text-align: left;
 }
 
 .device-item {
