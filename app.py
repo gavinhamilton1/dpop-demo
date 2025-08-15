@@ -47,6 +47,7 @@ dpop_nonces: Dict[str, Dict[str, Any]] = {}  # Store DPoP nonces per session
 browser_sessions: Dict[str, str] = {}  # Map browser_uuid to session_id
 invalidated_sessions: set = set()  # Track invalidated sessions
 rate_limit_attempts: Dict[str, Dict[str, Any]] = {}  # Rate limiting per IP
+challenges: Dict[str, Dict[str, Any]] = {}  # Store challenges for session restoration
 
 # Generate cryptographically secure secret for JWT signing
 import os
@@ -62,11 +63,32 @@ class RegistrationRequest(BaseModel):
     handshake_nonce: str
     browser_identity_public_key: str
     browser_uuid: str
-    browser_fingerprint_hash: str
     encrypted_payload: str
 
 class DPoPRequest(BaseModel):
     encrypted_payload: Optional[str] = None
+
+class ChallengeRequest(BaseModel):
+    browser_uuid: str
+
+class ChallengeResponse(BaseModel):
+    challenge: str
+    session_id: str
+
+class ChallengeVerificationRequest(BaseModel):
+    session_id: str
+    challenge: str
+    signature: str
+
+class SessionKeyUpdateRequest(BaseModel):
+    session_id: str
+    handshake_nonce: str
+
+
+
+
+
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -98,6 +120,332 @@ async def check_session(browser_uuid: str):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Session check failed: {str(e)}")
 
+@app.post("/request-challenge")
+async def request_challenge(request: ChallengeRequest):
+    """Request a challenge for session restoration"""
+    try:
+        browser_uuid = request.browser_uuid
+        
+        # Check if browser UUID has an existing session
+        if browser_uuid not in browser_sessions:
+            raise HTTPException(status_code=404, detail="No session found for browser UUID")
+        
+        session_id = browser_sessions[browser_uuid]
+        if session_id not in sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session = sessions[session_id]
+        
+        # Generate a random challenge
+        challenge = secrets.token_urlsafe(32)
+        
+        # Store challenge with expiration (5 minutes)
+        challenges[session_id] = {
+            "challenge": challenge,
+            "browser_uuid": browser_uuid,
+            "browser_identity_public_key": session.get("browser_identity_public_key"),
+            "created_at": datetime.utcnow(),
+            "expires_at": datetime.utcnow() + timedelta(minutes=5)
+        }
+        
+        logging.info(f"Generated challenge for session {session_id}: {challenge}")
+        logging.info(f"Stored browser identity public key: {session.get('browser_identity_public_key')}")
+        
+        return ChallengeResponse(
+            challenge=challenge,
+            session_id=session_id
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Challenge request failed: {str(e)}")
+
+@app.post("/verify-challenge")
+async def verify_challenge(request: ChallengeVerificationRequest):
+    """Verify challenge signature and restore session"""
+    try:
+        session_id = request.session_id
+        challenge = request.challenge
+        signature = request.signature
+        
+        # Check if challenge exists and is valid
+        if session_id not in challenges:
+            raise HTTPException(status_code=400, detail="Invalid or expired challenge")
+        
+        challenge_data = challenges[session_id]
+        
+        # Check if challenge matches
+        if challenge_data["challenge"] != challenge:
+            raise HTTPException(status_code=400, detail="Challenge mismatch")
+        
+        # Check if challenge has expired
+        if datetime.utcnow() > challenge_data["expires_at"]:
+            del challenges[session_id]
+            raise HTTPException(status_code=400, detail="Challenge expired")
+        
+        # Verify signature using stored browser identity public key
+        browser_identity_public_key = challenge_data["browser_identity_public_key"]
+        if not browser_identity_public_key:
+            raise HTTPException(status_code=400, detail="No browser identity public key found")
+        
+        # Import the public key
+        public_key_bytes = base64.b64decode(browser_identity_public_key)
+        public_key_obj = serialization.load_der_public_key(public_key_bytes)
+        
+        # Verify the signature
+        try:
+            # Decode signature
+            signature_bytes = base64.b64decode(signature)
+            
+            # Create signature input (challenge string)
+            challenge_bytes = challenge.encode('utf-8')
+            
+            # Web Crypto API returns raw ECDSA signature (r||s, each 32 bytes for P-256)
+            # Convert to DER format for Python cryptography library
+            if len(signature_bytes) == 64:  # Raw signature (32 + 32 bytes)
+                r = int.from_bytes(signature_bytes[:32], 'big')
+                s = int.from_bytes(signature_bytes[32:], 'big')
+                
+                # Create DER signature
+                from cryptography.hazmat.primitives.asymmetric import utils
+                der_signature = utils.encode_dss_signature(r, s)
+            else:
+                # Assume it's already DER encoded
+                der_signature = signature_bytes
+            
+            # Verify signature using cryptography library
+            public_key_obj.verify(
+                der_signature,
+                challenge_bytes,
+                ec.ECDSA(hashes.SHA256())
+            )
+            
+            logging.info(f"Challenge signature verified for session {session_id}")
+            
+            # Clean up challenge
+            del challenges[session_id]
+            
+            # Return success response with session restoration data
+            return {
+                "success": True,
+                "session_id": session_id,
+                "browser_uuid": challenge_data["browser_uuid"],
+                "message": "Challenge verified successfully"
+            }
+            
+        except Exception as e:
+            logging.error(f"Challenge signature verification failed: {str(e)}")
+            raise HTTPException(status_code=401, detail="Invalid signature")
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Challenge verification failed: {str(e)}")
+
+@app.post("/update-session-key")
+async def update_session_key(request: SessionKeyUpdateRequest, session_id: str = Cookie(None)):
+    """Update session encryption key using handshake nonce after ECDHE handshake"""
+    try:
+        # Verify session exists
+        if session_id not in sessions:
+            raise HTTPException(status_code=401, detail="Invalid session")
+        
+        # Verify handshake nonce exists and is valid
+        if request.handshake_nonce not in handshake_nonces:
+            raise HTTPException(status_code=400, detail="Invalid or expired handshake nonce")
+        
+        handshake_data = handshake_nonces[request.handshake_nonce]
+        
+        # Check if handshake has expired
+        if datetime.now() > handshake_data["expires_at"]:
+            del handshake_nonces[request.handshake_nonce]
+            raise HTTPException(status_code=400, detail="Handshake expired")
+        
+        # Update session with new encryption key from handshake
+        session = sessions[session_id]
+        session["session_encryption_key"] = handshake_data["session_encryption_key"]
+        session["last_activity"] = datetime.now()
+        
+        logging.info(f"Updated session encryption key for session {session_id} using handshake nonce {request.handshake_nonce}")
+        
+        # Clean up handshake data
+        del handshake_nonces[request.handshake_nonce]
+        
+        return {
+            "success": True,
+            "message": "Session encryption key updated successfully"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Session key update failed: {str(e)}")
+
+@app.post("/debug/clear-rate-limits")
+async def clear_rate_limits():
+    """Clear all rate limiting data for testing"""
+    try:
+        global rate_limit_attempts
+        cleared_count = len(rate_limit_attempts)
+        rate_limit_attempts.clear()
+        logging.info(f"Cleared rate limiting data for {cleared_count} IPs")
+        return {
+            "success": True,
+            "message": f"Cleared rate limiting data for {cleared_count} IPs",
+            "cleared_count": cleared_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear rate limits: {str(e)}")
+
+@app.get("/debug/rate-limits")
+async def get_rate_limit_debug(request: Request):
+    """Debug endpoint to show current rate limiting state"""
+    try:
+        # Extract client IP for rate limiting
+        client_ip = request.client.host if request.client else None
+        logging.debug(f"Rate limit debug - Client IP: {client_ip}")
+        
+        # Apply rate limiting to this endpoint too
+        if client_ip:
+            current_time = datetime.utcnow()
+            if client_ip not in rate_limit_attempts:
+                rate_limit_attempts[client_ip] = {"count": 0, "window_start": current_time}
+            
+            # Reset window if more than 1 minute has passed
+            if current_time - rate_limit_attempts[client_ip]["window_start"] > timedelta(minutes=1):
+                rate_limit_attempts[client_ip] = {"count": 0, "window_start": current_time}
+            
+            # Increment attempt count
+            rate_limit_attempts[client_ip]["count"] += 1
+            logging.debug(f"Rate limit debug - attempts: {rate_limit_attempts[client_ip]}")
+            
+            # Block if more than 3 attempts per minute
+            logging.debug(f"Rate limit debug - check: {rate_limit_attempts[client_ip]['count']} attempts for IP {client_ip}")
+            if rate_limit_attempts[client_ip]["count"] > 3:
+                logging.warning(f"Rate limit exceeded for IP {client_ip}: {rate_limit_attempts[client_ip]['count']} attempts")
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        
+        return {
+            "rate_limit_attempts": rate_limit_attempts,
+            "total_ips": len(rate_limit_attempts),
+            "current_time": datetime.utcnow().isoformat(),
+            "client_ip": client_ip
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Rate limit debug failed: {str(e)}")
+
+@app.get("/debug/data")
+async def get_debug_data():
+    """Debug endpoint to return all internal data structures for testing"""
+    try:
+        # Convert datetime objects to strings for JSON serialization
+        def serialize_datetime(obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            return obj
+        
+        # Safe serialization function
+        def safe_serialize(obj):
+            try:
+                if isinstance(obj, bytes):
+                    return f"[Binary Data - {len(obj)} bytes]"
+                elif isinstance(obj, datetime):
+                    return obj.isoformat()
+                elif hasattr(obj, '__dict__'):
+                    # Handle objects with attributes
+                    return f"[Object: {type(obj).__name__}]"
+                else:
+                    return obj
+            except Exception:
+                return f"[Unserializable: {type(obj).__name__}]"
+        
+        # Process sessions data
+        serialized_sessions = {}
+        for session_id, session_data in sessions.items():
+            serialized_session = {}
+            for key, value in session_data.items():
+                if key in ['session_encryption_key', 'server_ecdhe_private_key']:
+                    # Hide sensitive cryptographic data
+                    serialized_session[key] = "[REDACTED - Cryptographic Key]"
+                else:
+                    serialized_session[key] = safe_serialize(value)
+            serialized_sessions[session_id] = serialized_session
+        
+        # Process handshake nonces data
+        serialized_handshake_nonces = {}
+        for nonce, nonce_data in handshake_nonces.items():
+            serialized_nonce_data = {}
+            for key, value in nonce_data.items():
+                if key in ['session_encryption_key', 'server_ecdhe_private_key']:
+                    serialized_nonce_data[key] = "[REDACTED - Cryptographic Key]"
+                else:
+                    serialized_nonce_data[key] = safe_serialize(value)
+            serialized_handshake_nonces[nonce] = serialized_nonce_data
+        
+        # Process DPoP nonces data
+        serialized_dpop_nonces = {}
+        for session_id, nonce_data in dpop_nonces.items():
+            serialized_nonce_data = {}
+            for key, value in nonce_data.items():
+                serialized_nonce_data[key] = safe_serialize(value)
+            serialized_dpop_nonces[session_id] = serialized_nonce_data
+        
+        # Process challenges data
+        serialized_challenges = {}
+        for session_id, challenge_data in challenges.items():
+            serialized_challenge_data = {}
+            for key, value in challenge_data.items():
+                serialized_challenge_data[key] = safe_serialize(value)
+            serialized_challenges[session_id] = serialized_challenge_data
+        
+        # Process rate limiting data
+        serialized_rate_limits = {}
+        for ip, rate_data in rate_limit_attempts.items():
+            serialized_rate_data = {}
+            for key, value in rate_data.items():
+                serialized_rate_data[key] = safe_serialize(value)
+            serialized_rate_limits[ip] = serialized_rate_data
+        
+        debug_data = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "server_info": {
+                "jwt_secret_length": len(JWT_SECRET),
+                "server_public_key_available": server_public_key is not None
+            },
+            "sessions": {
+                "count": len(sessions),
+                "session_ids": list(sessions.keys()),
+                "data": serialized_sessions
+            },
+            "browser_sessions": {
+                "count": len(browser_sessions),
+                "mappings": browser_sessions
+            },
+            "handshake_nonces": {
+                "count": len(handshake_nonces),
+                "nonces": list(handshake_nonces.keys()),
+                "data": serialized_handshake_nonces
+            },
+            "dpop_nonces": {
+                "count": len(dpop_nonces),
+                "session_ids": list(dpop_nonces.keys()),
+                "data": serialized_dpop_nonces
+            },
+            "challenges": {
+                "count": len(challenges),
+                "session_ids": list(challenges.keys()),
+                "data": serialized_challenges
+            },
+            "invalidated_sessions": {
+                "count": len(invalidated_sessions),
+                "session_ids": list(invalidated_sessions)
+            },
+            "rate_limiting": {
+                "count": len(rate_limit_attempts),
+                "ips": list(rate_limit_attempts.keys()),
+                "data": serialized_rate_limits
+            }
+        }
+        
+        return debug_data
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug data retrieval failed: {str(e)}")
 
 
 @app.post("/invalidate-session")
@@ -291,7 +639,6 @@ async def register_session(request: RegistrationRequest, dpop: str = Header(None
                 "browser_identity_public_key": request.browser_identity_public_key,
                 "dpop_public_key": dpop_public_key,  # Store DPoP public key from proof
                 "browser_uuid": request.browser_uuid,
-                "browser_fingerprint_hash": request.browser_fingerprint_hash,
                 "session_encryption_key": session_encryption_key,
                 "created_at": datetime.now(),
                 "last_activity": datetime.now(),
@@ -351,9 +698,13 @@ async def register_session(request: RegistrationRequest, dpop: str = Header(None
         raise HTTPException(status_code=400, detail=f"Registration failed: {str(e)}")
 
 @app.post("/verify-dpop")
-async def verify_dpop(request: DPoPRequest, dpop: str = Header(None), dpop_nonce: str = Header(None), client_ip: str = None, session_id: str = Cookie(None)):
+async def verify_dpop(request: DPoPRequest, http_request: Request, dpop: str = Header(None), dpop_nonce: str = Header(None), session_id: str = Cookie(None)):
     """Verify DPoP proof and handle authenticated requests"""
     try:
+        # Extract client IP for rate limiting
+        client_ip = http_request.client.host if http_request.client else None
+        logging.debug(f"Client IP: {client_ip}")
+        
         # Basic rate limiting (in production, use Redis or similar)
         if client_ip:
             current_time = datetime.utcnow()
@@ -366,9 +717,12 @@ async def verify_dpop(request: DPoPRequest, dpop: str = Header(None), dpop_nonce
             
             # Increment attempt count
             rate_limit_attempts[client_ip]["count"] += 1
+            logging.debug(f"Rate limit attempts: {rate_limit_attempts[client_ip]}")
             
-            # Block if more than 10 attempts per minute
-            if rate_limit_attempts[client_ip]["count"] > 10:
+            # Block if more than 3 attempts per minute (temporarily lowered for testing)
+            logging.debug(f"Rate limit check: {rate_limit_attempts[client_ip]['count']} attempts for IP {client_ip}")
+            if rate_limit_attempts[client_ip]["count"] > 3:
+                logging.warning(f"Rate limit exceeded for IP {client_ip}: {rate_limit_attempts[client_ip]['count']} attempts")
                 raise HTTPException(status_code=429, detail="Rate limit exceeded")
         
         # Extract session ID from HTTP-only cookie
@@ -396,27 +750,51 @@ async def verify_dpop(request: DPoPRequest, dpop: str = Header(None), dpop_nonce
         session = sessions[session_id]
         
         # Session bindings are validated through DPoP proof verification
-        # Browser UUID and fingerprint are bound to the DPoP key pair
+        # Browser UUID is bound to the DPoP key pair
         
         logging.debug(f"Retrieved DPoP public key for session {session_id}: {session.get('dpop_public_key')}")
         logging.debug(f"Server session created time: {session.get('session_created_time')}")
         logging.debug(f"Time since server session creation: {datetime.utcnow().timestamp() - session.get('session_created_time')} seconds")
         
+        # Log the DPoP proof header for debugging
+        logging.debug(f"DPoP proof header: {dpop[:100]}...")
+        
         # Verify DPoP proof with full validation
         # For the first request, we don't require a nonce
         require_nonce = session_id in dpop_nonces
         
-        if not verify_dpop_proof(
+        stored_dpop_key = session.get("dpop_public_key")
+        logging.debug(f"About to verify DPoP proof with stored key: {stored_dpop_key[:50] if stored_dpop_key else 'None'}...")
+        
+        # Log the DPoP proof to extract the public key for comparison
+        try:
+            parts = dpop_proof.split('.')
+            if len(parts) == 3:
+                header_b64 = parts[0] + '=' * (4 - len(parts[0]) % 4)
+                header_json = base64.b64decode(header_b64).decode('utf-8')
+                header = json.loads(header_json)
+                
+                if 'jwk' in header:
+                    jwk = header['jwk']
+                    logging.debug(f"DPoP proof contains JWK with x: {jwk.get('x', '')[:20]}...")
+                    logging.debug(f"DPoP proof contains JWK with y: {jwk.get('y', '')[:20]}...")
+        except Exception as e:
+            logging.debug(f"Could not extract JWK from DPoP proof: {e}")
+        
+        verification_result = verify_dpop_proof(
             dpop_proof, 
             method="POST",
             url="/verify-dpop",
             nonce=dpop_nonce if require_nonce else None,
             session_id=session_id,
-            stored_dpop_public_key=session.get("dpop_public_key")
-        ):
+            stored_dpop_public_key=stored_dpop_key
+        )
+        
+        if not verification_result:
+            logging.error(f"DPoP verification failed for session {session_id}")
             raise HTTPException(status_code=401, detail="Invalid DPoP proof")
         
-        # Browser fingerprint is already validated through session token binding
+        # Browser UUID is already validated through session binding
         # No need to validate it again from request body
         
         # Add browser identity data to response for client reference
@@ -482,6 +860,9 @@ async def verify_dpop(request: DPoPRequest, dpop: str = Header(None), dpop_nonce
         return response
         
     except Exception as e:
+        logging.error(f"Exception in /verify-dpop endpoint: {str(e)}")
+        import traceback
+        logging.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"DPoP verification failed: {str(e)}")
 
 # Session token functions removed - using HTTP-only cookies instead
@@ -523,6 +904,8 @@ def verify_dpop_proof(dpop_proof: str, method: str = None, url: str = None, nonc
     """Verify DPoP proof signature and claims"""
     try:
         logging.debug(f"Verifying DPoP proof: method={method}, url={url}, nonce={nonce}")
+        logging.debug(f"DPoP proof length: {len(dpop_proof)}")
+        logging.debug(f"Stored DPoP public key length: {len(stored_dpop_public_key) if stored_dpop_public_key else 'None'}")
         
         # Parse the DPoP proof JWT
         parts = dpop_proof.split('.')
@@ -571,7 +954,7 @@ def verify_dpop_proof(dpop_proof: str, method: str = None, url: str = None, nonc
                 logging.error("DPoP proof issued in future")
                 return False
             if payload['iat'] < current_time - 86400:  # Allow up to 24 hours for session-based requests
-                logging.error("DPoP proof too old")
+                logging.error(f"DPoP proof too old: iat={payload['iat']}, current={current_time}, diff={current_time - payload['iat']} seconds")
                 return False
         
         # Verify HTTP method if provided
@@ -671,6 +1054,7 @@ def verify_dpop_proof(dpop_proof: str, method: str = None, url: str = None, nonc
             verifying_key.verify(signature_bytes, signature_input_bytes, hashfunc=hashlib.sha256)
             
             logging.debug("DPoP proof signature verified successfully")
+            logging.debug("DPoP proof verification completed successfully - returning True")
             return True
             
         except Exception as e:
@@ -682,6 +1066,8 @@ def verify_dpop_proof(dpop_proof: str, method: str = None, url: str = None, nonc
         
     except Exception as e:
         logging.error(f"DPoP proof verification error: {str(e)}")
+        import traceback
+        logging.error(f"Full traceback: {traceback.format_exc()}")
         return False
 
 

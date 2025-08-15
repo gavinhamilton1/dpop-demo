@@ -63,7 +63,27 @@
                     <div id="responseDetails" class="detail-content"></div>
                 </div>
             </div>
+        </div>
 
+        <!-- Debug Section -->
+        <div class="debug-section" style="display: block;">
+            <h2>🔧 Debug Information</h2>
+            <p>Server-side data structures for testing and debugging purposes.</p>
+            
+            <div class="debug-actions">
+                <button onclick="loadDebugData()" class="btn-secondary">Refresh Debug Data</button>
+                <button onclick="toggleDebugDisplay()" class="btn-outline-secondary">Toggle Raw JSON</button>
+                <button onclick="testRateLimiting()" class="btn-warning">Test Rate Limiting</button>
+                <button onclick="clearRateLimits()" class="btn-danger">Clear Rate Limits</button>
+            </div>
+            
+            <div id="debugInfo" class="debug-info">
+                <p>Click "Refresh Debug Data" to load server debug information.</p>
+            </div>
+            
+            <div id="debugRaw" class="debug-raw" style="display: none;">
+                <pre id="debugRawContent"></pre>
+            </div>
         </div>
 
         </div>
@@ -88,15 +108,7 @@
                     <div class="identity-detail">
                         <strong>DPoP Key ID:</strong> ${identity.dpopKeyId || 'Not available'}
                     </div>
-                    <div class="identity-detail">
-                        <strong>Browser Fingerprint:</strong>
-                        <div style="font-family: monospace; font-size: 12px; background: #f8f9fa; padding: 10px; border-radius: 4px; margin-top: 5px; max-height: 300px; overflow-y: auto; border-left: 3px solid #007acc;">
-                            ${JSON.stringify(identity.fingerprint.full, null, 2)}
-                        </div>
-                    </div>
-                    <div class="identity-detail">
-                        <strong>Fingerprint Hash:</strong> <span class="fingerprint-hash">${identity.fingerprintHash}</span>
-                    </div>
+
                     <div class="identity-detail">
                         <strong>Keys Created:</strong> ${new Date(identity.keysCreatedAt).toLocaleString()}
                     </div>
@@ -157,10 +169,12 @@
                 <div class="session-detail">
                     <strong>Browser UUID:</strong> ${Stronghold.currentSession.browserUuid}
                 </div>
-
-
-
-
+                <div class="session-detail">
+                    <strong>Session Encryption Key:</strong> ${Stronghold.currentSession.sessionEncryptionKey ? 'Available (Non-exportable)' : 'Not available'}
+                </div>
+                <div class="session-detail">
+                    <strong>SEK Source:</strong> ${Stronghold.currentSession.sekSource || 'Unknown'}
+                </div>
             `;
             
             sessionInfo.style.display = 'block';
@@ -179,7 +193,7 @@
                 const customMessage = document.getElementById('customMessage').value;
                 const plaintextPayload = { message: customMessage };
                 
-                // Get browser identity for fingerprint
+                // Get browser identity
                 const browserIdentity = await Stronghold.getBrowserIdentity();
                 
                 // Capture request details before making the request
@@ -303,12 +317,12 @@ ${response.decrypted_payload || 'No decrypted server response'}
                 }
                 
                 responseDetails.innerHTML = `
-                    <div style="font-family: monospace; font-size: 12px; background: #fff3cd; padding: 10px; border-radius: 4px; border-left: 3px solid #ffc107;">
-                        <strong>Status: Error</strong><br><br>
-                        <strong>Error Details:</strong><br>
-                        ${errorDetails}
-                    </div>
-                `;
+<div style="font-family: monospace; font-size: 12px; background: #fff3cd; padding: 10px; border-radius: 4px; border-left: 3px solid #ffc107;">
+<strong>Status: Error</strong><br><br>
+<strong>Error Details:</strong><br>
+${errorDetails}
+</div>
+`;
                 
                 requestResponseDetails.style.display = 'block';
             }
@@ -377,6 +391,180 @@ ${response.decrypted_payload || 'No decrypted server response'}
             }
         }
 
+        // Debug Functions
+        async function loadDebugData() {
+            try {
+                const debugData = await Stronghold.getDebugData();
+                
+                // Display formatted debug info
+                const debugInfo = document.getElementById('debugInfo');
+                debugInfo.innerHTML = `
+                    <div class="debug-summary">
+                        <h4>📊 Server State Summary</h4>
+                        <div class="debug-stats">
+                            <div class="debug-stat">
+                                <strong>Sessions:</strong> ${debugData.sessions.count}
+                            </div>
+                            <div class="debug-stat">
+                                <strong>Browser Sessions:</strong> ${debugData.browser_sessions.count}
+                            </div>
+                            <div class="debug-stat">
+                                <strong>Handshake Nonces:</strong> ${debugData.handshake_nonces.count}
+                            </div>
+                            <div class="debug-stat">
+                                <strong>DPoP Nonces:</strong> ${debugData.dpop_nonces.count}
+                            </div>
+                            <div class="debug-stat">
+                                <strong>Challenges:</strong> ${debugData.challenges.count}
+                            </div>
+                            <div class="debug-stat">
+                                <strong>Invalidated Sessions:</strong> ${debugData.invalidated_sessions.count}
+                            </div>
+                            <div class="debug-stat">
+                                <strong>Rate Limited IPs:</strong> ${debugData.rate_limiting.count}
+                            </div>
+                        </div>
+                        
+                        <h4>🕒 Timestamp</h4>
+                        <div class="debug-timestamp">${new Date(debugData.timestamp).toLocaleString()}</div>
+                        
+                        <h4>🔑 Server Info</h4>
+                        <div class="debug-server-info">
+                            <div>JWT Secret Length: ${debugData.server_info.jwt_secret_length}</div>
+                            <div>Server Public Key Available: ${debugData.server_info.server_public_key_available ? 'Yes' : 'No'}</div>
+                        </div>
+                    </div>
+                `;
+                
+                // Store raw data for toggle
+                window.debugRawData = debugData;
+                
+                // Show debug section
+                document.querySelector('.debug-section').style.display = 'block';
+                
+            } catch (error) {
+                console.error('Error loading debug data:', error);
+                document.getElementById('debugInfo').innerHTML = `<div class="error">Error loading debug data: ${error.message}</div>`;
+            }
+        }
+        
+        function toggleDebugDisplay() {
+            const debugRaw = document.getElementById('debugRaw');
+            const debugRawContent = document.getElementById('debugRawContent');
+            
+            if (debugRaw.style.display === 'none') {
+                debugRawContent.textContent = JSON.stringify(window.debugRawData, null, 2);
+                debugRaw.style.display = 'block';
+            } else {
+                debugRaw.style.display = 'none';
+            }
+        }
+
+        async function testRateLimiting() {
+            try {
+                console.log('Testing rate limiting...');
+                
+                // Get initial state
+                const initialResponse = await fetch('/debug/rate-limits', {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+                const initialData = await initialResponse.json();
+                console.log('Initial rate limit state:', initialData);
+                
+                // Make 5 rapid requests to trigger rate limiting
+                const promises = [];
+                for (let i = 0; i < 5; i++) {
+                    promises.push(
+                        fetch('/debug/rate-limits', {
+                            method: 'GET',
+                            credentials: 'include'
+                        }).then(async response => {
+                            const data = await response.json().catch(() => ({}));
+                            return {
+                                request: i + 1,
+                                status: response.status,
+                                ok: response.ok,
+                                data: data
+                            };
+                        }).catch(error => ({
+                            request: i + 1,
+                            status: 'ERROR',
+                            ok: false,
+                            error: error.message
+                        }))
+                    );
+                }
+                
+                const results = await Promise.all(promises);
+                console.log('Rate limiting test results:', results);
+                
+                // Get final state
+                const finalResponse = await fetch('/debug/rate-limits', {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+                const finalData = await finalResponse.json();
+                console.log('Final rate limit state:', finalData);
+                
+                // Show results in debug info
+                const debugInfo = document.getElementById('debugInfo');
+                const resultsHtml = results.map(result => 
+                    `Request ${result.request}: ${result.status} ${result.ok ? '✅' : '❌'} ${result.data?.client_ip ? `(IP: ${result.data.client_ip})` : ''}`
+                ).join('<br>');
+                
+                debugInfo.innerHTML = `
+                    <div class="debug-summary">
+                        <h4>🧪 Rate Limiting Test Results</h4>
+                        <div class="debug-stats">
+                            <p><strong>Initial State:</strong> ${initialData.total_ips} IPs tracked</p>
+                            <p><strong>Client IP:</strong> ${initialData.client_ip || 'Unknown'}</p>
+                            <p><strong>Test Results:</strong></p>
+                            ${resultsHtml}
+                            <p><strong>Final State:</strong> ${finalData.total_ips} IPs tracked</p>
+                        </div>
+                        <p><strong>Expected:</strong> First 3 requests should succeed, last 2 should be rate limited (429)</p>
+                        <p><strong>Note:</strong> Check server logs for detailed rate limiting information</p>
+                    </div>
+                `;
+                
+            } catch (error) {
+                console.error('Rate limiting test failed:', error);
+                document.getElementById('debugInfo').innerHTML = `<div class="error">Rate limiting test failed: ${error.message}</div>`;
+            }
+                }
+
+        async function clearRateLimits() {
+            try {
+                console.log('Clearing rate limits...');
+                
+                const response = await fetch('/debug/clear-rate-limits', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                
+                const result = await response.json();
+                console.log('Rate limits cleared:', result);
+                
+                // Show result in debug info
+                const debugInfo = document.getElementById('debugInfo');
+                debugInfo.innerHTML = `
+                    <div class="debug-summary">
+                        <h4>🧹 Rate Limits Cleared</h4>
+                        <div class="debug-stats">
+                            <p><strong>Status:</strong> ${result.success ? '✅ Success' : '❌ Failed'}</p>
+                            <p><strong>Message:</strong> ${result.message}</p>
+                            <p><strong>Cleared Count:</strong> ${result.cleared_count} IPs</p>
+                        </div>
+                    </div>
+                `;
+                
+            } catch (error) {
+                console.error('Failed to clear rate limits:', error);
+                document.getElementById('debugInfo').innerHTML = `<div class="error">Failed to clear rate limits: ${error.message}</div>`;
+            }
+        }
+        
         // Load browser identity and session when page loads
         document.addEventListener('DOMContentLoaded', async function() {
             try {

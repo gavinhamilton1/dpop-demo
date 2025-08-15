@@ -261,6 +261,79 @@ function isKeyValid(key) {
 }
 
 /**
+ * Store session encryption key directly in IndexedDB
+ * @param {CryptoKey} sessionEncryptionKey 
+ * @param {string} browserUuid 
+ */
+async function storeSessionEncryptionKey(sessionEncryptionKey, browserUuid) {
+    try {
+        const db = await initIndexedDB();
+        const transaction = db.transaction([KEY_STORE], 'readwrite');
+        const store = transaction.objectStore(KEY_STORE);
+        
+        const keyId = `session_encryption_key_${browserUuid}`;
+        
+        await new Promise((resolve, reject) => {
+            const request = store.put({
+                keyId: keyId,
+                keyHandle: {
+                    sessionEncryptionKey: sessionEncryptionKey
+                },
+                type: 'session_encryption_key',
+                browserUuid: browserUuid,
+                createdAt: Date.now()
+            });
+            
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+        
+        console.log('Session encryption key stored in IndexedDB');
+    } catch (error) {
+        console.error('Error storing session encryption key:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get session encryption key from IndexedDB
+ * @param {string} browserUuid 
+ * @returns {Promise<CryptoKey | null>}
+ */
+async function getSessionEncryptionKey(browserUuid) {
+    try {
+        const db = await initIndexedDB();
+        const transaction = db.transaction([KEY_STORE], 'readonly');
+        const store = transaction.objectStore(KEY_STORE);
+        
+        const keyId = `session_encryption_key_${browserUuid}`;
+        const request = store.get(keyId);
+        
+        return new Promise((resolve, reject) => {
+            request.onsuccess = () => {
+                const result = request.result;
+                if (result && result.type === 'session_encryption_key') {
+                    console.log('Found session encryption key in IndexedDB');
+                    resolve(result.keyHandle.sessionEncryptionKey);
+                } else {
+                    console.log('No session encryption key found in IndexedDB');
+                    resolve(null);
+                }
+            };
+            
+            request.onerror = () => {
+                reject(new Error('Failed to get session encryption key from IndexedDB'));
+            };
+        });
+    } catch (error) {
+        console.error('Error getting session encryption key:', error);
+        throw error;
+    }
+}
+
+
+
+/**
  * Store browser UUID in IndexedDB
  * @param {string} browserUuid - The browser UUID to store
  * @returns {Promise<void>}
@@ -461,6 +534,8 @@ async function generateBrowserIdentityKey() {
     }
 }
 
+
+
 /**
  * Generate a DPoP key pair for session authentication
  * @returns {Promise<{publicKey: string, keyId: string}>}
@@ -657,7 +732,7 @@ async function performECDHEHandshake(clientECDHEKeyId, serverECDHEPublicKey) {
                 name: "AES-GCM",
                 length: 256
             },
-            false,
+            false,  // Keep non-extractable for security
             ["encrypt", "decrypt"]
         );
         return sessionEncryptionKey;
@@ -931,10 +1006,8 @@ async function createStrongholdSession() {
         console.log('5. Deriving session encryption key...');
         sessionEncryptionKey = await performECDHEHandshake(ecdheKey.keyId, handshakeData.server_ecdhe_public_key);
         
-        // Step 6: Prepare registration payload
-        console.log('6. Preparing registration payload...');
-        const browserIdentityData = await Stronghold.getBrowserIdentity();
-        // Get or generate browser UUID
+        // Step 5.5: Get or generate browser UUID
+        console.log('5.5. Getting or generating browser UUID...');
         const storedBrowserUuid = await getBrowserUuid();
         const browserUuid = storedBrowserUuid || crypto.randomUUID();
         
@@ -943,11 +1016,18 @@ async function createStrongholdSession() {
             await storeBrowserUuid(browserUuid);
         }
         
+        // Step 5.6: Store session encryption key for persistence
+        console.log('5.6. Storing session encryption key...');
+        await storeSessionEncryptionKey(sessionEncryptionKey, browserUuid);
+        
+        // Step 6: Prepare registration payload
+        console.log('6. Preparing registration payload...');
+        const browserIdentityData = await Stronghold.getBrowserIdentity();
+        
         const registrationPayload = {
             handshake_nonce: handshakeData.handshake_nonce,
             browser_identity_public_key: browserIdentity.publicKey,
-            browser_uuid: browserUuid,
-            browser_fingerprint_hash: browserIdentityData.fingerprintHash
+            browser_uuid: browserUuid
         };
         
         // Step 7: Encrypt payload with session key
@@ -969,7 +1049,6 @@ async function createStrongholdSession() {
             handshake_nonce: handshakeData.handshake_nonce,
             browser_identity_public_key: browserIdentity.publicKey,
             browser_uuid: registrationPayload.browser_uuid,
-            browser_fingerprint_hash: registrationPayload.browser_fingerprint_hash,
             encrypted_payload: encryptedPayload
         };
         console.log('Registration request body:', requestBody);
@@ -1002,7 +1081,9 @@ async function createStrongholdSession() {
             browserIdentityKeyId: browserIdentity.keyId,
             dpopKeyId: dpopKey.keyId,
             browserUuid: registrationPayload.browser_uuid,
-            dpopNonce: registrationData.initial_dpop_nonce
+            sessionEncryptionKey: sessionEncryptionKey,
+            dpopNonce: registrationData.initial_dpop_nonce,
+            sekSource: 'Fresh ECDHE Handshake'
         };
         
         console.log('Stronghold session created successfully!');
@@ -1036,6 +1117,8 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
         const storedNonce = currentSession.dpopNonce || null;
         console.log('Current session nonce:', storedNonce);
         
+
+        
         // Create DPoP proof
         console.log('Creating DPoP proof with:', {
             keyId: currentSession.dpopKeyId,
@@ -1063,13 +1146,16 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
             credentials: 'include'  // Include cookies for session management
         };
         
-        // Get current browser fingerprint hash
+        // Get current browser identity
         const browserIdentityData = await Stronghold.getBrowserIdentity();
         
         // Add encrypted payload if provided
         let encryptedPayload = null;
         if (payload) {
-            encryptedPayload = await encryptWithSessionKey(sessionEncryptionKey, JSON.stringify(payload));
+            if (!currentSession.sessionEncryptionKey) {
+                throw new Error('No session encryption key available');
+            }
+            encryptedPayload = await encryptWithSessionKey(currentSession.sessionEncryptionKey, JSON.stringify(payload));
             requestOptions.body = JSON.stringify({
                 encrypted_payload: encryptedPayload
             });
@@ -1110,7 +1196,7 @@ async function makeAuthenticatedRequest(method, url, payload = null) {
             // Decrypt the server response payload locally for display
             if (responseData.encrypted_payload) {
                 try {
-                    const decryptedPayload = await decryptWithSessionKey(sessionEncryptionKey, responseData.encrypted_payload);
+                    const decryptedPayload = await decryptWithSessionKey(currentSession.sessionEncryptionKey, responseData.encrypted_payload);
                     responseData.decrypted_payload = decryptedPayload;
                 } catch (error) {
                     console.error('Error decrypting server payload:', error);
@@ -1181,105 +1267,6 @@ async function signData(keyId, data) {
     }
 }
 
-// Browser fingerprinting functions
-async function generateBrowserFingerprint() {
-    const fingerprint = {
-        userAgent: navigator.userAgent,
-        language: navigator.language,
-        languages: navigator.languages,
-        platform: navigator.platform,
-        cookieEnabled: navigator.cookieEnabled,
-        doNotTrack: navigator.doNotTrack,
-        hardwareConcurrency: navigator.hardwareConcurrency,
-        maxTouchPoints: navigator.maxTouchPoints,
-        vendor: navigator.vendor,
-        screen: {
-            width: screen.width,
-            height: screen.height,
-            colorDepth: screen.colorDepth,
-            pixelDepth: screen.pixelDepth,
-            availWidth: screen.availWidth,
-            availHeight: screen.availHeight
-        },
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        timezoneOffset: new Date().getTimezoneOffset(),
-        canvas: generateCanvasFingerprint(),
-        webgl: generateWebGLFingerprint(),
-        fonts: generateFontFingerprint(),
-        plugins: generatePluginFingerprint()
-    };
-    
-    // Create a hash of the fingerprint for consistent identification
-    const hash = await generateFingerprintHash(fingerprint);
-    
-    return {
-        full: fingerprint,
-        hash: hash
-    };
-}
-
-function generateCanvasFingerprint() {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    ctx.textBaseline = 'top';
-    ctx.font = '14px Arial';
-    ctx.fillText('Browser fingerprint test', 2, 2);
-    return canvas.toDataURL();
-}
-
-function generateWebGLFingerprint() {
-    const canvas = document.createElement('canvas');
-    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-    if (!gl) return null;
-    
-    return {
-        vendor: gl.getParameter(gl.VENDOR),
-        renderer: gl.getParameter(gl.RENDERER),
-        version: gl.getParameter(gl.VERSION)
-    };
-}
-
-function generateFontFingerprint() {
-    const testString = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    const testSize = '72px';
-    const fonts = ['Arial', 'Verdana', 'Times New Roman', 'Courier New', 'Georgia', 'Palatino', 'Garamond', 'Bookman', 'Comic Sans MS', 'Trebuchet MS', 'Arial Black', 'Impact'];
-    
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    ctx.font = testSize + ' Arial';
-    const baseWidth = ctx.measureText(testString).width;
-    
-    const fontWidths = {};
-    fonts.forEach(font => {
-        ctx.font = testSize + ' ' + font;
-        fontWidths[font] = ctx.measureText(testString).width;
-    });
-    
-    return fontWidths;
-}
-
-function generatePluginFingerprint() {
-    const plugins = [];
-    for (let i = 0; i < navigator.plugins.length; i++) {
-        const plugin = navigator.plugins[i];
-        plugins.push({
-            name: plugin.name,
-            description: plugin.description,
-            filename: plugin.filename
-        });
-    }
-    return plugins;
-}
-
-async function generateFingerprintHash(fingerprint) {
-    const fingerprintString = JSON.stringify(fingerprint);
-    const encoder = new TextEncoder();
-    const data = encoder.encode(fingerprintString);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 // Helper functions
 async function exportPublicKey(publicKey) {
     const exported = await window.crypto.subtle.exportKey("spki", publicKey);
@@ -1311,16 +1298,13 @@ function base64ToArrayBuffer(base64) {
 
 // Browser identity management functions
 async function getBrowserIdentity() {
-    const browserUuid = localStorage.getItem('stronghold_browser_uuid');
+    const browserUuid = await getBrowserUuid();
     
     if (!browserUuid) {
         return null;
     }
     
     try {
-        // Generate fingerprint fresh each time
-        const fingerprint = await generateBrowserFingerprint();
-        
         // Generate or get existing browser identity key
         const browserIdentityKey = await generateBrowserIdentityKey();
         
@@ -1329,14 +1313,12 @@ async function getBrowserIdentity() {
         
         return {
             browserUuid: browserUuid,
-            fingerprint: fingerprint,
-            fingerprintHash: fingerprint.hash,
             keysCreatedAt: Date.now(),
             browserIdentityKeyId: browserIdentityKey.keyId,
             dpopKeyId: dpopKey.keyId
         };
     } catch (error) {
-        console.error('Error generating browser fingerprint:', error);
+        console.error('Error getting browser identity:', error);
         return null;
     }
 }
@@ -1385,7 +1367,7 @@ async function getSecurityAudit() {
             rateLimiting: true,
             sessionInvalidation: true,
             secureJWT: true,
-            browserFingerprinting: true,
+            browserIdentity: true,
             dpopNonce: true,
             temporalValidation: true
         }
@@ -1431,42 +1413,66 @@ async function initializeSession() {
                     console.log('Existing session found, renegotiating ECDHE handshake...');
                     
                     try {
-                        // Step 1: Generate new browser identity key
-                        console.log('1. Generating new browser identity key...');
-                        const browserIdentityKeyPair = await window.crypto.subtle.generateKey(
-                            {
-                                name: "ECDSA",
-                                namedCurve: "P-256"
-                            },
-                            false,
-                            ["sign", "verify"]
+                        // Step 1: Check for stored session encryption key
+                        console.log('1. Checking for stored session encryption key...');
+                        const storedSessionEncryptionKey = await getSessionEncryptionKey(storedBrowserUuid);
+                        
+                        if (storedSessionEncryptionKey) {
+                            console.log('Found stored session encryption key...');
+                            
+                            // Step 1.5: Get existing browser identity key from IndexedDB
+                            console.log('1.5. Retrieving existing browser identity key...');
+                            const browserIdentityKey = await generateBrowserIdentityKey();
+                            
+                            // Step 2: Get existing DPoP key pair from IndexedDB
+                            console.log('2. Retrieving existing DPoP key pair...');
+                            const dpopKey = await generateDPoPKeyPair();
+                            
+                            // Step 3: Create session object with stored SEK
+                            console.log('3. Creating session object with stored SEK...');
+                            currentSession = {
+                                sessionId: sessionData.session_id,
+                                browserUuid: storedBrowserUuid,
+                                browserIdentityKeyId: browserIdentityKey.keyId,
+                                dpopKeyId: dpopKey.keyId,
+                                sessionEncryptionKey: storedSessionEncryptionKey,
+                                dpopNonce: null,  // Will be obtained on first authenticated request
+                                sekSource: 'Retrieved from Storage'
+                            };
+                            
+                            console.log('Session restored successfully with stored session encryption key');
+                            return;
+                        }
+                        
+                        // If no stored SEK found, proceed with challenge-response and ECDHE handshake
+                        console.log('No stored session encryption key found, proceeding with challenge-response...');
+                        
+                        // Step 1: Get existing browser identity key from IndexedDB
+                        console.log('1. Retrieving existing browser identity key...');
+                        const browserIdentityKey = await generateBrowserIdentityKey();
+                        
+                        // Step 2: Get existing DPoP key pair from IndexedDB
+                        console.log('2. Retrieving existing DPoP key pair...');
+                        const dpopKey = await generateDPoPKeyPair();
+                        
+                        // Step 3: Request challenge for session restoration
+                        console.log('3. Requesting challenge for session restoration...');
+                        const challengeData = await requestSessionChallenge(storedBrowserUuid);
+                        
+                        // Step 4: Sign the challenge with browser identity key
+                        console.log('4. Signing challenge with browser identity key...');
+                        const challengeSignature = await signChallenge(challengeData.challenge);
+                        
+                        // Step 5: Verify challenge and restore session
+                        console.log('5. Verifying challenge and restoring session...');
+                        const verificationData = await verifySessionChallenge(
+                            challengeData.session_id,
+                            challengeData.challenge,
+                            challengeSignature
                         );
                         
-                        const browserIdentityKeyId = `browser_identity_${crypto.randomUUID()}`;
-                        privateKeyHandleStore.set(browserIdentityKeyId, {
-                            privateKey: browserIdentityKeyPair.privateKey,
-                            publicKey: browserIdentityKeyPair.publicKey
-                        });
-                        
-                        // Step 2: Generate new DPoP key pair
-                        console.log('2. Generating new DPoP key pair...');
-                        const dpopKeyPair = await window.crypto.subtle.generateKey(
-                            {
-                                name: "ECDSA",
-                                namedCurve: "P-256"
-                            },
-                            false,
-                            ["sign", "verify"]
-                        );
-                        
-                        const dpopKeyId = `dpop_${crypto.randomUUID()}`;
-                        privateKeyHandleStore.set(dpopKeyId, {
-                            privateKey: dpopKeyPair.privateKey,
-                            publicKey: dpopKeyPair.publicKey
-                        });
-                        
-                        // Step 3: Renegotiate ECDHE handshake
-                        console.log('3. Renegotiating ECDHE handshake...');
+                        // Step 6: Perform ECDHE handshake to establish fresh SEK
+                        console.log('6. Performing ECDHE handshake for fresh session encryption key...');
                         const ecdheKey = await generateECDHEKeyPair();
                         
                         const handshakeResponse = await fetch('/handshake', {
@@ -1486,68 +1492,47 @@ async function initializeSession() {
                         const handshakeData = await handshakeResponse.json();
                         console.log('ECDHE handshake successful, handshake nonce:', handshakeData.handshake_nonce);
                         
-                        // Step 4: Derive fresh Session Encryption Key (SEK)
-                        console.log('4. Deriving fresh Session Encryption Key...');
-                        sessionEncryptionKey = await performECDHEHandshake(ecdheKey.keyId, handshakeData.server_ecdhe_public_key);
+                        // Step 7: Derive fresh Session Encryption Key (SEK)
+                        console.log('7. Deriving fresh Session Encryption Key...');
+                        const sessionEncryptionKey = await performECDHEHandshake(ecdheKey.keyId, handshakeData.server_ecdhe_public_key);
                         
                         console.log('Fresh Session Encryption Key derived successfully');
                         
-                        // Step 5: Get a proper session token from the server for the existing session
-                        console.log('5. Getting proper session token from server...');
-                        
-                        const browserIdentityData = await Stronghold.getBrowserIdentity();
-                        
-                        // Prepare registration payload for the existing session
-                        const registrationPayload = {
-                            handshake_nonce: handshakeData.handshake_nonce,
-                            browser_identity_public_key: await exportPublicKey(browserIdentityKeyPair.publicKey),
-                            browser_uuid: storedBrowserUuid,
-                            browser_fingerprint_hash: browserIdentityData.fingerprintHash
-                        };
-                        
-                        const encryptedPayload = await encryptWithSessionKey(sessionEncryptionKey, JSON.stringify(registrationPayload));
-                        
-                        // Create DPoP proof for session restoration
-                        const restorationDpopProof = await createDPoPProof(
-                            dpopKeyId,
-                            'POST',
-                            '/register-session',
-                            null  // No nonce for session restoration
-                        );
-                        
-                        // Use the existing session registration endpoint
-                        const tokenResponse = await fetch('/register-session', {
+                        // Step 8: Update server session with new encryption key
+                        console.log('8. Updating server session with new encryption key...');
+                        const keyUpdateResponse = await fetch('/update-session-key', {
                             method: 'POST',
                             headers: {
-                                'Content-Type': 'application/json',
-                                'DPoP': restorationDpopProof
+                                'Content-Type': 'application/json'
                             },
+                            credentials: 'include',
                             body: JSON.stringify({
-                                handshake_nonce: handshakeData.handshake_nonce,
-                                browser_identity_public_key: await exportPublicKey(browserIdentityKeyPair.publicKey),
-                                browser_uuid: storedBrowserUuid,
-                                browser_fingerprint_hash: browserIdentityData.fingerprintHash,
-                                encrypted_payload: encryptedPayload
+                                session_id: verificationData.session_id,
+                                handshake_nonce: handshakeData.handshake_nonce
                             })
                         });
                         
-                        if (!tokenResponse.ok) {
-                            throw new Error('Failed to get session token: ' + tokenResponse.statusText);
+                        if (!keyUpdateResponse.ok) {
+                            const errorText = await keyUpdateResponse.text();
+                            console.warn('Failed to update session key on server:', errorText);
+                        } else {
+                            const updateResult = await keyUpdateResponse.json();
+                            console.log('Session key updated successfully on server:', updateResult);
                         }
                         
-                        const tokenData = await tokenResponse.json();
-                        
-                        // Step 6: Create new session object
-                        console.log('6. Creating new session object...');
+                        // Step 9: Create session object with SEK
+                        console.log('9. Creating session object...');
                         currentSession = {
-                            sessionId: sessionData.session_id,
+                            sessionId: verificationData.session_id,
                             browserUuid: storedBrowserUuid,
-                            browserIdentityKeyId: browserIdentityKeyId,
-                            dpopKeyId: dpopKeyId,
-                            dpopNonce: tokenData.initial_dpop_nonce
+                            browserIdentityKeyId: browserIdentityKey.keyId,
+                            dpopKeyId: dpopKey.keyId,
+                            sessionEncryptionKey: sessionEncryptionKey,
+                            dpopNonce: null,  // Will be obtained on first authenticated request
+                            sekSource: 'Fresh ECDHE Handshake (Fallback)'
                         };
                         
-                        console.log('Session fully restored with fresh ECDHE handshake and SEK');
+                        console.log('Session restored successfully with challenge-response verification and fresh SEK');
                         
                     } catch (error) {
                         console.error('Error restoring session with ECDHE renegotiation:', error);
@@ -1564,6 +1549,143 @@ async function initializeSession() {
         } catch (error) {
             console.error('Error checking for existing session:', error);
         }
+    } else {
+        console.log('No browser UUID found, this must be our first time here...');
+    }
+}
+
+/**
+ * Request a challenge for session restoration
+ * @param {string} browserUuid 
+ * @returns {Promise<Object>}
+ */
+async function requestSessionChallenge(browserUuid) {
+    try {
+        console.log('Requesting challenge for session restoration...');
+        
+        const response = await fetch('/request-challenge', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                browser_uuid: browserUuid
+            })
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error('Challenge request failed: ' + response.statusText + ' - ' + errorText);
+        }
+        
+        const challengeData = await response.json();
+        console.log('Challenge received:', challengeData);
+        
+        return challengeData;
+        
+    } catch (error) {
+        console.error('Error requesting challenge:', error);
+        throw error;
+    }
+}
+
+/**
+ * Verify challenge signature and restore session
+ * @param {string} sessionId 
+ * @param {string} challenge 
+ * @param {string} signature 
+ * @returns {Promise<Object>}
+ */
+async function verifySessionChallenge(sessionId, challenge, signature) {
+    try {
+        console.log('Verifying challenge signature...');
+        
+        const response = await fetch('/verify-challenge', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                session_id: sessionId,
+                challenge: challenge,
+                signature: signature
+            })
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error('Challenge verification failed: ' + response.statusText + ' - ' + errorText);
+        }
+        
+        const verificationData = await response.json();
+        console.log('Challenge verified successfully:', verificationData);
+        
+        return verificationData;
+        
+    } catch (error) {
+        console.error('Error verifying challenge:', error);
+        throw error;
+    }
+}
+
+/**
+ * Sign a challenge with the browser identity private key
+ * @param {string} challenge 
+ * @returns {Promise<string>}
+ */
+async function signChallenge(challenge) {
+    try {
+        console.log('Signing challenge with browser identity key...');
+        
+        // Get the browser identity key
+        const browserIdentityKey = await generateBrowserIdentityKey();
+        
+        // Get the private key from the store using the key ID
+        const storedData = privateKeyHandleStore.get(browserIdentityKey.keyId);
+        if (!storedData || !storedData.privateKey) {
+            throw new Error('Browser identity private key not found in memory');
+        }
+        
+        // Sign the challenge
+        const signature = await signData(browserIdentityKey.keyId, challenge);
+        
+        console.log('Challenge signed successfully');
+        return signature;
+        
+    } catch (error) {
+        console.error('Error signing challenge:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get debug data from server for testing and debugging
+ * @returns {Promise<Object>}
+ */
+async function getDebugData() {
+    try {
+        console.log('Requesting debug data from server...');
+        
+        const response = await fetch('/debug/data', {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error('Debug data request failed: ' + response.statusText + ' - ' + errorText);
+        }
+        
+        const debugData = await response.json();
+        console.log('Debug data received:', debugData);
+        
+        return debugData;
+        
+    } catch (error) {
+        console.error('Error getting debug data:', error);
+        throw error;
     }
 }
 
@@ -1583,6 +1705,10 @@ if (typeof module !== 'undefined' && module.exports) {
         getSecurityAudit,
         clearBrowserUuidFromStorage,
         initializeSession,
+        requestSessionChallenge,
+        verifySessionChallenge,
+        signChallenge,
+        getDebugData,
         get currentSession() { return currentSession; }
     };
 } else {
@@ -1599,12 +1725,18 @@ if (typeof module !== 'undefined' && module.exports) {
         getSessionMapping,
         getSecurityAudit,
         initializeSession,
+        requestSessionChallenge,
+        verifySessionChallenge,
+        signChallenge,
+        getDebugData,
         cleanupExpiredKeys,
         isKeyValid,
         clearKeysByBrowserUuid,
         storeBrowserUuid,
         getBrowserUuid,
         deleteBrowserUuid,
+        storeSessionEncryptionKey,
+        getSessionEncryptionKey,
         get currentSession() { return currentSession; }
     };
 } 

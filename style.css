@@ -127,14 +127,7 @@ button:disabled {
     padding: 5px 0;
 }
 
-.fingerprint-hash {
-    font-family: monospace;
-    background-color: #e9ecef;
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-size: 12px;
-    word-break: break-all;
-}
+
 
 .user-agent {
     font-family: monospace;
@@ -222,6 +215,76 @@ button:disabled {
 .legacy-section {
     background-color: #fff3cd;
     padding: 20px;
+}
+
+/* Debug Section Styles */
+.debug-section {
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    border-left: 4px solid #6c757d;
+    margin-bottom: 30px;
+}
+
+.debug-actions {
+    margin-bottom: 20px;
+}
+
+.debug-summary {
+    background-color: white;
+    padding: 15px;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+}
+
+.debug-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+    margin: 15px 0;
+}
+
+.debug-stat {
+    background-color: #e9ecef;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 14px;
+}
+
+.debug-timestamp {
+    background-color: #e9ecef;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 14px;
+    margin: 10px 0;
+}
+
+.debug-server-info {
+    background-color: #e9ecef;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 14px;
+    margin: 10px 0;
+}
+
+.debug-raw {
+    margin-top: 20px;
+}
+
+.debug-raw pre {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+    font-family: monospace;
+    font-size: 12px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
     border-radius: 8px;
     border-left: 4px solid #ffc107;
     margin-bottom: 30px;
