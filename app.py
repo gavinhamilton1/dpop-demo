@@ -96,6 +96,8 @@ async def index():
     with open("index.html", "r") as f:
         return HTMLResponse(content=f.read())
 
+
+
 @app.get("/check-session/{browser_uuid}")
 async def check_session(browser_uuid: str):
     """Check if a browser UUID has an existing session"""
@@ -119,6 +121,8 @@ async def check_session(browser_uuid: str):
         
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Session check failed: {str(e)}")
+
+
 
 @app.post("/request-challenge")
 async def request_challenge(request: ChallengeRequest):
@@ -158,6 +162,8 @@ async def request_challenge(request: ChallengeRequest):
         
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Challenge request failed: {str(e)}")
+
+
 
 @app.post("/verify-challenge")
 async def verify_challenge(request: ChallengeVerificationRequest):
@@ -276,176 +282,6 @@ async def update_session_key(request: SessionKeyUpdateRequest, session_id: str =
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Session key update failed: {str(e)}")
 
-@app.post("/debug/clear-rate-limits")
-async def clear_rate_limits():
-    """Clear all rate limiting data for testing"""
-    try:
-        global rate_limit_attempts
-        cleared_count = len(rate_limit_attempts)
-        rate_limit_attempts.clear()
-        logging.info(f"Cleared rate limiting data for {cleared_count} IPs")
-        return {
-            "success": True,
-            "message": f"Cleared rate limiting data for {cleared_count} IPs",
-            "cleared_count": cleared_count
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to clear rate limits: {str(e)}")
-
-@app.get("/debug/rate-limits")
-async def get_rate_limit_debug(request: Request):
-    """Debug endpoint to show current rate limiting state"""
-    try:
-        # Extract client IP for rate limiting
-        client_ip = request.client.host if request.client else None
-        logging.debug(f"Rate limit debug - Client IP: {client_ip}")
-        
-        # Apply rate limiting to this endpoint too
-        if client_ip:
-            current_time = datetime.utcnow()
-            if client_ip not in rate_limit_attempts:
-                rate_limit_attempts[client_ip] = {"count": 0, "window_start": current_time}
-            
-            # Reset window if more than 1 minute has passed
-            if current_time - rate_limit_attempts[client_ip]["window_start"] > timedelta(minutes=1):
-                rate_limit_attempts[client_ip] = {"count": 0, "window_start": current_time}
-            
-            # Increment attempt count
-            rate_limit_attempts[client_ip]["count"] += 1
-            logging.debug(f"Rate limit debug - attempts: {rate_limit_attempts[client_ip]}")
-            
-            # Block if more than 3 attempts per minute
-            logging.debug(f"Rate limit debug - check: {rate_limit_attempts[client_ip]['count']} attempts for IP {client_ip}")
-            if rate_limit_attempts[client_ip]["count"] > 3:
-                logging.warning(f"Rate limit exceeded for IP {client_ip}: {rate_limit_attempts[client_ip]['count']} attempts")
-                raise HTTPException(status_code=429, detail="Rate limit exceeded")
-        
-        return {
-            "rate_limit_attempts": rate_limit_attempts,
-            "total_ips": len(rate_limit_attempts),
-            "current_time": datetime.utcnow().isoformat(),
-            "client_ip": client_ip
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Rate limit debug failed: {str(e)}")
-
-@app.get("/debug/data")
-async def get_debug_data():
-    """Debug endpoint to return all internal data structures for testing"""
-    try:
-        # Convert datetime objects to strings for JSON serialization
-        def serialize_datetime(obj):
-            if isinstance(obj, datetime):
-                return obj.isoformat()
-            return obj
-        
-        # Safe serialization function
-        def safe_serialize(obj):
-            try:
-                if isinstance(obj, bytes):
-                    return f"[Binary Data - {len(obj)} bytes]"
-                elif isinstance(obj, datetime):
-                    return obj.isoformat()
-                elif hasattr(obj, '__dict__'):
-                    # Handle objects with attributes
-                    return f"[Object: {type(obj).__name__}]"
-                else:
-                    return obj
-            except Exception:
-                return f"[Unserializable: {type(obj).__name__}]"
-        
-        # Process sessions data
-        serialized_sessions = {}
-        for session_id, session_data in sessions.items():
-            serialized_session = {}
-            for key, value in session_data.items():
-                if key in ['session_encryption_key', 'server_ecdhe_private_key']:
-                    # Hide sensitive cryptographic data
-                    serialized_session[key] = "[REDACTED - Cryptographic Key]"
-                else:
-                    serialized_session[key] = safe_serialize(value)
-            serialized_sessions[session_id] = serialized_session
-        
-        # Process handshake nonces data
-        serialized_handshake_nonces = {}
-        for nonce, nonce_data in handshake_nonces.items():
-            serialized_nonce_data = {}
-            for key, value in nonce_data.items():
-                if key in ['session_encryption_key', 'server_ecdhe_private_key']:
-                    serialized_nonce_data[key] = "[REDACTED - Cryptographic Key]"
-                else:
-                    serialized_nonce_data[key] = safe_serialize(value)
-            serialized_handshake_nonces[nonce] = serialized_nonce_data
-        
-        # Process DPoP nonces data
-        serialized_dpop_nonces = {}
-        for session_id, nonce_data in dpop_nonces.items():
-            serialized_nonce_data = {}
-            for key, value in nonce_data.items():
-                serialized_nonce_data[key] = safe_serialize(value)
-            serialized_dpop_nonces[session_id] = serialized_nonce_data
-        
-        # Process challenges data
-        serialized_challenges = {}
-        for session_id, challenge_data in challenges.items():
-            serialized_challenge_data = {}
-            for key, value in challenge_data.items():
-                serialized_challenge_data[key] = safe_serialize(value)
-            serialized_challenges[session_id] = serialized_challenge_data
-        
-        # Process rate limiting data
-        serialized_rate_limits = {}
-        for ip, rate_data in rate_limit_attempts.items():
-            serialized_rate_data = {}
-            for key, value in rate_data.items():
-                serialized_rate_data[key] = safe_serialize(value)
-            serialized_rate_limits[ip] = serialized_rate_data
-        
-        debug_data = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "server_info": {
-                "jwt_secret_length": len(JWT_SECRET),
-                "server_public_key_available": server_public_key is not None
-            },
-            "sessions": {
-                "count": len(sessions),
-                "session_ids": list(sessions.keys()),
-                "data": serialized_sessions
-            },
-            "browser_sessions": {
-                "count": len(browser_sessions),
-                "mappings": browser_sessions
-            },
-            "handshake_nonces": {
-                "count": len(handshake_nonces),
-                "nonces": list(handshake_nonces.keys()),
-                "data": serialized_handshake_nonces
-            },
-            "dpop_nonces": {
-                "count": len(dpop_nonces),
-                "session_ids": list(dpop_nonces.keys()),
-                "data": serialized_dpop_nonces
-            },
-            "challenges": {
-                "count": len(challenges),
-                "session_ids": list(challenges.keys()),
-                "data": serialized_challenges
-            },
-            "invalidated_sessions": {
-                "count": len(invalidated_sessions),
-                "session_ids": list(invalidated_sessions)
-            },
-            "rate_limiting": {
-                "count": len(rate_limit_attempts),
-                "ips": list(rate_limit_attempts.keys()),
-                "data": serialized_rate_limits
-            }
-        }
-        
-        return debug_data
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Debug data retrieval failed: {str(e)}")
 
 
 @app.post("/invalidate-session")
@@ -467,6 +303,14 @@ async def invalidate_session(session_id: str = Cookie(None)):
             # Clean up DPoP nonces
             if session_id in dpop_nonces:
                 del dpop_nonces[session_id]
+                
+            # remove session keys
+            if session_id in session_keys:
+                del session_keys[session_id]
+                
+            # remove browser identity key
+            if session_id in browser_identity_keys:
+                del browser_identity_keys[session_id]   
             
             logging.info(f"Session {session_id} invalidated successfully")
             
@@ -480,6 +324,8 @@ async def invalidate_session(session_id: str = Cookie(None)):
             
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Session invalidation failed: {str(e)}")
+
+
 
 @app.post("/handshake")
 async def initiate_handshake(request: HandshakeRequest):
@@ -1070,6 +916,176 @@ def verify_dpop_proof(dpop_proof: str, method: str = None, url: str = None, nonc
         logging.error(f"Full traceback: {traceback.format_exc()}")
         return False
 
+@app.post("/debug/clear-rate-limits")
+async def clear_rate_limits():
+    """Clear all rate limiting data for testing"""
+    try:
+        global rate_limit_attempts
+        cleared_count = len(rate_limit_attempts)
+        rate_limit_attempts.clear()
+        logging.info(f"Cleared rate limiting data for {cleared_count} IPs")
+        return {
+            "success": True,
+            "message": f"Cleared rate limiting data for {cleared_count} IPs",
+            "cleared_count": cleared_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear rate limits: {str(e)}")
+
+@app.get("/debug/rate-limits")
+async def get_rate_limit_debug(request: Request):
+    """Debug endpoint to show current rate limiting state"""
+    try:
+        # Extract client IP for rate limiting
+        client_ip = request.client.host if request.client else None
+        logging.debug(f"Rate limit debug - Client IP: {client_ip}")
+        
+        # Apply rate limiting to this endpoint too
+        if client_ip:
+            current_time = datetime.utcnow()
+            if client_ip not in rate_limit_attempts:
+                rate_limit_attempts[client_ip] = {"count": 0, "window_start": current_time}
+            
+            # Reset window if more than 1 minute has passed
+            if current_time - rate_limit_attempts[client_ip]["window_start"] > timedelta(minutes=1):
+                rate_limit_attempts[client_ip] = {"count": 0, "window_start": current_time}
+            
+            # Increment attempt count
+            rate_limit_attempts[client_ip]["count"] += 1
+            logging.debug(f"Rate limit debug - attempts: {rate_limit_attempts[client_ip]}")
+            
+            # Block if more than 3 attempts per minute
+            logging.debug(f"Rate limit debug - check: {rate_limit_attempts[client_ip]['count']} attempts for IP {client_ip}")
+            if rate_limit_attempts[client_ip]["count"] > 3:
+                logging.warning(f"Rate limit exceeded for IP {client_ip}: {rate_limit_attempts[client_ip]['count']} attempts")
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        
+        return {
+            "rate_limit_attempts": rate_limit_attempts,
+            "total_ips": len(rate_limit_attempts),
+            "current_time": datetime.utcnow().isoformat(),
+            "client_ip": client_ip
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Rate limit debug failed: {str(e)}")
+
+@app.get("/debug/data")
+async def get_debug_data():
+    """Debug endpoint to return all internal data structures for testing"""
+    try:
+        # Convert datetime objects to strings for JSON serialization
+        def serialize_datetime(obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            return obj
+        
+        # Safe serialization function
+        def safe_serialize(obj):
+            try:
+                if isinstance(obj, bytes):
+                    return f"[Binary Data - {len(obj)} bytes]"
+                elif isinstance(obj, datetime):
+                    return obj.isoformat()
+                elif hasattr(obj, '__dict__'):
+                    # Handle objects with attributes
+                    return f"[Object: {type(obj).__name__}]"
+                else:
+                    return obj
+            except Exception:
+                return f"[Unserializable: {type(obj).__name__}]"
+        
+        # Process sessions data
+        serialized_sessions = {}
+        for session_id, session_data in sessions.items():
+            serialized_session = {}
+            for key, value in session_data.items():
+                if key in ['session_encryption_key', 'server_ecdhe_private_key']:
+                    # Hide sensitive cryptographic data
+                    serialized_session[key] = "[REDACTED - Cryptographic Key]"
+                else:
+                    serialized_session[key] = safe_serialize(value)
+            serialized_sessions[session_id] = serialized_session
+        
+        # Process handshake nonces data
+        serialized_handshake_nonces = {}
+        for nonce, nonce_data in handshake_nonces.items():
+            serialized_nonce_data = {}
+            for key, value in nonce_data.items():
+                if key in ['session_encryption_key', 'server_ecdhe_private_key']:
+                    serialized_nonce_data[key] = "[REDACTED - Cryptographic Key]"
+                else:
+                    serialized_nonce_data[key] = safe_serialize(value)
+            serialized_handshake_nonces[nonce] = serialized_nonce_data
+        
+        # Process DPoP nonces data
+        serialized_dpop_nonces = {}
+        for session_id, nonce_data in dpop_nonces.items():
+            serialized_nonce_data = {}
+            for key, value in nonce_data.items():
+                serialized_nonce_data[key] = safe_serialize(value)
+            serialized_dpop_nonces[session_id] = serialized_nonce_data
+        
+        # Process challenges data
+        serialized_challenges = {}
+        for session_id, challenge_data in challenges.items():
+            serialized_challenge_data = {}
+            for key, value in challenge_data.items():
+                serialized_challenge_data[key] = safe_serialize(value)
+            serialized_challenges[session_id] = serialized_challenge_data
+        
+        # Process rate limiting data
+        serialized_rate_limits = {}
+        for ip, rate_data in rate_limit_attempts.items():
+            serialized_rate_data = {}
+            for key, value in rate_data.items():
+                serialized_rate_data[key] = safe_serialize(value)
+            serialized_rate_limits[ip] = serialized_rate_data
+        
+        debug_data = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "server_info": {
+                "jwt_secret_length": len(JWT_SECRET),
+                "server_public_key_available": server_public_key is not None
+            },
+            "sessions": {
+                "count": len(sessions),
+                "session_ids": list(sessions.keys()),
+                "data": serialized_sessions
+            },
+            "browser_sessions": {
+                "count": len(browser_sessions),
+                "mappings": browser_sessions
+            },
+            "handshake_nonces": {
+                "count": len(handshake_nonces),
+                "nonces": list(handshake_nonces.keys()),
+                "data": serialized_handshake_nonces
+            },
+            "dpop_nonces": {
+                "count": len(dpop_nonces),
+                "session_ids": list(dpop_nonces.keys()),
+                "data": serialized_dpop_nonces
+            },
+            "challenges": {
+                "count": len(challenges),
+                "session_ids": list(challenges.keys()),
+                "data": serialized_challenges
+            },
+            "invalidated_sessions": {
+                "count": len(invalidated_sessions),
+                "session_ids": list(invalidated_sessions)
+            },
+            "rate_limiting": {
+                "count": len(rate_limit_attempts),
+                "ips": list(rate_limit_attempts.keys()),
+                "data": serialized_rate_limits
+            }
+        }
+        
+        return debug_data
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug data retrieval failed: {str(e)}")
 
 
 if __name__ == "__main__":
