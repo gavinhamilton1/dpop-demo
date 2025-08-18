@@ -1,8 +1,8 @@
 // src/stronghold-sw.js
 // Stronghold service worker: signs /api/* with DPoP + DPoP-Bind, handles nonce retry, and session resume.
 
-import { idbGet, idbPut, STORES } from './idb.js';
-import { b64uJSON, sigToJoseEcdsa, createJwsES256 } from './jose-lite.js';
+import { idbGet, idbPut, STORES } from '/src/idb.js';
+import { b64uJSON, sigToJoseEcdsa, createJwsES256 } from '/src/jose-lite.js';
 
 const swlog = (...a) => console.debug('[stronghold/sw]', ...a);
 
