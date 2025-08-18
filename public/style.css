@@ -1,0 +1,21 @@
+body {
+    font-family: system-ui, sans-serif;
+    margin: 2rem
+}
+
+button {
+    margin: .25rem .25rem .25rem 0;
+    padding: .5rem .8rem
+}
+
+pre {
+    background: #111;
+    color: #eee;
+    padding: 1rem;
+    overflow: auto;
+    max-height: 60vh
+}
+
+.row {
+    margin-bottom: .75rem
+}

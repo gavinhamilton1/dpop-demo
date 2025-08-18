@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Stronghold Session Binding Demo (Prod-ish)</title>
+  <link rel="stylesheet" href="/public/style.css"/>
+</head>
+<body>
+  <h1>Stronghold Session Binding Demo (Prod-ish)</h1>
+  <div class="row">
+    <button id="btn-sw-register">Register Service Worker</button>
+    <button id="btn-sw-unregister">Unregister Service Worker</button>
+  <span id="sw-state"></span>
+    <button id="btn-init">1) Init Session</button>
+    <button id="btn-bik">2) Register BIK</button>
+    <button id="btn-bind">3) Bind DPoP</button>
+  </div>
+  <div class="row">
+    <button id="btn-echo-sw">Echo via SW (signed)</button>
+    <button id="btn-echo-direct">Echo piecemeal (signed)</button>
+    <button id="btn-flush">Admin Flush</button>
+    <button id="btn-client-flush">Client Flush</button>
+  </div>
+  
+  <pre id="out"></pre>
+  <script type="module" src="/public/app.js"></script>
+</body>
+</html>
