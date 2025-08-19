@@ -7,27 +7,28 @@ import * as Passkeys   from '/src/passkeys.js';
   console.log('[init] Stronghold exports:', Object.keys(Stronghold));
   console.log('[init] Passkeys exports:', Object.keys(Passkeys));
 
-  // --------------------------
-  // DOM helpers + logger
-  // --------------------------
+  // ------- helpers -------
   function $(id) {
     const el = document.getElementById(id);
     if (!el) throw new Error(`missing #${id}`);
     return el;
   }
-  const out = $('out');
+
+  const out = (() => {
+    try { return $('out'); } catch { return null; }
+  })();
+
   const log = (...a) => {
     console.log(...a);
+    if (!out) return;
     out.textContent += a.map(x => typeof x === 'string' ? x : JSON.stringify(x, null, 2)).join(' ') + '\n';
   };
 
-  // --------------------------
-  // Status (session + SW)
-  // --------------------------
+  // ---- status (session + SW)
   async function reportStatus(note = '') {
     const bind = (await Stronghold.get('bind'))?.value || null;
 
-    const sw = { supported: 'serviceWorker' in navigator, registered: false, controlled: false, scope: null };
+    let sw = { supported: 'serviceWorker' in navigator, registered: false, controlled: false, scope: null };
     if (sw.supported) {
       const reg = await navigator.serviceWorker.getRegistration();
       sw.registered = !!reg;
@@ -35,9 +36,11 @@ import * as Passkeys   from '/src/passkeys.js';
       sw.controlled = !!navigator.serviceWorker.controller;
     }
 
-    if (bind) log('[status] session: continuing (bind present)');
-    else log('[status] session: none (no bind)');
-
+    if (bind) {
+      log('[status] session: continuing (bind present)');
+    } else {
+      log('[status] session: none (no bind)');
+    }
     if (sw.supported && sw.registered && !sw.controlled) {
       log('[note] SW installed but not controlling this page yet. Reload once to allow takeover.');
     }
@@ -52,27 +55,29 @@ import * as Passkeys   from '/src/passkeys.js';
     });
   }
 
-  // --------------------------
-  // SW buttons
-  // --------------------------
-  $('btn-sw-register').onclick = async () => {
-    try {
-      if (!('serviceWorker' in navigator)) return log('[err] Service Worker not supported');
+  // ---- buttons
+  const swRegBtn = document.getElementById('btn-sw-register');
+  if (swRegBtn) {
+    swRegBtn.onclick = async () => {
+      try {
+        if (!('serviceWorker' in navigator)) return log('[err] Service Worker not supported');
 
-      const reg = await navigator.serviceWorker.register('/stronghold-sw.js', { type: 'module' });
-      log('[ok] SW registered (module)', { scope: reg.scope });
+        const reg = await navigator.serviceWorker.register('/stronghold-sw.js', { type: 'module' });
+        log('[ok] SW registered (module)', { scope: reg.scope });
 
-      await navigator.serviceWorker.ready;
-      if (navigator.serviceWorker.controller) {
-        log('[ok] SW is controlling this page');
-      } else {
-        log('[note] SW installed but no controller yet. Reload once to allow takeover.');
+        // Wait for activation; some browsers still need a reload to get a controller
+        await navigator.serviceWorker.ready;
+        if (navigator.serviceWorker.controller) {
+          log('[ok] SW is controlling this page');
+        } else {
+          log('[note] SW installed but no controller yet. Reload once to allow takeover.');
+        }
+      } catch (e) {
+        log('[err] SW register', e.message);
       }
-    } catch (e) {
-      log('[err] SW register', e.message);
-    }
-    await reportStatus('after sw-register');
-  };
+      await reportStatus('after sw-register');
+    };
+  }
 
   const unregBtn = document.getElementById('btn-sw-unregister');
   if (unregBtn) {
@@ -93,294 +98,322 @@ import * as Passkeys   from '/src/passkeys.js';
     };
   }
 
-  // --------------------------
-  // Session buttons
-  // --------------------------
-  $('btn-init').onclick = async () => {
-    try {
-      log('[ok] session/init', await Stronghold.sessionInit({ sessionInitUrl: '/session/init' }));
-    } catch (e) {
-      log('[err] init', e.message);
-    }
-    await reportStatus('after init');
-  };
-
-  $('btn-bik').onclick = async () => {
-    try {
-      log('[ok] bik/register', await Stronghold.bikRegisterStep({ bikRegisterUrl: '/browser/register' }));
-    } catch (e) {
-      log('[err] BIK', e.message);
-    }
-    await reportStatus('after bik');
-  };
-
-  $('btn-bind').onclick = async () => {
-    try {
-      const state = await Stronghold.dpopBindStep({ dpopBindUrl: '/dpop/bind' });
-      log('[ok] dpop/bind', state);
-      if (navigator.serviceWorker?.controller) {
-        navigator.serviceWorker.controller.postMessage({
-          type: 'stronghold/bind',
-          bind: state.bind,
-          dpopKeyId: state.dpopKeyId,
-          nonce: state.nonce
-        });
-      } else {
-        log('[note] no SW controller (piecemeal mode) – requests via fetch() won’t be auto-signed by SW.');
+  const initBtn = document.getElementById('btn-init');
+  if (initBtn) {
+    initBtn.onclick = async () => {
+      try {
+        log('[ok] session/init', await Stronghold.sessionInit({ sessionInitUrl: '/session/init' }));
+      } catch (e) {
+        log('[err] init', e.message);
       }
-    } catch (e) {
-      log('[err] bind', e.message);
-    }
-    await reportStatus('after bind');
-  };
+      await reportStatus('after init');
+    };
+  }
 
-  $('btn-echo-sw').onclick = async () => {
-    try {
-      if (!navigator.serviceWorker?.controller) {
-        log('[note] SW not controlling; /api/* fetches won’t be SW-signed (expect 428 first call).');
+  const bikBtn = document.getElementById('btn-bik');
+  if (bikBtn) {
+    bikBtn.onclick = async () => {
+      try {
+        log('[ok] bik/register', await Stronghold.bikRegisterStep({ bikRegisterUrl: '/browser/register' }));
+      } catch (e) {
+        log('[err] BIK', e.message);
       }
-      const r = await fetch('/api/echo', {
-        method: 'POST',
-        body: JSON.stringify({ hello: 'world' }),
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include'
-      });
-      const j = await r.json().catch(() => ({}));
-      log(r.ok ? '[ok] echo(sw)' : '[err] echo(sw)', j, 'nonce:', r.headers.get('DPoP-Nonce'));
-    } catch (e) {
-      log('[err] echo(sw)', e.message);
-    }
-    await reportStatus('after echo-sw');
-  };
+      await reportStatus('after bik');
+    };
+  }
 
-  $('btn-echo-direct').onclick = async () => {
-    try {
-      log('[ok] echo(direct)', await Stronghold.strongholdFetch('/api/echo', { method: 'POST', body: { hello: 'direct' } }));
-    } catch (e) {
-      log('[err] echo(direct)', e.message);
-    }
-    await reportStatus('after echo-direct');
-  };
-
-  $('btn-flush').onclick = async () => {
-    try {
-      const r = await fetch('/_admin/flush', { method: 'POST' });
-      log('[ok] admin/flush', await r.json());
-      clearLinkUI(true);
-    } catch (e) {
-      log('[err] admin/flush', e.message);
-    }
-    await reportStatus('after admin-flush');
-  };
-
-  $('btn-client-flush').onclick = async () => {
-    try {
-      const r = await Stronghold.clientFlush({ unregisterSW: false });
-      log('[ok] client/flush', r);
-      clearLinkUI(true);
-    } catch (e) {
-      log('[err] client-flush', e.message);
-    }
-    await reportStatus('after client-flush');
-  };
-
-  // --------------------------
-  // PASSKEYS (check / register / authenticate)
-  // --------------------------
-  $('btn-passkey-check').onclick = async () => {
-    try {
-      const sup = await Passkeys.checkSupport();
-      log('[ok] passkey/check', sup);
-      if (!sup.hasAPI || !sup.uvp) {
-        $('btn-passkey-register').disabled = true;
-        $('btn-passkey-login').disabled = true;
-        if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-          log('[note] WebAuthn requires HTTPS (or localhost).');
+  const bindBtn = document.getElementById('btn-bind');
+  if (bindBtn) {
+    bindBtn.onclick = async () => {
+      try {
+        const state = await Stronghold.dpopBindStep({ dpopBindUrl: '/dpop/bind' });
+        log('[ok] dpop/bind', state);
+        if (navigator.serviceWorker?.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'stronghold/bind',
+            bind: state.bind,
+            dpopKeyId: state.dpopKeyId,
+            nonce: state.nonce
+          });
+        } else {
+          log('[note] no SW controller (piecemeal mode) – requests via fetch() won’t be auto-signed by SW.');
         }
+      } catch (e) {
+        log('[err] bind', e.message);
       }
-    } catch (e) {
-      log('[err] passkey/check', e.message);
-    }
-  };
+      await reportStatus('after bind');
+    };
+  }
 
-  $('btn-passkey-register').onclick = async () => {
-    try {
-      const res = await Passkeys.registerPasskey();
-      log('[ok] passkey/register', res);
-    } catch (e) {
-      log('[err] passkey/register', e.message || String(e));
-    }
-    await reportStatus('after passkey-register');
-  };
+  const echoSwBtn = document.getElementById('btn-echo-sw');
+  if (echoSwBtn) {
+    echoSwBtn.onclick = async () => {
+      try {
+        if (!navigator.serviceWorker?.controller) {
+          log('[note] SW not controlling; /api/* fetches won’t be SW-signed (expect 428 first call).');
+        }
+        const r = await fetch('/api/echo', {
+          method: 'POST',
+          body: JSON.stringify({ hello: 'world' }),
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include'
+        });
+        const j = await r.json().catch(() => ({}));
+        log(r.ok ? '[ok] echo(sw)' : '[err] echo(sw)', j, 'nonce:', r.headers.get('DPoP-Nonce'));
+      } catch (e) {
+        log('[err] echo(sw)', e.message);
+      }
+      await reportStatus('after echo-sw');
+    };
+  }
 
-  $('btn-passkey-login').onclick = async () => {
-    try {
-      const res = await Passkeys.authenticatePasskey();
-      log('[ok] passkey/auth', res);
-    } catch (e) {
-      log('[err] passkey/auth', e.message || String(e));
-    }
-    await reportStatus('after passkey-auth');
-  };
+  const echoDirectBtn = document.getElementById('btn-echo-direct');
+  if (echoDirectBtn) {
+    echoDirectBtn.onclick = async () => {
+      try {
+        log('[ok] echo(direct)', await Stronghold.strongholdFetch('/api/echo', { method: 'POST', body: { hello: 'direct' } }));
+      } catch (e) {
+        log('[err] echo(direct)', e.message);
+      }
+      await reportStatus('after echo-direct');
+    };
+  }
+
+  const flushBtn = document.getElementById('btn-flush');
+  if (flushBtn) {
+    flushBtn.onclick = async () => {
+      try {
+        const r = await fetch('/_admin/flush', { method: 'POST' });
+        log('[ok] admin/flush', await r.json());
+        // also clear any linking UI
+        stopLinkWatch(); clearQr(); setLinkUIVisible(false);
+      } catch (e) {
+        log('[err] admin/flush', e.message);
+      }
+      await reportStatus('after admin-flush');
+    };
+  }
+
+  const clientFlushBtn = document.getElementById('btn-client-flush');
+  if (clientFlushBtn) {
+    clientFlushBtn.onclick = async () => {
+      try {
+        const r = await Stronghold.clientFlush({ unregisterSW: false }); // set true to also unregister SW
+        log('[ok] client/flush', r);
+        stopLinkWatch(); clearQr(); setLinkUIVisible(false);
+      } catch (e) {
+        log('[err] client/flush', e.message);
+      }
+      await reportStatus('after client-flush');
+    };
+  }
+
+  // ---- PASSKEYS (check / register / authenticate)
+  const pkCheckBtn = document.getElementById('btn-passkey-check');
+  if (pkCheckBtn) {
+    pkCheckBtn.onclick = async () => {
+      try {
+        const sup = await Passkeys.checkSupport();
+        log('[ok] passkey/check', sup);
+        if (!sup.hasAPI || !sup.uvp) {
+          const regBtn = document.getElementById('btn-passkey-register');
+          const loginBtn = document.getElementById('btn-passkey-login');
+          if (regBtn) regBtn.disabled = true;
+          if (loginBtn) loginBtn.disabled = true;
+          if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+            log('[note] WebAuthn requires HTTPS (or localhost).');
+          }
+        }
+      } catch (e) {
+        log('[err] passkey/check', e.message);
+      }
+    };
+  }
+
+  const pkRegBtn = document.getElementById('btn-passkey-register');
+  if (pkRegBtn) {
+    pkRegBtn.onclick = async () => {
+      try {
+        const res = await Passkeys.registerPasskey();
+        log('[ok] passkey/register', res);
+      } catch (e) {
+        log('[err] passkey/register', e.message || String(e));
+      }
+      await reportStatus('after passkey-register');
+    };
+  }
+
+  const pkLoginBtn = document.getElementById('btn-passkey-login');
+  if (pkLoginBtn) {
+    pkLoginBtn.onclick = async () => {
+      try {
+        const res = await Passkeys.authenticatePasskey();
+        log('[ok] passkey/auth', res);
+      } catch (e) {
+        log('[err] passkey/auth', e.message || String(e));
+      }
+      await reportStatus('after passkey-auth');
+    };
+  }
 
   // =========================
-  // LINKING (client-side QR)
+  // LINKING (client-side QR) with SSE + polling fallback
   // =========================
 
-  // --- Link UI helpers
-  function setLinkStatus(text) {
-    const el = document.getElementById('link-status');
-    if (el) el.textContent = text;
+  let currentSSE = null;
+  let currentPollTimer = null;
+
+  function stopLinkWatch() {
+    if (currentSSE) {
+      try { currentSSE.close(); } catch {}
+      currentSSE = null;
+    }
+    if (currentPollTimer) {
+      clearTimeout(currentPollTimer);
+      currentPollTimer = null;
+    }
   }
-  function showLinkArea(urlText) {
-    const area = document.getElementById('link-area');
-    const urlEl = document.getElementById('link-url');
-    if (area) area.style.display = 'flex';
-    if (urlEl) urlEl.textContent = urlText || '';
-    setLinkStatus('pending');
-  }
-  function drawQrIntoLinkArea(text) {
+
+  function clearQr() {
     const host = document.getElementById('link-qr');
-    if (!host) return;
+    if (host) host.innerHTML = '';
+  }
+
+  function renderQr(text) {
+    const host = document.getElementById('link-qr');
+    if (!host) {
+      log('[note] add <div id="link-qr"></div> to display the QR.');
+      log('[note] link URI:', text);
+      return;
+    }
     host.innerHTML = '';
     if (!('QRCode' in window)) {
-      // Fallback: just print the URL if QR library isn't loaded
-      const a = document.createElement('a');
-      a.href = text; a.textContent = text; a.rel = 'noopener noreferrer';
-      host.appendChild(a);
+      log('[note] QR lib not loaded. Add <script src="/public/qrcode.min.js"></script>.');
+      log('[note] link URI:', text);
       return;
     }
     // eslint-disable-next-line no-undef
     new QRCode(host, { text, width: 192, height: 192, correctLevel: QRCode.CorrectLevel.M });
   }
-  function clearLinkUI(hide = false) {
-    const host = document.getElementById('link-qr');
-    if (host) host.innerHTML = '';
-    if (hide) {
-      const area = document.getElementById('link-area');
-      if (area) area.style.display = 'none';
-    } else {
-      setLinkStatus('pending');
-    }
-    if (linkPollStop) { linkPollStop(); linkPollStop = null; }
-    linkActiveId = null;
-    const btn = document.getElementById('btn-link-start');
-    if (btn) btn.disabled = false;
-  }
-  // Keep your old name for compatibility with previous calls
-  function clearQr() { clearLinkUI(); }
 
-  // --- JWS payload decode (base64url)
-  function decodeJwsPayload(token) {
-    try {
-      const parts = token.split('.');
-      if (parts.length < 2) return null;
-      const p = parts[1];
-      const pad = '='.repeat((4 - (p.length % 4)) % 4);
-      const json = atob(p.replace(/-/g, '+').replace(/_/g, '/') + pad);
-      return JSON.parse(json);
-    } catch {
-      return null;
-    }
+  function setLinkUIVisible(v) {
+    const area = document.getElementById('link-area');
+    if (area) area.style.display = v ? 'flex' : 'none';
   }
 
-  // --- Polling
-  let linkPollStop = null;
-  let linkActiveId = null;
+  function setLinkStatus(text) {
+    const el = document.getElementById('link-status');
+    if (el) el.textContent = text;
+  }
 
   async function pollLinkStatus(linkId) {
-    linkActiveId = linkId;
-    let stopped = false;
-    linkPollStop = () => { stopped = true; };
-
-    const INTERVAL = 2000; // ms
-    const MAX_TRIES = 120; // ~4 minutes total
-    let tries = 0;
-
-    async function tick() {
-      if (stopped) return;
-      if (++tries > MAX_TRIES) {
-        log('[err] link/status timeout');
-        setLinkStatus('timeout');
-        clearLinkUI(false);
-        return;
-      }
-
+    const tick = async () => {
       try {
         const j = await Stronghold.strongholdFetch(`/link/status/${encodeURIComponent(linkId)}`, { method: 'GET' });
         log('[link] status', j);
-        if (j?.status) setLinkStatus(j.status);
+        setLinkStatus(j.status + (j.applied ? ' (applied)' : ''));
 
         if (j.status === 'linked' && j.applied) {
           log('[ok] link complete — desktop session is now authenticated.');
-          setLinkStatus('linked');
-          clearLinkUI(true);
+          stopLinkWatch(); clearQr(); setLinkUIVisible(false);
           await reportStatus('after link-complete');
           return;
         }
         if (j.status === 'expired') {
+          stopLinkWatch(); clearQr(); setLinkUIVisible(false);
           log('[err] link expired');
-          setLinkStatus('expired');
-          clearLinkUI(false);
           return;
         }
       } catch (e) {
-        // Stop polling on any error (401/404/etc.) as requested
-        log('[err] link/status request failed:', e.message || String(e));
-        setLinkStatus('error');
-        clearLinkUI(false);
-        return;
+        log('[err] link/status', e.message);
+        // Stop on terminal auth/session errors
+        if (/\b(401|403|404)\b/.test(String(e))) {
+          stopLinkWatch(); setLinkUIVisible(false); return;
+        }
       }
-
-      setTimeout(tick, INTERVAL);
-    }
-
-    setTimeout(tick, INTERVAL);
+      currentPollTimer = setTimeout(tick, 2000);
+    };
+    stopLinkWatch();
+    currentPollTimer = setTimeout(tick, 0);
   }
 
-  // --- Start link flow
+  function startSSE(linkId) {
+    stopLinkWatch();
+    if (!('EventSource' in window)) {
+      log('[note] SSE unsupported; falling back to polling');
+      pollLinkStatus(linkId);
+      return;
+    }
+
+    try {
+      const es = new EventSource(`/link/events/${encodeURIComponent(linkId)}`, { withCredentials: true });
+      currentSSE = es;
+
+      es.onmessage = async (ev) => {
+        try {
+          const j = JSON.parse(ev.data || '{}');
+          log('[link][sse]', j);
+          setLinkStatus(j.status + (j.applied ? ' (applied)' : ''));
+
+          if (j.status === 'linked' && j.applied) {
+            stopLinkWatch(); clearQr(); setLinkUIVisible(false);
+            await reportStatus('after link-complete');
+          } else if (j.status === 'expired' || j.status === 'gone') {
+            stopLinkWatch(); clearQr(); setLinkUIVisible(false);
+          }
+        } catch (e) {
+          log('[link][sse] bad data', e.message || String(e));
+        }
+      };
+
+      es.onerror = (e) => {
+        log('[link][sse] error; falling back to polling', e?.message || JSON.stringify(e));
+        stopLinkWatch();
+        pollLinkStatus(linkId);
+      };
+    } catch (e) {
+      log('[link][sse] setup failed; falling back to polling', e.message || String(e));
+      pollLinkStatus(linkId);
+    }
+  }
+
+  // Hook up the Start Link button
   const linkBtn = document.getElementById('btn-link-start');
   if (linkBtn) {
     linkBtn.onclick = async () => {
-      if (linkActiveId) {
-        log('[note] a link is already active; wait or flush.');
-        return;
-      }
+      stopLinkWatch();
+      clearQr();
       try {
         const r = await Stronghold.strongholdFetch('/link/start', { method: 'POST' });
-        // r may contain { rid/id, token, qr_url }; be tolerant to shape
-        let id = r.rid || r.id || r.link_id || r.linkId || null;
-        let url = r.qr_url || r.url || null;
+        const linkId = r.link_id || r.rid || r.id;
+        const url = r.qr_url;
 
-        if (!url) {
-          const token = r.token;
-          if (!token) throw new Error('link/start did not return token or qr_url');
-          url = `${location.origin}/public/link.html?token=${encodeURIComponent(token)}`;
-          if (!id) {
-            const claims = decodeJwsPayload(token);
-            id = claims?.lid || claims?.rid || null;
-          }
+        if (!linkId || !url) {
+          log('[err] link/start missing fields', r);
+          return;
         }
-        if (!id) throw new Error('link/start did not provide a link id');
 
-        // Show panel + draw QR + start polling
-        showLinkArea(url);
-        drawQrIntoLinkArea(url);
+        // UI
+        setLinkUIVisible(true);
+        renderQr(url);
+        const urlEl = document.getElementById('link-url'); if (urlEl) urlEl.textContent = url;
+        setLinkStatus('pending');
 
-        log('[ok] link/start', { id, url });
-        linkBtn.disabled = true;
-        await pollLinkStatus(id);
+        // Live updates: SSE first, then polling
+        startSSE(linkId);
+
+        log('[ok] link/start', { linkId, exp: r.exp, url });
       } catch (e) {
         log('[err] link/start', e.message || String(e));
-        setLinkStatus('error');
-        clearLinkUI(false);
+        setLinkUIVisible(false);
       }
     };
   }
 
-  // --------------------------
-  // Initial status after handlers bound
-  // --------------------------
+  // Clean up on unload just in case
+  window.addEventListener('beforeunload', () => stopLinkWatch());
+
+  // initial status after handlers bound
   reportStatus('on load').catch(err => log('[err] status', err.message));
   console.log('[init] handlers bound');
 })();

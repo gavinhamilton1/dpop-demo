@@ -9,18 +9,20 @@
 <body>
   <h1>Stronghold Session Binding Demo</h1>
   <div class="row">
+    <button id="btn-flush">Server Flush</button>
+    <button id="btn-client-flush">Client Flush</button>
+  </div>
+  <div class="row">
     <button id="btn-sw-register">Register Service Worker</button>
     <button id="btn-sw-unregister">Unregister Service Worker</button>
+    <button id="btn-echo-sw">Test SW Session (Echo) (signed)</button>
+  </div>
+  <div class="row">
   <span id="sw-state"></span>
     <button id="btn-init">1) Init Session</button>
     <button id="btn-bik">2) Register BIK</button>
     <button id="btn-bind">3) Bind DPoP</button>
-  </div>
-  <div class="row">
-    <button id="btn-echo-sw">Echo via SW (signed)</button>
-    <button id="btn-echo-direct">Echo piecemeal (signed)</button>
-    <button id="btn-flush">Admin Flush</button>
-    <button id="btn-client-flush">Client Flush</button>
+    <button id="btn-echo-direct">Test session (Echo) (signed)</button>
   </div>
   <div class="row">
     <button id="btn-passkey-check">Passkey: Check Support</button>
@@ -30,7 +32,7 @@
 
 
   <script src="/public/qrcode.min.js"></script> 
-<button id="btn-link-start">Start Link</button>
+<button id="btn-link-start">Browser/Mobile Session Link</button>
 
 <div id="link-area" style="display:none; gap:12px; align-items:center;">
   <div id="link-qr"></div>

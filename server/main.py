@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
+from server.db import SqliteDB, SqlStore, SqlitePasskeyRepo
 
 from server.passkeys import get_router, PasskeyRepo
 from server.linking import get_router as get_linking_router
@@ -20,8 +21,10 @@ from server.linking import get_router as get_linking_router
 SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "lax").lower()  # default lax in dev
 
 
-PASSKEY_DB_PATH = Path(__file__).resolve().parent / "passkeys_db.json"
-PASSKEY_DB = PasskeyRepo(file_path=str(PASSKEY_DB_PATH))
+DB_PATH = os.getenv("STRONGHOLD_DB_PATH", str(Path(__file__).parent / "stronghold.db"))
+DB = SqliteDB(DB_PATH)
+STORE = SqlStore(DB)
+PASSKEY_DB = SqlitePasskeyRepo(DB)
 
 LOG_LEVEL = os.getenv("STRONGHOLD_LOG_LEVEL", "INFO").upper()
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "stronghold_session")
@@ -110,72 +113,6 @@ def _pem_to_public_jwk_and_kid(pem_priv: str):
 SERVER_JWK_INFO = _pem_to_public_jwk_and_kid(SERVER_EC_PRIVATE_KEY_PEM)
 SERVER_PUBLIC_JWK = SERVER_JWK_INFO["jwk"]; SERVER_KID = SERVER_JWK_INFO["kid"]
 
-# ---------------- Store (memory or Redis) ----------------
-
-class Store:
-    def __init__(self):
-        self.redis = None
-        if REDIS_URL:
-            try:
-                import redis.asyncio as redis
-                self.redis = redis.from_url(REDIS_URL, decode_responses=True)
-                log.info("Using Redis at %s", REDIS_URL)
-            except Exception as e:
-                log.error("Redis unavailable (%s); falling back to memory", e)
-        self.sess = {}
-    async def set_session(self, sid: str, data: Dict[str, Any]):
-        if self.redis:
-            await self.redis.set(f"session:{sid}", json.dumps(data), ex=BIND_TTL*4)
-        else:
-            self.sess[sid] = data
-    async def get_session(self, sid: str) -> Optional[Dict[str, Any]]:
-        if self.redis:
-            v = await self.redis.get(f"session:{sid}")
-            return json.loads(v) if v else None
-        return self.sess.get(sid)
-    async def update_session(self, sid: str, patch: Dict[str, Any]):
-        s = await self.get_session(sid) or {}
-        s.update(patch); await self.set_session(sid, s)
-    async def add_nonce(self, sid: str, nonce: str, ttl: int):
-        if self.redis:
-            await self.redis.set(f"nonce:{sid}:{nonce}", "1", ex=ttl)
-        else:
-            s = self.sess.setdefault(sid, {})
-            lst = s.setdefault("nonces", [])
-            lst.append({"nonce": nonce, "exp": int(time.time()) + ttl})
-            while len(lst) > NONCE_WINDOW:
-                lst.pop(0)
-    async def nonce_valid(self, sid: str, nonce: str) -> bool:
-        if self.redis:
-            return await self.redis.exists(f"nonce:{sid}:{nonce}") == 1
-        s = self.sess.get(sid) or {}
-        now = int(time.time())
-        lst = s.get("nonces", [])
-        s["nonces"] = [n for n in lst if n["exp"] >= now]
-        return any(n["nonce"] == nonce for n in s["nonces"])
-    async def add_jti(self, sid: str, jti: str, ttl: int) -> bool:
-        if self.redis:
-            ok = await self.redis.set(f"jti:{sid}:{jti}", "1", ex=ttl, nx=True)
-            return bool(ok)
-        s = self.sess.setdefault(sid, {})
-        now = int(time.time())
-        lst = s.setdefault("jtis", [])
-        s["jtis"] = [j for j in lst if j["exp"] >= now]
-        if any(j["jti"] == jti for j in s["jtis"]):
-            return False
-        s["jtis"].append({"jti": jti, "exp": now + ttl})
-        return True
-    async def flush(self):
-        if self.redis:
-            keys = []
-            keys += await self.redis.keys("session:*")
-            keys += await self.redis.keys("nonce:*")
-            keys += await self.redis.keys("jti:*")
-            if keys:
-                await self.redis.delete(*keys)
-        self.sess.clear()
-
-STORE = Store()
 
 # ---------------- Canonical origin + URL (IPv6-safe) ----------------
 
@@ -250,6 +187,7 @@ BASE_DIR = os.path.dirname(__file__)
 app.mount("/public", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public")), name="public")
 app.mount("/src", StaticFiles(directory=os.path.join(BASE_DIR, "..", "src")), name="src")
 
+
 def _now() -> int: return int(time.time())
 def _new_nonce() -> str: return base64.urlsafe_b64encode(secrets.token_bytes(18)).rstrip(b"=").decode()
 
@@ -273,6 +211,11 @@ def verify_binding_token(token: str) -> Dict[str, Any]:
         raise HTTPException(status_code=401, detail="bind token expired")
     return data
 
+
+@app.on_event("startup")
+async def _init_db():
+    await DB.init()
+    
 @app.get("/", response_class=HTMLResponse)
 async def index():
     with open(os.path.join(BASE_DIR, "..", "public", "index.html"), "r", encoding="utf-8") as f:
