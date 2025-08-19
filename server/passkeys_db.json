@@ -77,6 +77,136 @@
         "dpop_jkt": "z0thZsXuBrS5as2WXzA_ySYpXzf0SwQsvUb49lEaRtc",
         "created_at": 1755561712
       }
+    ],
+    "byJUk6cfgbcUHaV1of5I6scIBgul212zteyyJQfNbow": [
+      {
+        "principal": "byJUk6cfgbcUHaV1of5I6scIBgul212zteyyJQfNbow",
+        "cred_id": "MNi5C71sHh2ZYCWs5fiyKr9ny1c",
+        "public_key_jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "KWxQSQNh8CCqSR_UYmx1YspQo6OyN-FOQZde6gclgy8",
+          "y": "TJCm5PFVu1nHeivsiRvwAVdirBF3p-uXHQTCuM82wy8",
+          "alg": "ES256"
+        },
+        "sign_count": 0,
+        "aaguid": "fbfc3007154e4ecc8c0b6e020557d7bd",
+        "attestation": {
+          "fmt": "none",
+          "trust_chain": []
+        },
+        "transports": [
+          "hybrid",
+          "internal"
+        ],
+        "bik_jkt": "byJUk6cfgbcUHaV1of5I6scIBgul212zteyyJQfNbow",
+        "dpop_jkt": "LasCZoA0eeP9azyAnLvqime1VgW9x1XE_ox6XLoxjc0",
+        "created_at": 1755568088
+      }
+    ],
+    "wKFuBPi5DUtlrk1jSs8HhF37rB9Rqb7CND8sixMKyaY": [
+      {
+        "principal": "wKFuBPi5DUtlrk1jSs8HhF37rB9Rqb7CND8sixMKyaY",
+        "cred_id": "vt49GssDOwj9dS_yt_U0EkoDw20",
+        "public_key_jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "_Ybauz1QczlEvR_Sp5TzJCioomXuD6rCotNsGqk7ncQ",
+          "y": "CNmD_GF1kAFescf2hkIcQS0fIinhMnYKjdh4p1BXlEs",
+          "alg": "ES256"
+        },
+        "sign_count": 0,
+        "aaguid": "fbfc3007154e4ecc8c0b6e020557d7bd",
+        "attestation": {
+          "fmt": "none",
+          "trust_chain": []
+        },
+        "transports": [
+          "hybrid",
+          "internal"
+        ],
+        "bik_jkt": "wKFuBPi5DUtlrk1jSs8HhF37rB9Rqb7CND8sixMKyaY",
+        "dpop_jkt": "RVtqxMjhTHebVsGArMTNFcOYobLLm0voGNRy1_QZMBU",
+        "created_at": 1755572595
+      }
+    ],
+    "WxzVAxh6CaXUbSh5ueYwVYoZw4X5ssF25Osyxb3X7IU": [
+      {
+        "principal": "WxzVAxh6CaXUbSh5ueYwVYoZw4X5ssF25Osyxb3X7IU",
+        "cred_id": "PF7MWPML6LG_Sv8Y8Bswfxq9R1Q",
+        "public_key_jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "KKGhDG4wndvqs18Bxue0ZydGEUZRrVWIZxNuzkNKjxo",
+          "y": "uFsEsQviDazon4vzk3OZUmq3JcxeE7JrjvQfsZ7FwZ8",
+          "alg": "ES256"
+        },
+        "sign_count": 0,
+        "aaguid": "fbfc3007154e4ecc8c0b6e020557d7bd",
+        "attestation": {
+          "fmt": "none",
+          "trust_chain": []
+        },
+        "transports": [
+          "hybrid",
+          "internal"
+        ],
+        "bik_jkt": "WxzVAxh6CaXUbSh5ueYwVYoZw4X5ssF25Osyxb3X7IU",
+        "dpop_jkt": "lN5r-1tLTetFlQ77K085_9V96JjjdVhkB9RI5ryWpsY",
+        "created_at": 1755573391
+      }
+    ],
+    "m48fJfJ1Mt7HJpK1MjkbQH7cQc46G_Tp6H58CMkacQ4": [
+      {
+        "principal": "m48fJfJ1Mt7HJpK1MjkbQH7cQc46G_Tp6H58CMkacQ4",
+        "cred_id": "5b2zv7n8I-YOIu_K7kFfRbIULCM",
+        "public_key_jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "s2Qm5i18PEdBuPBRsbEQr_r-gj6_9jS5ec0wsZJmuxc",
+          "y": "fIwp1FtWywTtYlGOiaABkqrCXkqXP0sHnUgFig574-0",
+          "alg": "ES256"
+        },
+        "sign_count": 0,
+        "aaguid": "fbfc3007154e4ecc8c0b6e020557d7bd",
+        "attestation": {
+          "fmt": "none",
+          "trust_chain": []
+        },
+        "transports": [
+          "hybrid",
+          "internal"
+        ],
+        "bik_jkt": "m48fJfJ1Mt7HJpK1MjkbQH7cQc46G_Tp6H58CMkacQ4",
+        "dpop_jkt": "hp70O-N22UJXXeji-aWqxab2KknTDkE0cRXIjVpK2w0",
+        "created_at": 1755574669
+      }
+    ],
+    "kEFj_59ftlVrzcH9h_mOCPijNKPXBktNjuRlAHGZx5k": [
+      {
+        "principal": "kEFj_59ftlVrzcH9h_mOCPijNKPXBktNjuRlAHGZx5k",
+        "cred_id": "_pbjx5x-sSN5NMSfWLXQ8onPvOk",
+        "public_key_jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "02decHsxPOL_zwMLFWjWS02sOifWl9km0A5nxiTZt14",
+          "y": "KSef45SfC6tTjtAes7l62yWKnFrbSsLWqF6cu8YC8OY",
+          "alg": "ES256"
+        },
+        "sign_count": 0,
+        "aaguid": "fbfc3007154e4ecc8c0b6e020557d7bd",
+        "attestation": {
+          "fmt": "none",
+          "trust_chain": []
+        },
+        "transports": [
+          "hybrid",
+          "internal"
+        ],
+        "bik_jkt": "kEFj_59ftlVrzcH9h_mOCPijNKPXBktNjuRlAHGZx5k",
+        "dpop_jkt": "8Sif6sbsMic9BDkFWWgVJZJjta76HdxQbUWe5EQiumQ",
+        "created_at": 1755575943
+      }
     ]
   }
 }

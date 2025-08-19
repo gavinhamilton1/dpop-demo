@@ -13,7 +13,12 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
 
-from passkeys import get_router, PasskeyRepo
+from server.passkeys import get_router, PasskeyRepo
+from server.linking import get_router as get_linking_router
+
+
+SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "lax").lower()  # default lax in dev
+
 
 PASSKEY_DB_PATH = Path(__file__).resolve().parent / "passkeys_db.json"
 PASSKEY_DB = PasskeyRepo(file_path=str(PASSKEY_DB_PATH))
@@ -51,7 +56,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         resp = await call_next(request)
         resp.headers["Content-Security-Policy"] = csp
         resp.headers["Referrer-Policy"] = "no-referrer"
-        resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=(self)"
         resp.headers["X-Content-Type-Options"] = "nosniff"
         return resp
 
@@ -236,7 +241,7 @@ app = FastAPI(middleware=[
                secret_key=os.getenv("SESSION_SECRET_KEY", base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()),
                session_cookie=SESSION_COOKIE_NAME,
                https_only=HTTPS_ONLY,
-               same_site="strict"),
+               same_site=SESSION_SAMESITE),
 ])
 
 
@@ -445,6 +450,10 @@ app.include_router(get_router(
     canonicalize_origin_and_url,
     _now,
     passkey_repo=PASSKEY_DB,           # <-- pass the instance, not a string
+))
+
+app.include_router(get_linking_router(
+    STORE, require_dpop, canonicalize_origin_and_url, _now,
 ))
 
 @app.post("/session/resume-init")

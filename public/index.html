@@ -27,7 +27,21 @@
     <button id="btn-passkey-register">Passkey: Create & Register</button>
     <button id="btn-passkey-login">Passkey: Authenticate</button>
   </div>
-  <pre id="out"></pre>
+
+
+  <script src="/public/qrcode.min.js"></script> 
+<button id="btn-link-start">Start Link</button>
+
+<div id="link-area" style="display:none; gap:12px; align-items:center;">
+  <div id="link-qr"></div>
+  <div>
+    <div><strong>Scan with your phone:</strong></div>
+    <code id="link-url"></code>
+    <div>Status: <span id="link-status">pending</span></div>
+  </div>
+</div>
+
+<pre id="out"></pre>
   <script type="module" src="/public/app.js"></script>
 </body>
 </html>
