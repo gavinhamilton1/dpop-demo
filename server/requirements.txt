@@ -5,3 +5,5 @@ itsdangerous
 python-jose
 cryptography
 redis
+cbor2
+cryptography

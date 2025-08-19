@@ -1,0 +1,82 @@
+{
+  "by_principal": {
+    "1rxxd9o-aI2-RE-lbh3yTj1koCoeocbZYMMX8QWyh1o": [
+      {
+        "principal": "1rxxd9o-aI2-RE-lbh3yTj1koCoeocbZYMMX8QWyh1o",
+        "cred_id": "MtEtGOErfobRS1_vbceL8Bq_fLU",
+        "public_key_jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "GruhfCOhnVErlbi9cMhaaZSN_rjEBxfl_I-E4VDE4A0",
+          "y": "EJBuw8iElrXZBwWaQaH1lZxnMtWmLAWmIyMOQ7y10wA",
+          "alg": "ES256"
+        },
+        "sign_count": 0,
+        "aaguid": "fbfc3007154e4ecc8c0b6e020557d7bd",
+        "attestation": {
+          "fmt": "none",
+          "trust_chain": []
+        },
+        "transports": [
+          "hybrid",
+          "internal"
+        ],
+        "bik_jkt": "1rxxd9o-aI2-RE-lbh3yTj1koCoeocbZYMMX8QWyh1o",
+        "dpop_jkt": "hO8wA1nBdb1PS6B9AoNMgFtLK0qtL_uBuMz-TECNXSs",
+        "created_at": 1755560314
+      }
+    ],
+    "Bme8GZUx7DoCutYDWx1MKEhPC1uezFcyvC5HGAbBnhU": [
+      {
+        "principal": "Bme8GZUx7DoCutYDWx1MKEhPC1uezFcyvC5HGAbBnhU",
+        "cred_id": "yAdn8a0Dws6nFevKYLgP2IxANLc",
+        "public_key_jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "F1Za2jTI9Vh42UBhTmJlauyq_mKvAnGUqgSea51M8qA",
+          "y": "YCNprKposA74B5p9IEYwGois6ccwMEU8xDrkgXfjIx4",
+          "alg": "ES256"
+        },
+        "sign_count": 0,
+        "aaguid": "fbfc3007154e4ecc8c0b6e020557d7bd",
+        "attestation": {
+          "fmt": "none",
+          "trust_chain": []
+        },
+        "transports": [
+          "hybrid",
+          "internal"
+        ],
+        "bik_jkt": "Bme8GZUx7DoCutYDWx1MKEhPC1uezFcyvC5HGAbBnhU",
+        "dpop_jkt": "oHV9DNmN2bk54wz2bHUa2JA5IEO8Bh9KjYEre94i34w",
+        "created_at": 1755561040
+      }
+    ],
+    "2-rJoo6jiBjDBou8f5DMmIUrPijeKjYKiFAndT4_5b8": [
+      {
+        "principal": "2-rJoo6jiBjDBou8f5DMmIUrPijeKjYKiFAndT4_5b8",
+        "cred_id": "rzySSLKlBOfZi-3yZVy5HmzobGc",
+        "public_key_jwk": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "1jI4rUaojLJjxairEozHLK-GuZwJ6Bqj3qaCODK2QBw",
+          "y": "PaowkjGHIdkjKR3Qol5WTDyzpeHD71wahsUFO5-sPF8",
+          "alg": "ES256"
+        },
+        "sign_count": 0,
+        "aaguid": "fbfc3007154e4ecc8c0b6e020557d7bd",
+        "attestation": {
+          "fmt": "none",
+          "trust_chain": []
+        },
+        "transports": [
+          "hybrid",
+          "internal"
+        ],
+        "bik_jkt": "2-rJoo6jiBjDBou8f5DMmIUrPijeKjYKiFAndT4_5b8",
+        "dpop_jkt": "z0thZsXuBrS5as2WXzA_ySYpXzf0SwQsvUb49lEaRtc",
+        "created_at": 1755561712
+      }
+    ]
+  }
+}

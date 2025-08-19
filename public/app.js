@@ -1,9 +1,11 @@
 // public/app.js
 import * as Stronghold from '/src/stronghold.js';
+import * as Passkeys   from '/src/passkeys.js';
 
 (function () {
   console.log('[init] app.js starting');
   console.log('[init] Stronghold exports:', Object.keys(Stronghold));
+  console.log('[init] Passkeys exports:', Object.keys(Passkeys));
 
   function $(id) {
     const el = document.getElementById(id);
@@ -17,10 +19,49 @@ import * as Stronghold from '/src/stronghold.js';
     out.textContent += a.map(x => typeof x === 'string' ? x : JSON.stringify(x, null, 2)).join(' ') + '\n';
   };
 
+  // ------------ helpers: button guard & WebAuthn single-op guard ------------
+  function guardBtn(btnId, fn) {
+    const btn = $(btnId);
+    btn.onclick = async () => {
+      if (btn.dataset.busy === '1') return;
+      btn.dataset.busy = '1';
+      btn.disabled = true;
+      try { await fn(btn); } finally { btn.dataset.busy = '0'; btn.disabled = false; }
+    };
+  }
+
+  // One WebAuthn operation at a time (prevents “A request is already pending.”)
+  let webauthnBusy = false;
+  async function withWebAuthnGuard(btn, fn) {
+    if (webauthnBusy) {
+      log('[note] webauthn busy; ignoring click');
+      return;
+    }
+    webauthnBusy = true;
+    if (btn) btn.disabled = true;
+    try {
+      await fn();
+    } finally {
+      webauthnBusy = false;
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  // Best effort: cancel an in-flight native sheet if we navigate/blur
+  function cancelWebAuthnIfSupported() {
+    if (typeof Passkeys.cancelWebAuthn === 'function') {
+      try { Passkeys.cancelWebAuthn(); } catch {}
+    }
+    webauthnBusy = false;
+  }
+  window.addEventListener('visibilitychange', () => {
+    if (document.hidden) cancelWebAuthnIfSupported();
+  });
+  window.addEventListener('beforeunload', () => cancelWebAuthnIfSupported());
+
   // ---- status (session + SW)
   async function reportStatus(note = '') {
     const bind = (await Stronghold.get('bind'))?.value || null;
-    const nonce = (await Stronghold.get('dpop_nonce'))?.value || null;
 
     let sw = { supported: 'serviceWorker' in navigator, registered: false, controlled: false, scope: null };
     if (sw.supported) {
@@ -45,7 +86,6 @@ import * as Stronghold from '/src/stronghold.js';
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       log('[sw] controllerchange → now controlled');
-      // After takeover, show fresh status
       reportStatus('after controllerchange').catch(() => {});
     });
   }
@@ -58,7 +98,6 @@ import * as Stronghold from '/src/stronghold.js';
       const reg = await navigator.serviceWorker.register('/stronghold-sw.js', { type: 'module' });
       log('[ok] SW registered (module)', { scope: reg.scope });
 
-      // Wait for activation; some browsers still need a reload to get a controller
       await navigator.serviceWorker.ready;
       if (navigator.serviceWorker.controller) {
         log('[ok] SW is controlling this page');
@@ -172,10 +211,53 @@ import * as Stronghold from '/src/stronghold.js';
       const r = await Stronghold.clientFlush({ unregisterSW: false }); // set true to also unregister SW
       log('[ok] client/flush', r);
     } catch (e) {
-      log('[err] client/flush', e.message);
+      log('[err] client-flush', e.message);
     }
     await reportStatus('after client-flush');
   };
+
+  // ---- PASSKEYS (check / register / authenticate)
+  guardBtn('btn-passkey-check', async () => {
+    try {
+      const sup = await Passkeys.checkSupport();
+      log('[ok] passkey/check', sup);
+      if (!sup.hasAPI || !sup.uvp) {
+        $('btn-passkey-register').disabled = true;
+        $('btn-passkey-login').disabled = true;
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+          log('[note] WebAuthn requires HTTPS (or localhost).');
+        }
+      }
+    } catch (e) {
+      log('[err] passkey/check', e.message || String(e));
+    }
+  });
+
+  guardBtn('btn-passkey-register', async (btn) => {
+    await withWebAuthnGuard(btn, async () => {
+      try {
+        const res = await Passkeys.registerPasskey();
+        log('[ok] passkey/register', res);
+      } catch (e) {
+        log('[err] passkey/register', e.message || String(e));
+      } finally {
+        await reportStatus('after passkey-register');
+      }
+    });
+  });
+
+  guardBtn('btn-passkey-login', async (btn) => {
+    await withWebAuthnGuard(btn, async () => {
+      try {
+        const res = await Passkeys.authenticatePasskey();
+        log('[ok] passkey/auth', res);
+      } catch (e) {
+        log('[err] passkey/auth', e.message || String(e));
+      } finally {
+        await reportStatus('after passkey-auth');
+      }
+    });
+  });
 
   // initial status after handlers bound
   reportStatus('on load').catch(err => log('[err] status', err.message));

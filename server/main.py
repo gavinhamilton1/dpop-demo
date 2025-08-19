@@ -11,6 +11,12 @@ from jose.utils import base64url_decode
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from urllib.parse import urlsplit, urlunsplit
+from pathlib import Path
+
+from passkeys import get_router, PasskeyRepo
+
+PASSKEY_DB_PATH = Path(__file__).resolve().parent / "passkeys_db.json"
+PASSKEY_DB = PasskeyRepo(file_path=str(PASSKEY_DB_PATH))
 
 LOG_LEVEL = os.getenv("STRONGHOLD_LOG_LEVEL", "INFO").upper()
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "stronghold_session")
@@ -25,6 +31,7 @@ REDIS_URL = os.getenv("REDIS_URL")
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s stronghold %(message)s")
 log = logging.getLogger("stronghold")
+
 
 # ---------------- Security / request-id middleware ----------------
 
@@ -232,6 +239,8 @@ app = FastAPI(middleware=[
                same_site="strict"),
 ])
 
+
+
 BASE_DIR = os.path.dirname(__file__)
 app.mount("/public", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public")), name="public")
 app.mount("/src", StaticFiles(directory=os.path.join(BASE_DIR, "..", "src")), name="src")
@@ -429,6 +438,14 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
     return {"sid": sid, "next_nonce": next_nonce}
 
 # ---------------- Resume (BIK) ----------------
+
+app.include_router(get_router(
+    STORE,
+    require_dpop,
+    canonicalize_origin_and_url,
+    _now,
+    passkey_repo=PASSKEY_DB,           # <-- pass the instance, not a string
+))
 
 @app.post("/session/resume-init")
 async def resume_init(req: Request):
