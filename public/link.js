@@ -29,10 +29,21 @@ function getTokenFromURL() {
   return new URLSearchParams(hash).get('token');
 }
 
-function isUserCancelOrNoCreds(err) {
-  const msg = String(err?.message || err || '');
-  // Browsers vary: NotAllowedError/AbortError on cancel or on “no available credentials”
-  return /NotAllowedError|AbortError|denied|cancel/i.test(msg);
+async function preflightAuthOptions() {
+  // Ask the server which creds it knows for THIS session's principal
+  const opts = await Stronghold.strongholdFetch('/webauthn/authentication/options', { method: 'POST' });
+
+  // Always normalize allowCredentials to an array
+  const allow = Array.isArray(opts.allowCredentials) ? opts.allowCredentials : [];
+
+  // Be robust: if server didn’t include _meta, synthesize it here
+  const meta = opts._meta ?? {
+    hasCredentials: allow.length > 0,
+    registeredCount: allow.length,
+    hasPlatform: allow.some(c => (c.transports || []).includes('internal')),
+  };
+
+  return { opts, allow, meta };
 }
 
 (async () => {
@@ -41,7 +52,7 @@ function isUserCancelOrNoCreds(err) {
     const token = getTokenFromURL();
     if (!token) throw new Error('missing token in URL');
 
-    // 1) Tell server we scanned the QR (no DPoP required)
+    // 1) Tell server we scanned the QR (no DPoP required yet)
     let r = await fetch('/link/mobile/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -57,38 +68,31 @@ function isUserCancelOrNoCreds(err) {
     await Stronghold.bikRegisterStep({ bikRegisterUrl: '/browser/register' });
     await Stronghold.dpopBindStep({ dpopBindUrl: '/dpop/bind' });
 
-    // 3) Authenticate first (RP-first discoverable; server may omit allowCredentials)
-    const sup = await Passkeys.checkSupport();
-    if (!sup.hasAPI) throw new Error('WebAuthn unsupported on this device');
-
-    let authed = false;
+    // 3) Check if this session already has stored passkeys for the principal
+    let hasCreds = false;
     try {
-      log('Attempting passkey authentication…');
-      await Passkeys.authenticatePasskey({ discoverablePreferred: true });
-      authed = true;
-      log('Passkey authenticated ✓');
+      const { allow, meta } = await preflightAuthOptions();
+      hasCreds = !!meta.hasCredentials; // safe even if _meta missing on server
+      log('[link] preflight', { allowCount: allow.length, meta });
     } catch (e) {
-      if (isUserCancelOrNoCreds(e)) {
-        log('Authentication cancelled or no discoverable credential on this device.');
-        // Optional: offer registration path instead of auto-registering.
-        // If you want *silent* behavior with no prompt, flip this to false.
-        const shouldRegister = confirm('No passkey was used. Create a mobile passkey for this account on this device now?');
-        if (shouldRegister) {
-          log('Registering a new passkey on mobile…');
-          await Passkeys.registerPasskey();
-          log('Passkey registered on mobile ✓');
-          await Passkeys.authenticatePasskey();
-          authed = true;
-          log('Passkey authenticated ✓');
-        }
-      } else {
-        throw e;
-      }
+      // If preflight itself failed (network/DPoP/nonce), we’ll fall back to trying auth
+      log('[link] preflight failed; will continue', { message: e.message || String(e) });
     }
 
-    if (!authed) throw new Error('Authentication required to complete linking.');
+    // 4) If none, register a mobile passkey first; otherwise go straight to auth
+    if (!hasCreds) {
+      log('No stored mobile passkey for this session — registering one now…');
+      await Passkeys.registerPasskey();  // will call /webauthn/registration/options + navigator.credentials.create
+      log('Passkey registered on mobile ✓');
+    } else {
+      log('Stored passkey found for this session — authenticating…');
+    }
 
-    // 4) Complete link — MUST be DPoP-signed (use strongholdFetch)
+    // Always authenticate after registration or when creds already exist
+    await Passkeys.authenticatePasskey(); // /webauthn/authentication/options + navigator.credentials.get
+    log('Passkey authenticated ✓');
+
+    // 5) Complete link — MUST be DPoP-signed (use strongholdFetch)
     await Stronghold.strongholdFetch('/link/mobile/complete', {
       method: 'POST',
       body: { link_id }

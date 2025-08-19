@@ -189,7 +189,15 @@ self.addEventListener('message', async (ev) => {
 self.__listeners.message?.push?.(() => {});
 
 self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
   const req = event.request;
+  
+  const isSSE = event.request.headers.get('Accept') === 'text/event-stream'
+    || url.pathname.startsWith('/link/events/');
+  if (isSSE) {
+    return;
+  }
+
   if (!shouldSign(req.url)) return;
   event.respondWith((async () => {
     try {

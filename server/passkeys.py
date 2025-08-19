@@ -43,7 +43,7 @@ def _now() -> int:
     return int(time.time())
 
 async def _maybe_await(x):
-    return await x if inspect.iscoroutine(x) else x
+    return await x if inspect.isawaitable(x) else x
 
 # authData parser (RPID hash, flags, signCount; AT → aaguid, credId, rest)
 def parse_authenticator_data(ad: bytes) -> Dict[str, Any]:
@@ -147,7 +147,7 @@ def verify_packed_attestation_x5c(attStmt: dict, authData: bytes, client_hash: b
     if rpIdHash != hashlib.sha256(expected_rp_id.encode()).digest():
         raise AttestationFailure("rpIdHash mismatch")
 
-    x5c = attStmt.get('x5c'); 
+    x5c = attStmt.get('x5c')
     if not x5c: raise AttestationFailure("packed: missing x5c")
     x5c_bytes = [bytes(x) for x in x5c]
     leaf = x509.load_der_x509_certificate(x5c_bytes[0])
@@ -304,11 +304,12 @@ def get_router(
             raise HTTPException(status_code=409, detail="no stable principal on session; complete BIK/DPoP first")
         return str(pid)
 
-    # -------- Registration options --------
+    # -------- Registration options (MISSING before; restored) --------
     @router.post("/webauthn/registration/options")
     async def webauthn_reg_options(req: Request, ctx=Depends(require_dpop)):
         sid = req.session.get("sid"); s = await session_store.get_session(sid) if sid else None
-        if not sid or not s: raise HTTPException(status_code=401, detail="no session")
+        if not sid or not s:
+            raise HTTPException(status_code=401, detail="no session")
         if s.get("state") != "bound":
             raise HTTPException(status_code=403, detail="session must be DPoP-bound before passkey registration")
 
@@ -319,18 +320,21 @@ def get_router(
         challenge = secrets.token_bytes(32)
         await session_store.update_session(sid, {"webauthn_reg": {"challenge": _b64u(challenge), "ts": now_fn()}})
 
-        # Exclude existing creds for this principal
-        existing = await _maybe_await(repo.get_for_principal(principal))
-        exclude = [{"type":"public-key", "id": r["cred_id"]} for r in (existing or [])]
+        existing = await _maybe_await(repo.get_for_principal(principal)) or []
+        exclude = [{"type": "public-key", "id": r["cred_id"]} for r in existing]
 
         body = {
             "rp": {"id": rp_id, "name": rp_name},
-            "user": {"id": _b64u(principal.encode()), "name": f"acct:{principal[:8]}", "displayName": f"Acct {principal[:8]}"},
+            "user": {
+                "id": _b64u(principal.encode()),
+                "name": f"acct:{principal[:8]}",
+                "displayName": f"Acct {principal[:8]}"
+            },
             "challenge": _b64u(challenge),
             "pubKeyCredParams": [
-                {"type":"public-key","alg": -7},    # ES256
-                {"type":"public-key","alg": -257},  # RS256
-                {"type":"public-key","alg": -8},    # EdDSA (Ed25519)
+                {"type": "public-key", "alg": -7},    # ES256
+                {"type": "public-key", "alg": -257},  # RS256
+                {"type": "public-key", "alg": -8},    # EdDSA (Ed25519)
             ],
             "authenticatorSelection": {
                 "residentKey": RESIDENT_MODE,
@@ -431,21 +435,27 @@ def get_router(
         rp_id = _rp_id_from_origin(origin)
 
         challenge = secrets.token_bytes(32)
-        await session_store.update_session(sid, {"webauthn_auth": {"challenge": _b64u(challenge), "ts": now_fn(), "principal": principal}})
+        await session_store.update_session(
+            sid, {"webauthn_auth": {"challenge": _b64u(challenge), "ts": now_fn(), "principal": principal}}
+        )
 
-        creds = await _maybe_await(repo.get_for_principal(principal))
+        creds = await _maybe_await(repo.get_for_principal(principal)) or []
         allow = [
             {"type": "public-key", "id": c["cred_id"], "transports": c.get("transports") or ["internal"]}
-            for c in (creds or [])
+            for c in creds
         ]
 
         body = {
             "rpId": rp_id,
             "challenge": _b64u(challenge),
             "userVerification": UV_MODE,
+            "allowCredentials": allow,   # present even when empty
+            "_meta": {
+                "hasCredentials": bool(allow),
+                "registeredCount": len(allow),
+                "hasPlatform": any("internal" in (c.get("transports") or []) for c in creds),
+            },
         }
-        if allow:
-            body["allowCredentials"] = allow  # omit to allow resident/discoverable creds
         return JSONResponse(body, headers=_nonce_headers(ctx))
 
     # -------- Authentication verify --------

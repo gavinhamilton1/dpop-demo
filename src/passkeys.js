@@ -1,140 +1,110 @@
 // /src/passkeys.js
 import * as Stronghold from '/src/stronghold.js';
 
-// -------- helpers --------
-const b64u = (buf) =>
-  typeof buf === 'string'
-    ? buf
-    : btoa(String.fromCharCode(...new Uint8Array(buf)))
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
-
-const deb64u = (s) => {
+// --- base64url helpers ---
+const b64uToBuf = (s) => {
   const pad = '='.repeat((4 - (s.length % 4)) % 4);
-  const b64 = (s + pad).replace(/-/g, '+').replace(/_/g, '/');
-  const bin = atob(b64);
-  const u8 = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-  return u8.buffer;
+  const b = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  const buf = new Uint8Array(b.length);
+  for (let i = 0; i < b.length; i++) buf[i] = b.charCodeAt(i);
+  return buf.buffer;
+};
+const bufToB64u = (buf) => {
+  const b = new Uint8Array(buf);
+  let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
 };
 
-async function isUVPA() {
-  try {
-    if (!('PublicKeyCredential' in window)) return false;
-    if (!PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) return false;
-    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-  } catch { return false; }
-}
-
 export async function checkSupport() {
-  const hasAPI = 'PublicKeyCredential' in window;
-  return {
-    hasAPI,
-    uvp: hasAPI ? await isUVPA() : false
-  };
+  const hasAPI = !!(window.PublicKeyCredential && navigator.credentials);
+  const uvp = hasAPI && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable?.().catch(()=>false);
+  return { hasAPI, uvp: !!uvp };
 }
 
-// -------- registration --------
+// ----- Registration -----
 export async function registerPasskey() {
-  // 1) Get options from server
-  const options = await Stronghold.strongholdFetch('/webauthn/registration/options', { method: 'POST' });
+  // 1) get options
+  const opts = await Stronghold.strongholdFetch('/webauthn/registration/options', { method: 'POST' });
 
-  // Convert to browser format
-  const pubKey = {
-    ...options,
-    challenge: deb64u(options.challenge),
+  const pub = {
+    rp: opts.rp,
     user: {
-      ...options.user,
-      id: deb64u(options.user.id),
+      ...opts.user,
+      id: b64uToBuf(opts.user.id),
     },
-    // (Optional nudge) Prefer platform authenticators:
-    authenticatorSelection: {
-      ...(options.authenticatorSelection || {}),
-      // authenticatorAttachment: 'platform', // uncomment if you want a stronger nudge
-    },
+    pubKeyCredParams: opts.pubKeyCredParams,
+    challenge: b64uToBuf(opts.challenge),
+    attestation: opts.attestation || 'none',
+    authenticatorSelection: opts.authenticatorSelection || {},
   };
 
-  // 2) Create
-  const cred = await navigator.credentials.create({ publicKey: pubKey });
+  // 2) create
+  const cred = await navigator.credentials.create({ publicKey: pub });
   if (!cred) throw new Error('registration cancelled');
 
-  // 3) Send back to server
-  const att = cred.response;
-  const transports = (att.getTransports && att.getTransports()) || [];
-
-  const body = {
-    id:       cred.id,
-    rawId:    b64u(cred.rawId),
-    type:     cred.type,
-    transports,
+  // 3) send to server
+  const att = {
+    id: cred.id,
+    rawId: bufToB64u(cred.rawId),
+    type: cred.type,
     response: {
-      clientDataJSON:     b64u(att.clientDataJSON),
-      attestationObject:  b64u(att.attestationObject),
+      clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+      attestationObject: bufToB64u(cred.response.attestationObject),
     },
+    transports: cred.response.getTransports?.() || ['internal'],
   };
 
   return await Stronghold.strongholdFetch('/webauthn/registration/verify', {
     method: 'POST',
-    body,
+    body: att,
   });
 }
 
-// -------- authentication --------
-/**
- * authenticatePasskey({ discoverablePreferred })
- * - If discoverablePreferred === true, we delete allowCredentials to enable local password manager / account picker,
- *   even if the server provided a list.
- * - If the server sends allowCredentials: [], we always delete it (empty array disables discoverable UX).
- */
-export async function authenticatePasskey(params = {}) {
-  // 1) Options from server
-  const options = await Stronghold.strongholdFetch('/webauthn/authentication/options', { method: 'POST' });
+// ----- Authentication (preflight-able) -----
 
-  // Convert to browser format
-  const pubKey = {
-    ...options,
-    challenge: deb64u(options.challenge),
+export async function getAuthOptions() {
+  return await Stronghold.strongholdFetch('/webauthn/authentication/options', { method: 'POST' });
+}
+
+export async function authenticatePasskey(passedOpts) {
+  // allow caller to pass pre-fetched options
+  const opts = passedOpts || await getAuthOptions();
+
+  const allow = Array.isArray(opts.allowCredentials) ? opts.allowCredentials : [];
+  // If you want to avoid “external device” chooser when none are local,
+  // handle that in the page logic before calling this function.
+
+  const pub = {
+    rpId: opts.rpId,
+    challenge: b64uToBuf(opts.challenge),
+    userVerification: opts.userVerification || 'preferred',
   };
 
-  // Normalize allowCredentials
-  const list = Array.isArray(options.allowCredentials) ? options.allowCredentials : null;
-  if (params.discoverablePreferred === true) {
-    // Force discoverable flow regardless of server hint
-    delete pubKey.allowCredentials;
-  } else if (!list || list.length === 0) {
-    // Critical: omit empty array to allow discoverable credentials
-    delete pubKey.allowCredentials;
-  } else {
-    // Convert each id to ArrayBuffer and pass transports hint through
-    pubKey.allowCredentials = list.map((c) => ({
-      type: c.type || 'public-key',
-      id: deb64u(c.id),
+  if (allow.length) {
+    pub.allowCredentials = allow.map(c => ({
+      type: 'public-key',
+      id: b64uToBuf(c.id),
       transports: c.transports || ['internal'],
     }));
   }
 
-  // 2) Get
-  const cred = await navigator.credentials.get({
-    publicKey: pubKey,
-    // mediation: 'optional', // keep default; 'conditional' requires extra UX + HTTPS
-  });
-  if (!cred) throw new Error('authentication cancelled');
+  const assertion = await navigator.credentials.get({ publicKey: pub });
+  if (!assertion) throw new Error('authentication cancelled');
 
-  // 3) Send to server
-  const res = cred.response;
-  const body = {
-    id:       cred.id,
-    rawId:    b64u(cred.rawId),
-    type:     cred.type,
+  const payload = {
+    id: assertion.id,
+    rawId: bufToB64u(assertion.rawId),
+    type: assertion.type,
     response: {
-      clientDataJSON:     b64u(res.clientDataJSON),
-      authenticatorData:  b64u(res.authenticatorData),
-      signature:          b64u(res.signature),
-      userHandle:         res.userHandle ? b64u(res.userHandle) : null,
+      clientDataJSON: bufToB64u(assertion.response.clientDataJSON),
+      authenticatorData: bufToB64u(assertion.response.authenticatorData),
+      signature: bufToB64u(assertion.response.signature),
+      userHandle: assertion.response.userHandle ? bufToB64u(assertion.response.userHandle) : undefined,
     },
   };
 
   return await Stronghold.strongholdFetch('/webauthn/authentication/verify', {
     method: 'POST',
-    body,
+    body: payload,
   });
 }
