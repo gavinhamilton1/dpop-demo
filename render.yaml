@@ -19,6 +19,8 @@ services:
         value: stronghold_session
       - key: PASSKEYS_POLICY
         value: compat
+      - key: STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM_FILE
+        value: /etc/secrets/STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM
     disk:
       name: data
       mountPath: /data
