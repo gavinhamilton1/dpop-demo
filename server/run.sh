@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
+export STRONGHOLD_DB_PATH=data/stronghold.db
 export DEV_ALLOW_INSECURE_COOKIE=1
 export SESSION_SAMESITE=lax
 

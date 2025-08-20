@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: stronghold
+    env: python
+    buildCommand: pip install -r server/requirements.txt
+    startCommand: >
+      uvicorn server.main:app
+      --host 0.0.0.0 --port $PORT
+      --proxy-headers --forwarded-allow-ips="*"
+      --timeout-keep-alive 75 --workers 1
+    envVars:
+      - key: EXTERNAL_ORIGIN
+        value: https://dpop.fun
+      - key: STRONGHOLD_DB_PATH
+        value: /data/stronghold.db
+      - key: STRONGHOLD_LOG_LEVEL
+        value: INFO
+      - key: SESSION_COOKIE_NAME
+        value: stronghold_session
+      - key: PASSKEYS_POLICY
+        value: compat
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1

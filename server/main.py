@@ -1,5 +1,6 @@
+# server/main.py
 import os, json, time, base64, secrets, logging, asyncio
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Tuple
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,20 +12,14 @@ from jose.utils import base64url_decode
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from urllib.parse import urlsplit, urlunsplit
-from pathlib import Path
-from server.db import SqliteDB, SqlStore, SqlitePasskeyRepo
 
-from server.passkeys import get_router, PasskeyRepo
+# Use the singleton DB that your db.py exports
+from server.db import DB  # <-- Database() instance with .init(), session + passkey methods
+
+from server.passkeys import get_router as get_passkeys_router
 from server.linking import get_router as get_linking_router
 
-
 SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "lax").lower()  # default lax in dev
-
-
-DB_PATH = os.getenv("STRONGHOLD_DB_PATH", str(Path(__file__).parent / "stronghold.db"))
-DB = SqliteDB(DB_PATH)
-STORE = SqlStore(DB)
-PASSKEY_DB = SqlitePasskeyRepo(DB)
 
 LOG_LEVEL = os.getenv("STRONGHOLD_LOG_LEVEL", "INFO").upper()
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "stronghold_session")
@@ -35,14 +30,11 @@ NONCE_TTL = int(os.getenv("STRONGHOLD_NONCE_TTL", "60"))
 JTI_TTL = int(os.getenv("STRONGHOLD_JTI_TTL", "60"))
 BIND_TTL = int(os.getenv("STRONGHOLD_BIND_TTL", "3600"))
 EXTERNAL_ORIGIN = os.getenv("STRONGHOLD_EXTERNAL_ORIGIN")
-REDIS_URL = os.getenv("REDIS_URL")
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s stronghold %(message)s")
 log = logging.getLogger("stronghold")
 
-
 # ---------------- Security / request-id middleware ----------------
-
 from starlette.middleware.base import BaseHTTPMiddleware
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -71,24 +63,56 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         resp.headers["X-Request-ID"] = rid
         return resp
 
-# **NEW**: Cheap and effective cross-site request defense per Fetch Metadata
 class FetchMetadataMiddleware(BaseHTTPMiddleware):
     SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
     async def dispatch(self, request: Request, call_next):
         site = (request.headers.get("sec-fetch-site") or "").lower()
-        mode = (request.headers.get("sec-fetch-mode") or "").lower()
-        dest = (request.headers.get("sec-fetch-dest") or "").lower()
-        # Allow same-origin / same-site, or simple navigations
         if site in ("", "same-origin", "same-site", "none"):
             return await call_next(request)
-        # Cross-site: only allow safe methods or simple navigations (e.g., to fetch static)
         if request.method.upper() in self.SAFE_METHODS:
             return await call_next(request)
         return JSONResponse({"detail": "blocked by fetch-metadata"}, status_code=403)
 
 # ---------------- Server signing key (ES256) ----------------
+def _load_server_private_key_pem() -> str | None:
+    """
+    Load PEM from (in order):
+      1) STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM (PEM text)
+      2) STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM (treat as filesystem path if exists)
+      3) STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM_FILE (explicit path env var)
+      4) /etc/secrets/STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM (Render Secret File)
+      5) ./STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM (project root file, optional)
+    """
+    env_val = os.getenv("STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM")
+    if env_val:
+        if "-----BEGIN" in env_val:
+            log.info("Loaded ES256 private key from STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM env (inline PEM).")
+            return env_val
+        if os.path.exists(env_val):
+            try:
+                with open(env_val, "r", encoding="utf-8") as f:
+                    log.info("Loaded ES256 private key from path in STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM env.")
+                    return f.read()
+            except Exception:
+                pass
 
-SERVER_EC_PRIVATE_KEY_PEM = os.getenv("STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM")
+    path_env = os.getenv("STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM_FILE")
+    candidates = [
+        path_env,
+        "/etc/secrets/STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM",  # Render Secret File default
+        os.path.join(os.getcwd(), "STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM"),
+    ]
+    for p in [c for c in candidates if c]:
+        try:
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    log.info(f"Loaded ES256 private key from file: {p}")
+                    return f.read()
+        except Exception:
+            pass
+    return None
+
+SERVER_EC_PRIVATE_KEY_PEM = _load_server_private_key_pem()
 if not SERVER_EC_PRIVATE_KEY_PEM:
     _priv = ec.generate_private_key(ec.SECP256R1())
     SERVER_EC_PRIVATE_KEY_PEM = _priv.private_bytes(
@@ -96,7 +120,7 @@ if not SERVER_EC_PRIVATE_KEY_PEM:
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     ).decode()
-    log.warning("STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM not set; generated ephemeral dev key.")
+    log.warning("STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM not provided; generated ephemeral dev key.")
 
 def _pem_to_public_jwk_and_kid(pem_priv: str):
     priv = serialization.load_pem_private_key(pem_priv.encode(), password=None)
@@ -113,17 +137,13 @@ def _pem_to_public_jwk_and_kid(pem_priv: str):
 SERVER_JWK_INFO = _pem_to_public_jwk_and_kid(SERVER_EC_PRIVATE_KEY_PEM)
 SERVER_PUBLIC_JWK = SERVER_JWK_INFO["jwk"]; SERVER_KID = SERVER_JWK_INFO["kid"]
 
-
 # ---------------- Canonical origin + URL (IPv6-safe) ----------------
-
 def _bracket_host(host: str) -> str:
-    # Wrap IPv6 literal in [] if not already
     if host and ":" in host and not host.startswith("["):
         return f"[{host}]"
     return host
 
 def canonicalize_origin_and_url(request: Request) -> Tuple[str, str]:
-    # Origin
     if EXTERNAL_ORIGIN:
         origin = EXTERNAL_ORIGIN.rstrip("/")
     else:
@@ -131,9 +151,7 @@ def canonicalize_origin_and_url(request: Request) -> Tuple[str, str]:
         host = request.headers.get("x-forwarded-host")
         port = request.headers.get("x-forwarded-port")
         if host:
-            # If header includes port, split it carefully (IPv6 may already be bracketed)
             if host.startswith("["):
-                # bracketed IPv6 netloc like "[::1]:8443" or "[::1]"
                 if "]:" in host:
                     h, p = host.split("]:", 1)
                     host = h.strip("[]")
@@ -141,7 +159,6 @@ def canonicalize_origin_and_url(request: Request) -> Tuple[str, str]:
                 else:
                     host = host.strip("[]")
             else:
-                # v4/hostname maybe with ":port"
                 if ":" in host and host.count(":") == 1:
                     h, p = host.split(":", 1)
                     host, port = h, (port or p)
@@ -151,7 +168,6 @@ def canonicalize_origin_and_url(request: Request) -> Tuple[str, str]:
                 port = str(request.url.port)
 
         host = host.lower()
-        # Strip default ports
         if port and ((scheme == "https" and port == "443") or (scheme == "http" and port == "80")):
             netloc = _bracket_host(host)
         elif port:
@@ -160,7 +176,6 @@ def canonicalize_origin_and_url(request: Request) -> Tuple[str, str]:
             netloc = _bracket_host(host)
         origin = f"{scheme}://{netloc}"
 
-    # Full canonical URL (origin + path + query; no fragment)
     parts = urlsplit(str(request.url))
     o_parts = urlsplit(origin)
     path = parts.path or "/"
@@ -169,10 +184,9 @@ def canonicalize_origin_and_url(request: Request) -> Tuple[str, str]:
     return origin, full
 
 # ---------------- FastAPI app ----------------
-
 app = FastAPI(middleware=[
     Middleware(RequestIDMiddleware),
-    Middleware(FetchMetadataMiddleware),      # <— NEW (before sessions)
+    Middleware(FetchMetadataMiddleware),
     Middleware(SecurityHeadersMiddleware),
     Middleware(SessionMiddleware,
                secret_key=os.getenv("SESSION_SECRET_KEY", base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()),
@@ -181,12 +195,9 @@ app = FastAPI(middleware=[
                same_site=SESSION_SAMESITE),
 ])
 
-
-
 BASE_DIR = os.path.dirname(__file__)
 app.mount("/public", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public")), name="public")
 app.mount("/src", StaticFiles(directory=os.path.join(BASE_DIR, "..", "src")), name="src")
-
 
 def _now() -> int: return int(time.time())
 def _new_nonce() -> str: return base64.urlsafe_b64encode(secrets.token_bytes(18)).rstrip(b"=").decode()
@@ -211,11 +222,11 @@ def verify_binding_token(token: str) -> Dict[str, Any]:
         raise HTTPException(status_code=401, detail="bind token expired")
     return data
 
-
+# ---- DB startup ----
 @app.on_event("startup")
 async def _init_db():
     await DB.init()
-    
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     with open(os.path.join(BASE_DIR, "..", "public", "index.html"), "r", encoding="utf-8") as f:
@@ -230,7 +241,6 @@ async def stronghold_sw():
 async def jwks(): return {"keys": [SERVER_PUBLIC_JWK]}
 
 # ---------------- Session + Bind endpoints ----------------
-
 @app.post("/session/init")
 async def session_init(req: Request):
     body = await req.json()
@@ -238,14 +248,14 @@ async def session_init(req: Request):
     csrf = secrets.token_urlsafe(18)
     reg_nonce = _new_nonce()
     req.session.update({"sid": sid})
-    await STORE.set_session(sid, {"state":"pending-bind","csrf":csrf,"reg_nonce":reg_nonce,"browser_uuid":body.get("browser_uuid")})
+    await DB.set_session(sid, {"state":"pending-bind","csrf":csrf,"reg_nonce":reg_nonce,"browser_uuid":body.get("browser_uuid")})
     log.info("session_init sid=%s rid=%s", sid, req.state.request_id)
     return JSONResponse({"csrf": csrf, "reg_nonce": reg_nonce, "state": "pending-bind"})
 
 @app.post("/browser/register")
 async def browser_register(req: Request):
     sid = req.session.get("sid")
-    s = await STORE.get_session(sid) if sid else None
+    s = await DB.get_session(sid) if sid else None
     if not sid or not s: raise HTTPException(status_code=401, detail="no session")
     if req.headers.get("X-CSRF-Token") != s.get("csrf"): raise HTTPException(status_code=403, detail="bad csrf")
     jws_compact = (await req.body()).decode()
@@ -253,18 +263,15 @@ async def browser_register(req: Request):
         h_b64, p_b64, _ = jws_compact.split(".")
         header = json.loads(base64url_decode(h_b64.encode())); payload = json.loads(base64url_decode(p_b64.encode()))
         if header.get("typ") != "bik-reg+jws": raise HTTPException(status_code=400, detail="wrong typ")
-        # enforce ES256
         if header.get("alg") != "ES256": raise HTTPException(status_code=400, detail="bad alg")
-        # verify JWS using embedded pubkey
         jose_jws.verify(jws_compact, header["jwk"], algorithms=["ES256"])
         if payload.get("nonce") != s.get("reg_nonce"): raise HTTPException(status_code=401, detail="bad nonce")
         if abs(_now() - int(payload.get("iat",0))) > SKEW_SEC: raise HTTPException(status_code=401, detail="bad iat")
-        # compute BIK thumbprint
         jwk = header.get("jwk") or {}
         if jwk.get("kty") != "EC" or jwk.get("crv") != "P-256" or not jwk.get("x") or not jwk.get("y"):
             raise HTTPException(status_code=400, detail="bad jwk")
         bik_jkt = _ec_p256_thumbprint(jwk)
-        await STORE.update_session(sid, {"bik_jkt": bik_jkt, "state": "bound-bik", "reg_nonce": None})
+        await DB.update_session(sid, {"bik_jkt": bik_jkt, "state": "bound-bik", "reg_nonce": None})
         log.info("bik_register sid=%s jkt=%s rid=%s", sid, bik_jkt[:8], req.state.request_id)
         return {"bik_jkt": bik_jkt, "state": "bound-bik"}
     except HTTPException: raise
@@ -274,7 +281,7 @@ async def browser_register(req: Request):
 @app.post("/dpop/bind")
 async def dpop_bind(req: Request):
     sid = req.session.get("sid")
-    s = await STORE.get_session(sid) if sid else None
+    s = await DB.get_session(sid) if sid else None
     if not sid or not s: raise HTTPException(status_code=401, detail="no session")
     if req.headers.get("X-CSRF-Token") != s.get("csrf"): raise HTTPException(status_code=403, detail="bad csrf")
     if s.get("state") != "bound-bik": raise HTTPException(status_code=403, detail="bik not bound")
@@ -287,15 +294,14 @@ async def dpop_bind(req: Request):
         jose_jws.verify(jws_compact, header["jwk"], algorithms=["ES256"])
         if abs(_now() - int(payload.get("iat",0))) > SKEW_SEC: raise HTTPException(status_code=401, detail="bad iat")
         dpop_pub_jwk = payload.get("dpop_jwk") or {}
-        # enforce EC P-256 key
         if dpop_pub_jwk.get("kty") != "EC" or dpop_pub_jwk.get("crv") != "P-256" or not dpop_pub_jwk.get("x") or not dpop_pub_jwk.get("y"):
             raise HTTPException(status_code=400, detail="bad dpop jwk")
         dpop_jkt = _ec_p256_thumbprint(dpop_pub_jwk)
         origin, _ = canonicalize_origin_and_url(req)
         bind = issue_binding_token(sid=sid, bik_jkt=s["bik_jkt"], dpop_jkt=dpop_jkt, aud=origin, ttl=BIND_TTL)
         next_nonce = _new_nonce()
-        await STORE.add_nonce(sid, next_nonce, NONCE_TTL)
-        await STORE.update_session(sid, {"dpop_jkt": dpop_jkt, "state": "bound"})
+        await DB.add_nonce(sid, next_nonce, NONCE_TTL)
+        await DB.update_session(sid, {"dpop_jkt": dpop_jkt, "state": "bound"})
         log.info("dpop_bind sid=%s dpop_jkt=%s rid=%s", sid, dpop_jkt[:8], req.state.request_id)
         return JSONResponse({"bind": bind, "cnf": {"dpop_jkt": dpop_jkt}, "expires_at": _now() + BIND_TTL}, headers={"DPoP-Nonce": next_nonce})
     except HTTPException: raise
@@ -303,28 +309,25 @@ async def dpop_bind(req: Request):
         log.exception("dpop_bind failed sid=%s rid=%s", sid, req.state.request_id); raise HTTPException(status_code=400, detail=f"dpop bind failed: {e}")
 
 # ---------------- DPoP gate ----------------
-
 def _nonce_fail_response(sid: str, detail: str) -> None:
     n = _new_nonce()
-    asyncio.create_task(STORE.add_nonce(sid, n, NONCE_TTL))
+    asyncio.create_task(DB.add_nonce(sid, n, NONCE_TTL))
     raise HTTPException(status_code=401, detail=detail, headers={"DPoP-Nonce": n})
 
 async def require_dpop(req: Request) -> Dict[str, Any]:
     sid = req.session.get("sid")
-    s = await STORE.get_session(sid) if sid else None
+    s = await DB.get_session(sid) if sid else None
     if not sid or not s:
         raise HTTPException(status_code=401, detail="no session")
 
     dpop_hdr = req.headers.get("DPoP"); bind_hdr = req.headers.get("DPoP-Bind")
     if not dpop_hdr or not bind_hdr:
-        n = _new_nonce(); await STORE.add_nonce(sid, n, NONCE_TTL)
+        n = _new_nonce(); await DB.add_nonce(sid, n, NONCE_TTL)
         raise HTTPException(status_code=428, detail="dpop required", headers={"DPoP-Nonce": n})
 
-    # Verify bind token first
     try:
         bind_payload = verify_binding_token(bind_hdr)
     except HTTPException:
-        # Bind invalid — do not leak info; ask client to re-prove with fresh nonce
         _nonce_fail_response(sid, "bind verify failed")
 
     if bind_payload.get("sid") != sid:
@@ -334,7 +337,6 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
     if bind_payload.get("aud") != origin:
         _nonce_fail_response(sid, "bind token aud mismatch")
 
-    # Verify DPoP proof (tight checks)
     try:
         h_b64, p_b64, _ = dpop_hdr.split(".")
         header = json.loads(base64url_decode(h_b64.encode())); payload = json.loads(base64url_decode(p_b64.encode()))
@@ -358,14 +360,13 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
             _nonce_fail_response(sid, "bad iat")
 
         n = payload.get("nonce")
-        if not n or not (await STORE.nonce_valid(sid, n)):
+        if not n or not (await DB.nonce_valid(sid, n)):
             _nonce_fail_response(sid, "bad nonce")
 
         jti = payload.get("jti")
-        if not jti or not (await STORE.add_jti(sid, jti, JTI_TTL)):
+        if not jti or not (await DB.add_jti(sid, jti, JTI_TTL)):
             _nonce_fail_response(sid, "jti replay")
 
-        # Tie live DPoP key to bound key
         def jkt_of(jwk_: Dict[str, Any]) -> str:
             ordered = {"kty": "EC", "crv": "P-256", "x": jwk_["x"], "y": jwk_["y"]}
             import hashlib
@@ -379,40 +380,57 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
         log.exception("dpop verify failed sid=%s rid=%s", sid, req.state.request_id)
         _nonce_fail_response(sid, f"dpop verify failed: {e}")
 
-    # Success: rotate nonce for next request
     next_nonce = _new_nonce()
-    await STORE.add_nonce(sid, next_nonce, NONCE_TTL)
+    await DB.add_nonce(sid, next_nonce, NONCE_TTL)
     req.state.next_nonce = next_nonce
     return {"sid": sid, "next_nonce": next_nonce}
 
-# ---------------- Resume (BIK) ----------------
+# ---- Passkey repo adapter (maps passkeys.py expectations to DB.pk_* methods) ----
+class _PasskeyRepoAdapter:
+    def __init__(self, db): self.db = db
+    async def get_for_principal(self, principal: str):
+        return await self.db.pk_get_for_principal(principal)
+    async def upsert(self, principal: str, rec: Dict[str, Any]):
+        return await self.db.pk_upsert(principal, rec)
+    async def find_by_cred_id(self, principal: str, cred_id: str):
+        return await self.db.pk_find_by_cred_id(principal, cred_id)
+    async def get_by_cred_id(self, cred_id: str):
+        return await self.db.pk_get_by_cred_id(cred_id)
+    async def update_sign_count(self, cred_id: str, new_count: int):
+        return await self.db.pk_update_sign_count(cred_id, new_count)
+    async def remove(self, principal: str, cred_id: str):
+        return await self.db.pk_remove(principal, cred_id)
 
-app.include_router(get_router(
-    STORE,
+PASSKEY_REPO = _PasskeyRepoAdapter(DB)
+
+# ---------------- Routers ----------------
+app.include_router(get_passkeys_router(
+    DB,
     require_dpop,
     canonicalize_origin_and_url,
     _now,
-    passkey_repo=PASSKEY_DB,           # <-- pass the instance, not a string
+    passkey_repo=PASSKEY_REPO,
 ))
 
 app.include_router(get_linking_router(
-    STORE, require_dpop, canonicalize_origin_and_url, _now,
+    DB, require_dpop, canonicalize_origin_and_url, _now,
 ))
 
+# ---------------- Resume (BIK) ----------------
 @app.post("/session/resume-init")
 async def resume_init(req: Request):
     sid = req.session.get("sid")
-    s = await STORE.get_session(sid) if sid else None
+    s = await DB.get_session(sid) if sid else None
     if not sid or not s: raise HTTPException(401, "no session")
     n = _new_nonce()
-    await STORE.update_session(sid, {"resume_nonce": n})
-    next_nonce = _new_nonce(); await STORE.add_nonce(sid, next_nonce, NONCE_TTL)
+    await DB.update_session(sid, {"resume_nonce": n})
+    next_nonce = _new_nonce(); await DB.add_nonce(sid, next_nonce, NONCE_TTL)
     return JSONResponse({"resume_nonce": n}, headers={"DPoP-Nonce": next_nonce})
 
 @app.post("/session/resume-confirm")
 async def resume_confirm(req: Request):
     sid = req.session.get("sid")
-    s = await STORE.get_session(sid) if sid else None
+    s = await DB.get_session(sid) if sid else None
     if not sid or not s: raise HTTPException(401, "no session")
     jws_compact = (await req.body()).decode()
     h_b64, p_b64, _ = jws_compact.split(".")
@@ -429,12 +447,11 @@ async def resume_confirm(req: Request):
     origin, _ = canonicalize_origin_and_url(req)
     dpop_jkt = s.get("dpop_jkt")
     bind = issue_binding_token(sid=sid, bik_jkt=s["bik_jkt"], dpop_jkt=dpop_jkt, aud=origin)
-    n = _new_nonce(); await STORE.add_nonce(sid, n, NONCE_TTL)
-    await STORE.update_session(sid, {"resume_nonce": None})
+    n = _new_nonce(); await DB.add_nonce(sid, n, NONCE_TTL)
+    await DB.update_session(sid, {"resume_nonce": None})
     return JSONResponse({"bind": bind}, headers={"DPoP-Nonce": n})
 
 # ---------------- Demo API ----------------
-
 @app.post("/api/echo")
 async def api_echo(req: Request, ctx=Depends(require_dpop)):
     body = await req.json()
@@ -443,9 +460,8 @@ async def api_echo(req: Request, ctx=Depends(require_dpop)):
     return JSONResponse({"ok": True, "echo": body, "ts": _now()}, headers=headers)
 
 # ---------------- Admin ----------------
-
 @app.post("/_admin/flush")
 async def admin_flush():
-    await STORE.flush()
+    await DB.flush()
     log.warning("admin_flush: cleared demo stores")
     return {"ok": True}
