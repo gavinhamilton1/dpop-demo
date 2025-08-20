@@ -9,6 +9,8 @@ services:
       --proxy-headers --forwarded-allow-ips="*"
       --timeout-keep-alive 75 --workers 1
     envVars:
+      - key: STRONGHOLD_CONFIG
+        value: /server/stronghold.prod.yaml      
       - key: EXTERNAL_ORIGIN
         value: https://dpop.fun
       - key: STRONGHOLD_DB_PATH

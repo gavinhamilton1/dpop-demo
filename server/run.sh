@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+
+export STRONGHOLD_CONFIG=server/stronghold.dev.yaml
+
+
 # PROJECT ROOT is parent of this script's dir
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
