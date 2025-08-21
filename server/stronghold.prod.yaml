@@ -5,7 +5,7 @@ server:
   ec_private_key_pem: null             # optional: inline PEM (dev only)
 
 db:
-  path: /data/stronghold.db            # <-- requested path
+  path: ../data/stronghold.db            # <-- requested path
 
 session:
   cookie_name: stronghold_session
