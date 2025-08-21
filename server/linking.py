@@ -91,7 +91,18 @@ def get_router(
         token = jws_es256_sign(payload)
 
         origin, _ = canonicalize_origin_and_url(req)
-        qr_url = f"{origin}/public/link.html?token={token}"
+        
+        # For multi-domain support, try to use the first allowed origin if available
+        # This ensures the QR code works across different domains
+        from server.config import load_settings
+        SETTINGS = load_settings()
+        if SETTINGS.allowed_origins:
+            # Use the first allowed origin for QR generation to ensure consistency
+            qr_origin = SETTINGS.allowed_origins[0]
+        else:
+            qr_origin = origin
+            
+        qr_url = f"{qr_origin}/public/link.html?token={token}"
 
         _put_link(rid, {
             "rid": rid,
@@ -196,6 +207,9 @@ def get_router(
         token = body.get("token")
         if not token:
             raise HTTPException(status_code=400, detail="missing token")
+        
+        log.info("Mobile link start - token=%s", token[:20] + "..." if token else "none")
+        
         claims = jws_es256_verify(token)
         now_ts = now()
         if claims.get("aud") != "link":
@@ -203,16 +217,23 @@ def get_router(
         if now_ts > int(claims.get("exp", 0)):
             raise HTTPException(status_code=400, detail="expired")
         lid = claims.get("lid")
+        
+        log.info("Token verified - lid=%s aud=%s exp=%s", lid, claims.get("aud"), claims.get("exp"))
+        
         with _LINKS_LOCK:
             rec = _LINKS.get(lid)
             if not rec:
+                log.error("Link not found - lid=%s", lid)
                 raise HTTPException(status_code=404, detail="no such link")
             if now_ts > rec["exp"] and rec["status"] != "linked":
                 rec["status"] = "expired"
                 _notify_watchers(lid, {"type":"status", **_public_view(rec)})
+                log.warning("Link expired - lid=%s", lid)
                 raise HTTPException(status_code=400, detail="expired")
             if rec["status"] == "pending":
                 rec["status"] = "scanned"
+                log.info("Link status updated to scanned - lid=%s", lid)
+        
         _notify_watchers(lid, {"type":"status", **_public_view(_LINKS[lid])})
         return {"ok": True, "link_id": lid}
 
@@ -231,6 +252,8 @@ def get_router(
         if not s.get("passkey_auth") or not s.get("passkey_principal"):
             raise HTTPException(status_code=403, detail="mobile not authenticated")
 
+        log.info("Mobile link complete - lid=%s sid=%s principal=%s", lid, sid, s.get("passkey_principal"))
+
         desktop_sid: Optional[str] = None
         with _LINKS_LOCK:
             rec = _LINKS.get(lid)
@@ -246,6 +269,8 @@ def get_router(
             rec["applied"] = False
             desktop_sid = rec.get("desktop_sid")
 
+        log.info("Link status updated - desktop_sid=%s", desktop_sid)
+
         # APPLY patch to desktop session right now (best-effort)
         applied = False
         if desktop_sid:
@@ -257,7 +282,11 @@ def get_router(
                         "passkey_principal": s["passkey_principal"],
                     })
                     applied = True
-            except Exception:
+                    log.info("Desktop session updated successfully")
+                else:
+                    log.warning("Desktop session not found")
+            except Exception as e:
+                log.error("Failed to update desktop session: %s", e)
                 applied = False
 
         with _LINKS_LOCK:
@@ -265,6 +294,7 @@ def get_router(
                 _LINKS[lid]["applied"] = applied
 
         _notify_watchers(lid, {"type":"status", **_public_view(_LINKS[lid])})
+        log.info("Mobile link complete - applied=%s", applied)
         return JSONResponse({"ok": True, "applied": applied}, headers=_nonce_headers(ctx))
 
     # -------- Optional: serve QR PNG directly (requires 'qrcode[pil]') --------
