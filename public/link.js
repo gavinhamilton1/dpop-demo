@@ -33,23 +33,6 @@ function getTokenFromURL() {
   return new URLSearchParams(hash).get('token');
 }
 
-async function preflightAuthOptions() {
-  // Ask the server which creds it knows for THIS session's principal
-  const opts = await Stronghold.strongholdFetch('/webauthn/authentication/options', { method: 'POST' });
-
-  // Always normalize allowCredentials to an array
-  const allow = Array.isArray(opts.allowCredentials) ? opts.allowCredentials : [];
-
-  // Be robust: if server didn't include _meta, synthesize it here
-  const meta = opts._meta ?? {
-    hasCredentials: allow.length > 0,
-    registeredCount: allow.length,
-    hasPlatform: allow.some(c => (c.transports || []).includes('internal')),
-  };
-
-  return { opts, allow, meta };
-}
-
 // Initialize signature sharing after successful linking
 function initSignatureSharing(linkId) {
   log('Initializing signature sharing...', 'info');
@@ -94,38 +77,86 @@ function initSignatureSharing(linkId) {
     await Stronghold.bikRegisterStep({ bikRegisterUrl: '/browser/register' });
     await Stronghold.dpopBindStep({ dpopBindUrl: '/dpop/bind' });
 
-    // 3) Check if this session already has stored passkeys for the principal
+    // 3) Now that we have a valid session, check for existing passkeys
     let hasCreds = false;
+    let authOptions = null;
+    
     try {
-      const { allow, meta } = await preflightAuthOptions();
-      hasCreds = !!meta.hasCredentials; // safe even if _meta missing on server
-      log('[link] preflight', { allowCount: allow.length, meta });
+      // Try to get authentication options to see if there are existing passkeys
+      authOptions = await Passkeys.getAuthOptions();
+      hasCreds = authOptions.allowCredentials && authOptions.allowCredentials.length > 0;
+      log('[link] auth options check', { 
+        hasCredentials: hasCreds, 
+        allowCredentialsCount: authOptions.allowCredentials?.length || 0,
+        allowCredentials: authOptions.allowCredentials || [],
+        rpId: authOptions.rpId,
+        userVerification: authOptions.userVerification,
+        _meta: authOptions._meta || {}
+      });
+      
+      // Log the full auth options for debugging
+      log('[link] full auth options', authOptions);
+      
     } catch (e) {
-      // If preflight itself failed (network/DPoP/nonce), we'll fall back to trying auth
-      log('[link] preflight failed; will continue', { message: e.message || String(e) });
+      // If getting auth options fails, assume no existing passkeys
+      log('[link] auth options check failed; will register new passkey', { message: e.message || String(e) });
+      hasCreds = false;
     }
 
-    // 4) If none, register a mobile passkey first; otherwise go straight to auth
+    // 4) Handle passkey flow
     if (!hasCreds) {
-      log('No stored mobile passkey for this session — registering one now…');
-      await Passkeys.registerPasskey();  // will call /webauthn/registration/options + navigator.credentials.create
-      log('Passkey registered on mobile ✓');
+      log('No existing passkeys found for this domain — registering one now…');
+      try {
+        await Passkeys.registerPasskey();
+        log('Passkey registered on mobile ✓');
+      } catch (error) {
+        log(`Passkey registration failed: ${error.message}`, 'error');
+        throw error;
+      }
     } else {
-      log('Stored passkey found for this session — authenticating…');
+      log('Existing passkeys found for this domain — authenticating…');
     }
 
-    // Always authenticate after registration or when creds already exist
-    await Passkeys.authenticatePasskey(); // /webauthn/authentication/options + navigator.credentials.get
-    log('Passkey authenticated ✓');
+    // 5) Always authenticate (either with newly created or existing passkey)
+    try {
+      // If we have existing credentials, use them; otherwise let the browser choose
+      if (hasCreds && authOptions) {
+        await Passkeys.authenticatePasskey(authOptions);
+      } else {
+        await Passkeys.authenticatePasskey();
+      }
+      log('Passkey authenticated ✓');
+    } catch (error) {
+      log(`Passkey authentication failed: ${error.message}`, 'error');
+      
+      // If authentication failed but we thought we had credentials, 
+      // the credentials might be stale. Try registering a new passkey.
+      if (hasCreds) {
+        log('Authentication failed with existing credentials - trying to register new passkey...', 'warn');
+        try {
+          await Passkeys.registerPasskey();
+          log('New passkey registered after auth failure ✓');
+          
+          // Try authentication again with the new passkey
+          await Passkeys.authenticatePasskey();
+          log('Passkey authenticated with new credential ✓');
+        } catch (regError) {
+          log(`Registration fallback also failed: ${regError.message}`, 'error');
+          throw error; // Throw the original error
+        }
+      } else {
+        throw error;
+      }
+    }
 
-    // 5) Complete link — MUST be DPoP-signed (use strongholdFetch)
+    // 6) Complete link — MUST be DPoP-signed (use strongholdFetch)
     await Stronghold.strongholdFetch('/link/mobile/complete', {
       method: 'POST',
       body: { link_id }
     });
     log('Linked ✓');
     
-    // 6) Initialize signature sharing after successful linking
+    // 7) Initialize signature sharing after successful linking
     log('Starting signature sharing feature...', 'info');
     initSignatureSharing(link_id);
     

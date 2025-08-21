@@ -54,7 +54,7 @@ class SignatureShare {
             container.className = 'signature-container';
             container.innerHTML = `
                 <h3>${title}</h3>
-                <canvas id="${containerId}-canvas" width="400" height="300" style="border: 2px solid #333; border-radius: 8px; background: white;"></canvas><br>
+                <canvas id="${containerId}-canvas" width="300" height="300" style="border: 2px solid #333; border-radius: 8px; background: white;"></canvas><br>
                 ${this.isMobile ? '<button id="reset-signature" style="margin-top: 10px; padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Clear Scribble</button>' : ''}
             `;
             
