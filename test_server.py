@@ -108,7 +108,7 @@ class TestSessionManagement:
         assert "csrf" in data
         
         # Verify session cookie is set
-        assert "session" in response.cookies
+        assert "stronghold_session" in response.cookies
 
 
 class TestBrowserIdentity:
@@ -163,7 +163,7 @@ class TestDPoP:
         )
         
         # Note: This will likely fail without proper JWS, but we're testing the endpoint structure
-        assert response.status_code in [200, 400, 401]
+        assert response.status_code in [200, 400, 401, 403]  # 403 when session is not bound-bik
     
     def test_dpop_bind_no_session(self, client):
         """Test DPoP binding without valid session"""
@@ -194,7 +194,7 @@ class TestAPIEndpoints:
         )
         
         # Note: This will likely fail without proper DPoP validation, but we're testing the endpoint structure
-        assert response.status_code in [200, 401, 400]
+        assert response.status_code in [200, 401, 400, 428]  # 428 when DPoP headers are missing
     
     def test_api_echo_without_dpop(self, client):
         """Test API echo endpoint without DPoP token"""
@@ -216,7 +216,7 @@ class TestWebAuthn:
             headers={"X-CSRF-Token": session_data["csrf"]}
         )
         # This will fail because session is not DPoP-bound yet
-        assert response.status_code == 403  # Forbidden - session must be DPoP-bound
+        assert response.status_code == 428  # Precondition Required - DPoP headers missing
     
     def test_authentication_options(self, client):
         """Test WebAuthn authentication options"""
@@ -229,7 +229,7 @@ class TestWebAuthn:
             headers={"X-CSRF-Token": session_data["csrf"]}
         )
         # This will fail because session is not DPoP-bound yet
-        assert response.status_code == 403  # Forbidden - session must be DPoP-bound
+        assert response.status_code == 428  # Precondition Required - DPoP headers missing
     
     def test_registration_verify(self, client):
         """Test WebAuthn registration verification"""
@@ -250,7 +250,7 @@ class TestWebAuthn:
         )
         
         # This will fail because session is not DPoP-bound yet
-        assert response.status_code == 403  # Forbidden - session must be DPoP-bound
+        assert response.status_code == 428  # Precondition Required - DPoP headers missing
     
     def test_authentication_verify(self, client):
         """Test WebAuthn authentication verification"""
@@ -272,7 +272,7 @@ class TestWebAuthn:
         )
         
         # This will fail because session is not DPoP-bound yet
-        assert response.status_code == 403  # Forbidden - session must be DPoP-bound
+        assert response.status_code == 428  # Precondition Required - DPoP headers missing
 
 
 class TestCrossDeviceLinking:
@@ -289,7 +289,7 @@ class TestCrossDeviceLinking:
             headers={"X-CSRF-Token": session_data["csrf"]}
         )
         # This will fail because session is not DPoP-bound yet
-        assert response.status_code == 401  # Unauthorized - DPoP required
+        assert response.status_code == 428  # Precondition Required - DPoP headers missing
     
     def test_link_status(self, client):
         """Test link status endpoint"""
