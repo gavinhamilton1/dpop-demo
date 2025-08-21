@@ -5,6 +5,7 @@ from typing import Any, Dict, Tuple, Optional, Callable, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from server.config import load_settings
 from server.utils import b64u, b64u_dec, jws_es256_sign, jws_es256_verify, now
@@ -34,6 +35,10 @@ _LINKS_LOCK = threading.RLock()
 _WATCHERS: Dict[str, List[asyncio.Queue]] = {}
 _WATCHERS_LOCK = threading.RLock()
 
+# -------- WebSocket connections --------
+_WEBSOCKET_CONNECTIONS: Dict[str, List[WebSocket]] = {}
+_WEBSOCKET_LOCK = threading.RLock()
+
 def _notify_watchers(link_id: str, event: Dict[str, Any]):
     with _WATCHERS_LOCK:
         qs = list(_WATCHERS.get(link_id, []))
@@ -44,10 +49,33 @@ def _notify_watchers(link_id: str, event: Dict[str, Any]):
         except Exception as e:
             log.warning("Failed to notify watcher: %s", e)
 
+def _notify_websockets(link_id: str, event: Dict[str, Any]):
+    """Notify WebSocket connections for a specific link."""
+    with _WEBSOCKET_LOCK:
+        connections = list(_WEBSOCKET_CONNECTIONS.get(link_id, []))
+    
+    log.info("Notifying %d WebSocket connections for link %s with event: %s", len(connections), link_id, event)
+    
+    # Send to all connected WebSockets
+    for ws in connections:
+        try:
+            asyncio.create_task(ws.send_text(json.dumps(event)))
+        except Exception as e:
+            log.warning("Failed to send WebSocket message: %s", e)
+            # Remove failed connection
+            with _WEBSOCKET_LOCK:
+                if link_id in _WEBSOCKET_CONNECTIONS:
+                    try:
+                        _WEBSOCKET_CONNECTIONS[link_id].remove(ws)
+                    except ValueError:
+                        pass
+
 def _put_link(link_id: str, rec: Dict[str, Any]):
     with _LINKS_LOCK:
         _LINKS[link_id] = rec
-    _notify_watchers(link_id, {"type": "status", **_public_view(rec)})
+    event = {"type": "status", **_public_view(rec)}
+    _notify_watchers(link_id, event)
+    _notify_websockets(link_id, event)
 
 def _public_view(rec: Dict[str, Any]) -> Dict[str, Any]:
     now_ts = now()
@@ -221,6 +249,84 @@ def get_router(
             "X-Accel-Buffering": "no",
         })
 
+    @router.websocket("/link/ws/{link_id}")
+    async def link_websocket(websocket: WebSocket, link_id: str):
+        """
+        WebSocket endpoint for link status updates.
+        Alternative to SSE for environments where SSE is blocked.
+        """
+        await websocket.accept()
+        
+        # Get session from query params or headers
+        session_id = None
+        try:
+            # Try to get session from query params
+            session_id = websocket.query_params.get("sid")
+            if not session_id:
+                # Try to get from headers
+                session_id = websocket.headers.get("x-session-id")
+        except Exception:
+            pass
+            
+        log.info("WebSocket connection - link_id=%s session_id=%s", link_id, session_id)
+        
+        # Validate link exists and session owns it
+        with _LINKS_LOCK:
+            rec = _LINKS.get(link_id)
+            if not rec:
+                await websocket.close(code=4004, reason="Link not found")
+                return
+            if session_id and rec.get("desktop_sid") != session_id:
+                await websocket.close(code=4003, reason="Not your link")
+                return
+            initial = _public_view(rec)
+        
+        # Send initial status
+        try:
+            initial_event = {"type": "status", **initial}
+            await websocket.send_text(json.dumps(initial_event))
+            log.info("WebSocket - sent initial data: %s", initial_event)
+        except Exception as e:
+            log.error("WebSocket - failed to send initial data: %s", e)
+            await websocket.close()
+            return
+        
+        # Add to connections
+        with _WEBSOCKET_LOCK:
+            if link_id not in _WEBSOCKET_CONNECTIONS:
+                _WEBSOCKET_CONNECTIONS[link_id] = []
+            _WEBSOCKET_CONNECTIONS[link_id].append(websocket)
+            log.info("WebSocket - added to connections. Total connections for %s: %d", link_id, len(_WEBSOCKET_CONNECTIONS[link_id]))
+        
+        try:
+            # Keep connection alive and handle incoming messages
+            while True:
+                try:
+                    # Wait for any message (ping/pong or close)
+                    data = await websocket.receive_text()
+                    log.info("WebSocket - received message: %s", data)
+                    
+                    # Handle ping/pong
+                    if data == "ping":
+                        await websocket.send_text("pong")
+                    
+                except WebSocketDisconnect:
+                    log.info("WebSocket - client disconnected")
+                    break
+                except Exception as e:
+                    log.error("WebSocket - error: %s", e)
+                    break
+                    
+        finally:
+            # Cleanup
+            with _WEBSOCKET_LOCK:
+                if link_id in _WEBSOCKET_CONNECTIONS:
+                    try:
+                        _WEBSOCKET_CONNECTIONS[link_id].remove(websocket)
+                    except ValueError:
+                        pass
+            log.info("WebSocket - connection closed for link_id=%s", link_id)
+
     @router.post("/link/mobile/start")
     async def link_mobile_start(body: Dict[str, Any], req: Request):
         """Mobile posts the QR token it scanned. No DPoP yet."""
@@ -262,6 +368,8 @@ def get_router(
                 log.info("Link status updated to scanned - lid=%s desktop_sid=%s", lid, rec.get("desktop_sid"))
         
         _notify_watchers(lid, {"type":"status", **_public_view(_LINKS[lid])})
+        _notify_websockets(lid, {"type":"status", **_public_view(_LINKS[lid])})
+        log.info("Mobile link start - notified watchers and websockets for lid=%s", lid)
         return {"ok": True, "link_id": lid}
 
     @router.post("/link/mobile/complete")
@@ -326,6 +434,7 @@ def get_router(
                 _LINKS[lid]["applied"] = applied
 
         _notify_watchers(lid, {"type":"status", **_public_view(_LINKS[lid])})
+        _notify_websockets(lid, {"type":"status", **_public_view(_LINKS[lid])})
         log.info("Mobile link complete - applied=%s", applied)
         return JSONResponse({"ok": True, "applied": applied}, headers=_nonce_headers(ctx))
 

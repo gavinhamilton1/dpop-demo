@@ -707,6 +707,7 @@ import * as Passkeys from '/src/passkeys.js';
   // Link status monitoring with SSE as primary, polling as fallback
   let _currentLinkId = null;
   let _eventSource = null;
+  let _websocket = null;
   let _pollAbort = { on: false };
   
   async function monitorLinkStatus(linkId) {
@@ -720,19 +721,124 @@ import * as Passkeys from '/src/passkeys.js';
     addLog(`Current domain: ${location.origin}`, 'info');
     addLog(`Session cookies: ${document.cookie}`, 'info');
     
-    // Try SSE first
+    // Try WebSocket first (best for corporate environments)
+    if ('WebSocket' in window) {
+      try {
+        addLog('Starting WebSocket monitoring for link status...', 'info');
+        const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/link/ws/${encodeURIComponent(linkId)}`;
+        addLog(`WebSocket URL: ${wsUrl}`, 'info');
+        
+        // Set a timeout for WebSocket connection
+        const wsTimeout = setTimeout(() => {
+          addLog('WebSocket connection timeout - falling back to SSE', 'warning');
+          if (_websocket) {
+            _websocket.close();
+            _websocket = null;
+          }
+          trySSE(linkId);
+        }, 8000); // 8 second timeout
+        
+        _websocket = new WebSocket(wsUrl);
+        
+        _websocket.onopen = () => {
+          clearTimeout(wsTimeout);
+          addLog('WebSocket connection opened successfully', 'success');
+          
+          // Send ping to keep connection alive
+          setInterval(() => {
+            if (_websocket && _websocket.readyState === WebSocket.OPEN) {
+              _websocket.send('ping');
+            }
+          }, 30000); // Ping every 30 seconds
+        };
+        
+        _websocket.onmessage = (event) => {
+          addLog(`WebSocket message received: ${event.data}`, 'info');
+          
+          // Handle pong responses (keep-alive)
+          if (event.data === 'pong') {
+            addLog('WebSocket ping/pong - connection alive', 'info');
+            return;
+          }
+          
+          try {
+            const data = JSON.parse(event.data);
+            addLog(`Parsed WebSocket data: ${JSON.stringify(data)}`, 'info');
+            
+            // Handle status updates
+            if (data.type === 'status') {
+              updateLinkStatus(data);
+              
+              if ((data.status === 'linked' && data.applied) || data.status === 'expired') {
+                stopLinkMonitoring();
+                if (data.status === 'linked') {
+                  setButtonSuccess('linkBtn', 'Linked!');
+                  addLog('Cross-device linking completed successfully!', 'success');
+                } else {
+                  setButtonError('linkBtn', 'Expired');
+                  addLog('Cross-device linking expired', 'warning');
+                }
+              }
+            }
+          } catch (e) {
+            addLog(`Failed to parse WebSocket data: ${e.message}`, 'error');
+          }
+        };
+        
+        _websocket.onerror = (event) => {
+          clearTimeout(wsTimeout);
+          addLog(`WebSocket connection failed: ${JSON.stringify(event)}`, 'error');
+          addLog('WebSocket connection failed, falling back to SSE...', 'warning');
+          _websocket.close();
+          _websocket = null;
+          trySSE(linkId);
+        };
+        
+        _websocket.onclose = (event) => {
+          clearTimeout(wsTimeout);
+          addLog(`WebSocket connection closed: ${event.code} - ${event.reason}`, 'warning');
+          if (!_websocket) return; // Already handled by error
+          _websocket = null;
+          trySSE(linkId);
+        };
+        
+        return; // WebSocket started successfully
+      } catch (e) {
+        addLog(`WebSocket setup failed: ${e.message}, falling back to SSE...`, 'warning');
+      }
+    }
+    
+    // Fallback to SSE
+    trySSE(linkId);
+  }
+  
+  async function trySSE(linkId) {
+    // Try SSE with timeout for corporate environments
     if ('EventSource' in window) {
       try {
         addLog('Starting SSE monitoring for link status...', 'info');
         const sseUrl = `/link/events/${encodeURIComponent(linkId)}`;
         addLog(`SSE URL: ${sseUrl}`, 'info');
+        
+        // Set a timeout for SSE connection in corporate environments
+        const sseTimeout = setTimeout(() => {
+          addLog('SSE connection timeout - falling back to polling for corporate VDI', 'warning');
+          if (_eventSource) {
+            _eventSource.close();
+            _eventSource = null;
+          }
+          startPolling(linkId);
+        }, 10000); // 10 second timeout
+        
         _eventSource = new EventSource(sseUrl);
         
         _eventSource.onopen = () => {
+          clearTimeout(sseTimeout);
           addLog('SSE connection opened successfully', 'success');
         };
         
         _eventSource.onerror = (event) => {
+          clearTimeout(sseTimeout);
           addLog(`SSE connection failed: ${JSON.stringify(event)}`, 'error');
           addLog('SSE connection failed, falling back to polling...', 'warning');
           _eventSource.close();
@@ -745,16 +851,20 @@ import * as Passkeys from '/src/passkeys.js';
           try {
             const data = JSON.parse(event.data);
             addLog(`Parsed SSE status data: ${JSON.stringify(data)}`, 'info');
-            updateLinkStatus(data);
             
-            if ((data.status === 'linked' && data.applied) || data.status === 'expired') {
-              stopLinkMonitoring();
-              if (data.status === 'linked') {
-                setButtonSuccess('linkBtn', 'Linked!');
-                addLog('Cross-device linking completed successfully!', 'success');
-              } else {
-                setButtonError('linkBtn', 'Expired');
-                addLog('Cross-device linking expired', 'warning');
+            // Handle status updates
+            if (data.type === 'status') {
+              updateLinkStatus(data);
+              
+              if ((data.status === 'linked' && data.applied) || data.status === 'expired') {
+                stopLinkMonitoring();
+                if (data.status === 'linked') {
+                  setButtonSuccess('linkBtn', 'Linked!');
+                  addLog('Cross-device linking completed successfully!', 'success');
+                } else {
+                  setButtonError('linkBtn', 'Expired');
+                  addLog('Cross-device linking expired', 'warning');
+                }
               }
             }
           } catch (e) {
@@ -780,22 +890,41 @@ import * as Passkeys from '/src/passkeys.js';
   async function startPolling(linkId) {
     addLog('Starting polling for link status...', 'info');
     _pollAbort.on = true;
+    let consecutiveFailures = 0;
+    const maxFailures = 3;
+    
     try {
       while (_pollAbort.on && _currentLinkId === linkId) {
         await new Promise(r => setTimeout(r, 2000));
         try {
           addLog(`Polling link status for: ${linkId}`, 'info');
+          
+          // Add timeout for corporate environments
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+          
           const response = await fetch(`/link/status/${encodeURIComponent(linkId)}`, { 
             method: 'GET',
-            credentials: 'include'
+            credentials: 'include',
+            signal: controller.signal
           });
+          
+          clearTimeout(timeoutId);
           
           if (!response.ok) {
             const errorText = await response.text();
             addLog(`Poll failed: ${response.status} - ${errorText}`, 'error');
+            consecutiveFailures++;
+            
+            if (consecutiveFailures >= maxFailures) {
+              addLog(`Too many consecutive failures (${consecutiveFailures}), stopping polling`, 'error');
+              stopLinkMonitoring();
+              return;
+            }
             continue;
           }
           
+          consecutiveFailures = 0; // Reset on success
           const j = await response.json();
           addLog(`Poll response: ${JSON.stringify(j)}`, 'info');
           updateLinkStatus(j);
@@ -812,9 +941,19 @@ import * as Passkeys from '/src/passkeys.js';
             return;
           }
         } catch (e) {
+          consecutiveFailures++;
           addLog(`Link status check failed: ${e.message}`, 'error');
           addLog(`Error details: ${JSON.stringify(e)}`, 'error');
-          stopLinkMonitoring();
+          
+          if (e.name === 'AbortError') {
+            addLog('Poll request timed out (corporate VDI environment)', 'warning');
+          }
+          
+          if (consecutiveFailures >= maxFailures) {
+            addLog(`Too many consecutive failures (${consecutiveFailures}), stopping polling`, 'error');
+            stopLinkMonitoring();
+            return;
+          }
         }
       }
     } finally {
@@ -828,6 +967,11 @@ import * as Passkeys from '/src/passkeys.js';
     if (_eventSource) {
       _eventSource.close();
       _eventSource = null;
+    }
+    
+    if (_websocket) {
+      _websocket.close();
+      _websocket = null;
     }
     
     if (_currentLinkId) {
