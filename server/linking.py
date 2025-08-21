@@ -302,13 +302,52 @@ def get_router(
             # Keep connection alive and handle incoming messages
             while True:
                 try:
-                    # Wait for any message (ping/pong or close)
+                    # Wait for any message (ping/pong, signature, or close)
                     data = await websocket.receive_text()
                     log.info("WebSocket - received message: %s", data)
                     
                     # Handle ping/pong
                     if data == "ping":
                         await websocket.send_text("pong")
+                        continue
+                    
+                    # Handle JSON messages
+                    try:
+                        message = json.loads(data)
+                        
+                        # Handle signature sharing
+                        if message.get("type") == "signature":
+                            signature_data = message.get("data", {})
+                            log.info("WebSocket - signature data: %s", signature_data)
+                            
+                            # Broadcast signature data to all connected WebSockets for this link
+                            signature_message = {
+                                "type": "signature",
+                                "data": signature_data
+                            }
+                            
+                            with _WEBSOCKET_LOCK:
+                                connections = list(_WEBSOCKET_CONNECTIONS.get(link_id, []))
+                            
+                            for conn in connections:
+                                if conn != websocket:  # Don't send back to sender
+                                    try:
+                                        await conn.send_text(json.dumps(signature_message))
+                                    except Exception as e:
+                                        log.warning("Failed to send signature to WebSocket: %s", e)
+                                        # Remove failed connection
+                                        with _WEBSOCKET_LOCK:
+                                            if link_id in _WEBSOCKET_CONNECTIONS:
+                                                try:
+                                                    _WEBSOCKET_CONNECTIONS[link_id].remove(conn)
+                                                except ValueError:
+                                                    pass
+                            
+                            continue
+                            
+                    except json.JSONDecodeError:
+                        # Not JSON, might be ping/pong or other text
+                        pass
                     
                 except WebSocketDisconnect:
                     log.info("WebSocket - client disconnected")

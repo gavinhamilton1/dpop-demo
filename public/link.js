@@ -1,12 +1,16 @@
 // public/link.js
 import * as Stronghold from '/src/stronghold.js';
 import * as Passkeys   from '/src/passkeys.js';
+import { SignatureShare } from '/src/signature-share.js';
 
 const outEl = document.getElementById('out');
 const log = (m, o) => {
   if (!outEl) return console.log(m, o ?? '');
   outEl.textContent += m + (o ? ' ' + JSON.stringify(o, null, 2) : '') + '\n';
 };
+
+// Global signature share instance
+let signatureShare = null;
 
 // Polyfill randomUUID for odd webviews
 if (typeof crypto !== 'undefined' && !crypto.randomUUID && crypto.getRandomValues) {
@@ -36,7 +40,7 @@ async function preflightAuthOptions() {
   // Always normalize allowCredentials to an array
   const allow = Array.isArray(opts.allowCredentials) ? opts.allowCredentials : [];
 
-  // Be robust: if server didn’t include _meta, synthesize it here
+  // Be robust: if server didn't include _meta, synthesize it here
   const meta = opts._meta ?? {
     hasCredentials: allow.length > 0,
     registeredCount: allow.length,
@@ -44,6 +48,28 @@ async function preflightAuthOptions() {
   };
 
   return { opts, allow, meta };
+}
+
+// Initialize signature sharing after successful linking
+function initSignatureSharing(linkId) {
+  log('Initializing signature sharing...', 'info');
+  
+  try {
+    // Clean up any existing signature share
+    if (signatureShare) {
+      signatureShare.destroy();
+    }
+    
+    // Initialize signature sharing for mobile device
+    signatureShare = new SignatureShare();
+    signatureShare.initMobile(linkId);
+    
+    log('Signature sharing initialized successfully!', 'success');
+    log('You can now scribble on the canvas and it will appear on the desktop device in real-time.', 'info');
+    
+  } catch (error) {
+    log(`Failed to initialize signature sharing: ${error.message}`, 'error');
+  }
 }
 
 (async () => {
@@ -75,7 +101,7 @@ async function preflightAuthOptions() {
       hasCreds = !!meta.hasCredentials; // safe even if _meta missing on server
       log('[link] preflight', { allowCount: allow.length, meta });
     } catch (e) {
-      // If preflight itself failed (network/DPoP/nonce), we’ll fall back to trying auth
+      // If preflight itself failed (network/DPoP/nonce), we'll fall back to trying auth
       log('[link] preflight failed; will continue', { message: e.message || String(e) });
     }
 
@@ -98,6 +124,11 @@ async function preflightAuthOptions() {
       body: { link_id }
     });
     log('Linked ✓');
+    
+    // 6) Initialize signature sharing after successful linking
+    log('Starting signature sharing feature...', 'info');
+    initSignatureSharing(link_id);
+    
   } catch (e) {
     log('Error', { message: e.message || String(e) });
   }

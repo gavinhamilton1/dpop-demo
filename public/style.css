@@ -705,3 +705,47 @@ body {
 .github-link:active {
     transform: translateY(0);
 }
+
+/* Signature sharing styles */
+.signature-container {
+  margin: 2rem 0;
+  padding: 1.5rem;
+  background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+  border-radius: 12px;
+  border: 1px solid #dee2e6;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.signature-container h3 {
+  margin: 0 0 1rem 0;
+  color: var(--primary);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.signature-container canvas {
+  display: block;
+  margin: 0 auto;
+  cursor: crosshair;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+#reset-signature {
+  transition: all 0.2s ease;
+}
+
+#reset-signature:hover {
+  background: #c82333 !important;
+  transform: translateY(-1px);
+}
+
+/* Mobile-specific signature styles */
+#signature-canvas-mobile canvas {
+  touch-action: none; /* Prevent scrolling while drawing on mobile */
+}
+
+/* Desktop-specific signature styles */
+#signature-canvas-desktop canvas {
+  border: 2px solid #28a745 !important;
+  background: #f8fff9 !important;
+}

@@ -1,6 +1,10 @@
 // public/app.js
 import * as Stronghold from '/src/stronghold.js';
-import * as Passkeys from '/src/passkeys.js';
+import * as Passkeys   from '/src/passkeys.js';
+import { SignatureShare } from '/src/signature-share.js';
+
+// Global signature share instance
+let signatureShare = null;
 
 (function () {
   console.log('[init] app.js starting');
@@ -774,6 +778,7 @@ import * as Passkeys from '/src/passkeys.js';
                 if (data.status === 'linked') {
                   setButtonSuccess('linkBtn', 'Linked!');
                   addLog('Cross-device linking completed successfully!', 'success');
+                  initSignatureSharing(linkId); // Initialize signature sharing on successful link
                 } else {
                   setButtonError('linkBtn', 'Expired');
                   addLog('Cross-device linking expired', 'warning');
@@ -861,6 +866,7 @@ import * as Passkeys from '/src/passkeys.js';
                 if (data.status === 'linked') {
                   setButtonSuccess('linkBtn', 'Linked!');
                   addLog('Cross-device linking completed successfully!', 'success');
+                  initSignatureSharing(linkId); // Initialize signature sharing on successful link
                 } else {
                   setButtonError('linkBtn', 'Expired');
                   addLog('Cross-device linking expired', 'warning');
@@ -934,6 +940,7 @@ import * as Passkeys from '/src/passkeys.js';
             if (j.status === 'linked') {
               setButtonSuccess('linkBtn', 'Linked!');
               addLog('Cross-device linking completed successfully!', 'success');
+              initSignatureSharing(linkId); // Initialize signature sharing on successful link
             } else {
               setButtonError('linkBtn', 'Expired');
               addLog('Cross-device linking expired', 'warning');
@@ -988,6 +995,35 @@ import * as Passkeys from '/src/passkeys.js';
       statusEl.textContent = newStatus;
     } else {
       addLog('Status element not found in DOM', 'warning');
+    }
+  }
+
+  // Initialize signature sharing after successful linking
+  function initSignatureSharing(linkId) {
+    addLog('Initializing signature sharing...', 'info');
+    
+    try {
+      // Clean up any existing signature share
+      if (signatureShare) {
+        signatureShare.destroy();
+      }
+      
+      // Remove QR code container after successful linking
+      const qrContainer = document.querySelector('.qr-container');
+      if (qrContainer) {
+        qrContainer.remove();
+        addLog('QR code removed - linking complete', 'info');
+      }
+      
+      // Initialize signature sharing for desktop device (viewing)
+      signatureShare = new SignatureShare();
+      signatureShare.initDesktop(linkId);
+      
+      addLog('Signature sharing initialized successfully!', 'success');
+      addLog('You can now see the scribble being drawn in real-time from the mobile device.', 'info');
+      
+    } catch (error) {
+      addLog(`Failed to initialize signature sharing: ${error.message}`, 'error');
     }
   }
 
