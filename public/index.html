@@ -1,49 +1,157 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Stronghold Session Binding Demo</title>
-  <link rel="stylesheet" href="/public/style.css"/>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔐 Device Identity & DPoP Security Demo</title>
+    <link rel="stylesheet" href="/public/style.css">
+
 </head>
 <body>
-  <h1>Stronghold Session Binding Demo</h1>
-  <div class="row">
-    <button id="btn-flush">Server Flush</button>
-    <button id="btn-client-flush">Client Flush</button>
-  </div>
-  <div class="row">
-    <button id="btn-sw-register">Register Service Worker</button>
-    <button id="btn-sw-unregister">Unregister Service Worker</button>
-    <button id="btn-echo-sw">Test SW Session (Echo) (signed)</button>
-  </div>
-  <div class="row">
-  <span id="sw-state"></span>
-    <button id="btn-init">1) Init Session</button>
-    <button id="btn-bik">2) Register BIK</button>
-    <button id="btn-bind">3) Bind DPoP</button>
-    <button id="btn-echo-direct">Test session (Echo) (signed)</button>
-  </div>
-  <div class="row">
-    <button id="btn-passkey-check">Passkey: Check Support</button>
-    <button id="btn-passkey-register">Passkey: Create & Register</button>
-    <button id="btn-passkey-login">Passkey: Authenticate</button>
-  </div>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 Device Identity & DPoP Security</h1>
+            <p>A comprehensive reference implementation demonstrating device identity management using non-exportable WebCrypto keys and DPoP (Demonstration of Proof-of-Possession) tokens for advanced cryptographic security.</p>
+        </div>
+
+        <div class="demo-section fade-in">
+            <h2>🚀 Key Features</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h4>🔐 Device Identity & Browser-Bound Keys</h4>
+                    <p>Browser-bound cryptographic identity using WebCrypto API. Keys are non-exportable and persist across browser sessions, but remain within the secure browser context. Not hardware-backed like HSM keys, but provides device authentication within browser security model.</p>
+                </div>
+                <div class="feature-card">
+                    <h4>🛡️ Identity Continuity & ATO Protection</h4>
+                    <p>DPoP tokens with client and server signing for two-way verification, providing identity continuity and limiting account takeover attack vectors through cryptographic request binding.</p>
+                </div>
+                <div class="feature-card">
+                    <h4>📱 Cross-Device Security & VDI Support</h4>
+                    <p>Corporate VDI authentication and step-up security using QR codes. Enables authentication in virtual desktop environments where WebAuthn/Passkeys are unavailable.</p>
+                </div>
+                <div class="feature-card">
+                    <h4>⚡ Advanced Web Security</h4>
+                    <p>Service worker request interception, secure headers, CSRF protection, and comprehensive input validation for enterprise-grade security.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="demo-section fade-in">
+            <h2>🎮 Interactive Demo</h2>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
+                Follow the execution story below to experience the complete device identity and cryptographic security workflow:
+            </p>
+            
+            <div class="demo-sequence">
+                <div class="sequence-step">
+                    <div class="step-number">1</div>
+                    <button id="initBtn" class="btn btn-primary">
+                        🔄 Initialize Session
+                    </button>
+                </div>
+                <div class="sequence-step">
+                    <div class="step-number">2</div>
+                    <button id="bikBtn" class="btn btn-primary" disabled>
+                        🔑 Register Browser Identity
+                    </button>
+                </div>
+                <div class="sequence-step">
+                    <div class="step-number">3</div>
+                    <button id="dpopBtn" class="btn btn-primary" disabled>
+                        🛡️ Bind DPoP Token
+                    </button>
+                </div>
+                <div class="sequence-step">
+                    <div class="step-number">4</div>
+                    <button id="apiBtn" class="btn btn-primary" disabled>
+                        🌐 Test API Access
+                    </button>
+                </div>
+                <div class="sequence-step">
+                    <div class="step-number">5</div>
+                    <button id="regBtn" class="btn btn-secondary" disabled>
+                        📝 Register Device Identity
+                    </button>
+                </div>
+                <div class="sequence-step">
+                    <div class="step-number">6</div>
+                    <button id="authBtn" class="btn btn-secondary" disabled>
+                        🔐 Authenticate Device Identity
+                    </button>
+                </div>
+                <div class="sequence-step">
+                    <div class="step-number">7</div>
+                    <button id="linkBtn" class="btn btn-accent" disabled>
+                        📱 Start Cross-Device Link (VDI/Step-up)
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="demo-section fade-in">
+            <h2>🔧 Admin & Testing</h2>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
+                Administrative functions and service worker testing:
+            </p>
+            
+            <div class="button-grid">
+                <button id="flushBtn" class="btn btn-secondary">
+                    🗑️ Server Flush
+                </button>
+                <button id="clientFlushBtn" class="btn btn-secondary">
+                    🧹 Client Flush
+                </button>
+                <button id="swRegBtn" class="btn btn-secondary">
+                    📝 Register Service Worker
+                </button>
+                <button id="swUnregBtn" class="btn btn-secondary">
+                    ❌ Unregister Service Worker
+                </button>
+                <button id="echoSWBtn" class="btn btn-secondary">
+                    🌐 Test SW Echo
+                </button>
+            </div>
+        </div>
 
 
-  <script src="/public/qrcode.min.js"></script> 
-<button id="btn-link-start">Browser/Mobile Session Link</button>
 
-<div id="link-area" style="display:none; gap:12px; align-items:center;">
-  <div id="link-qr"></div>
-  <div>
-    <div><strong>Scan with your phone:</strong></div>
-    <code id="link-url"></code>
-    <div>Status: <span id="link-status">pending</span></div>
-  </div>
-</div>
+        <div class="demo-section fade-in">
+            <h2>📝 Activity Log</h2>
+            <div class="log-section" id="logContainer">
+                <div class="log-entry info">[INFO] Demo page loaded. Ready to start the browser identity journey!</div>
+            </div>
+        </div>
 
-<pre id="out"></pre>
-  <script type="module" src="/public/app.js?v=1"></script>
+        <div class="demo-section fade-in">
+            <h2>🛡️ Security Features</h2>
+            <div class="tech-stack">
+                <span class="tech-tag">Non-exportable Keys</span>
+                <span class="tech-tag">Device Identity Binding</span>
+                <span class="tech-tag">DPoP Token Binding</span>
+                <span class="tech-tag">Two-Way Verification</span>
+                <span class="tech-tag">Replay Attack Prevention</span>
+                <span class="tech-tag">Man-in-the-Middle Protection</span>
+                <span class="tech-tag">Identity Continuity</span>
+                <span class="tech-tag">ATO Protection</span>
+                <span class="tech-tag">Cross-Device Security</span>
+                <span class="tech-tag">VDI Authentication</span>
+                <span class="tech-tag">Step-up Authentication</span>
+                <span class="tech-tag">CSRF Protection</span>
+                <span class="tech-tag">Secure Request Signing</span>
+            </div>
+        </div>
+
+        <div class="footer fade-in">
+            <div class="footer-content">
+                <p>🔗 <strong>Reference Implementation</strong> - View the complete source code and documentation:</p>
+                <a href="https://github.com/gavinhamilton1/dpop-demo" target="_blank" rel="noopener noreferrer" class="github-link">
+                    📂 GitHub Repository
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script src="/public/qrcode.min.js"></script>
+    <script type="module" src="/public/app.js?v=1"></script>
 </body>
 </html>
