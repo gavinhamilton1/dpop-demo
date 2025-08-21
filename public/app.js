@@ -732,28 +732,6 @@ import * as Passkeys from '/src/passkeys.js';
           addLog('SSE connection opened successfully', 'success');
         };
         
-        _eventSource.onmessage = (event) => {
-          addLog(`SSE message received: ${event.data}`, 'info');
-          try {
-            const data = JSON.parse(event.data);
-            addLog(`Parsed SSE data: ${JSON.stringify(data)}`, 'info');
-            updateLinkStatus(data);
-            
-            if ((data.status === 'linked' && data.applied) || data.status === 'expired') {
-              stopLinkMonitoring();
-              if (data.status === 'linked') {
-                setButtonSuccess('linkBtn', 'Linked!');
-                addLog('Cross-device linking completed successfully!', 'success');
-              } else {
-                setButtonError('linkBtn', 'Expired');
-                addLog('Cross-device linking expired', 'warning');
-              }
-            }
-          } catch (e) {
-            addLog(`Failed to parse SSE data: ${e.message}`, 'error');
-          }
-        };
-        
         _eventSource.onerror = (event) => {
           addLog(`SSE connection failed: ${JSON.stringify(event)}`, 'error');
           addLog('SSE connection failed, falling back to polling...', 'warning');
@@ -783,6 +761,11 @@ import * as Passkeys from '/src/passkeys.js';
             addLog(`Failed to parse SSE status event: ${e.message}`, 'error');
           }
         });
+        
+        // Fallback for any untyped events
+        _eventSource.onmessage = (event) => {
+          addLog(`SSE untyped message received: ${event.data}`, 'warning');
+        };
         
         return; // SSE started successfully
       } catch (e) {
