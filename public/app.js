@@ -130,6 +130,12 @@ import * as Passkeys from '/src/passkeys.js';
   const dpopBtn = document.getElementById('dpopBtn');
   if (dpopBtn) {
     dpopBtn.onclick = async () => {
+      // Prevent re-clicking if already successful
+      if (dpopBtn.classList.contains('success')) {
+        addLog('DPoP token already bound - no action needed', 'info');
+        return;
+      }
+      
       try {
         setButtonLoading('dpopBtn', 'Binding...');
         addLog('Binding DPoP token...', 'info');
@@ -170,6 +176,7 @@ import * as Passkeys from '/src/passkeys.js';
   const sendApiRequest = document.getElementById('sendApiRequest');
   const apiMessage = document.getElementById('apiMessage');
   const apiResponse = document.getElementById('apiResponse');
+  const clientRequest = document.getElementById('clientRequest');
 
   if (apiBtn) {
     apiBtn.onclick = () => {
@@ -177,6 +184,8 @@ import * as Passkeys from '/src/passkeys.js';
       apiModal.style.display = 'block';
       apiResponse.innerHTML = '<em>Click "Send Request" to test the API...</em>';
       apiResponse.className = 'response-box';
+      clientRequest.innerHTML = '<em>Request details will appear here...</em>';
+      clientRequest.className = 'response-box';
     };
   }
 
@@ -217,10 +226,15 @@ import * as Passkeys from '/src/passkeys.js';
         sendApiRequest.textContent = 'Sending...';
         apiResponse.innerHTML = 'Sending request...';
         apiResponse.className = 'response-box';
+        clientRequest.innerHTML = 'Preparing request...';
+        clientRequest.className = 'response-box';
         
         addLog('Testing API access with DPoP token...', 'info');
         
         const message = apiMessage.value.trim() || 'Hello from Browser Identity & DPoP Security Demo!';
+        
+        // Capture request details before making the request
+        const requestDetails = await captureRequestDetails(message);
         
         const j = await Stronghold.strongholdFetch('/api/echo', { 
           method: 'POST', 
@@ -230,6 +244,10 @@ import * as Passkeys from '/src/passkeys.js';
             demo: 'DPoP-protected API call'
           } 
         });
+        
+        // Display request details
+        clientRequest.innerHTML = JSON.stringify(requestDetails, null, 2);
+        clientRequest.className = 'response-box info';
         
         // Display response in modal
         apiResponse.innerHTML = JSON.stringify(j, null, 2);
@@ -244,6 +262,8 @@ import * as Passkeys from '/src/passkeys.js';
         // Display error in modal
         apiResponse.innerHTML = `Error: ${e.message}`;
         apiResponse.className = 'response-box error';
+        clientRequest.innerHTML = 'Request details unavailable due to error';
+        clientRequest.className = 'response-box error';
         
         setButtonError('apiBtn', 'Failed');
         addLog(`API access failed: ${e.message}`, 'error');
@@ -252,6 +272,66 @@ import * as Passkeys from '/src/passkeys.js';
         sendApiRequest.textContent = 'Send Request';
       }
     };
+  }
+
+  // Function to capture request details including DPoP
+  async function captureRequestDetails(message) {
+    try {
+                      // Get current DPoP state
+                const dpopNonce = await Stronghold.getDpopNonce();
+                const bindToken = await Stronghold.getBindToken();
+                
+                // Get browser identity key info (without exposing private key)
+                const bik = await Stronghold.getBIK();
+                
+                // Ensure nonce is a string or undefined
+                const nonceValue = typeof dpopNonce === 'string' ? dpopNonce : undefined;
+                
+                // Create the actual DPoP proof that will be used
+                const dpopProof = await Stronghold.createDpopProof({
+                  url: window.location.origin + '/api/echo',
+                  method: 'POST',
+                  nonce: nonceValue,
+                  privateKey: bik.privateKey,
+                  publicJwk: bik.publicJwk
+                });
+      
+      return {
+        timestamp: new Date().toISOString(),
+        url: '/api/echo',
+        method: 'POST',
+        requestBody: {
+          message: message,
+          timestamp: new Date().toISOString(),
+          demo: 'DPoP-protected API call'
+        },
+        headers: {
+          'Content-Type': 'application/json',
+          'DPoP': dpopProof,
+          'DPoP-Bind': bindToken || 'Not bound'
+        },
+        dpopDetails: {
+          nonce: dpopNonce || 'Not set',
+          proofStructure: {
+            header: dpopProof.split('.')[0],
+            payload: dpopProof.split('.')[1],
+            signature: dpopProof.split('.')[2] ? `${dpopProof.split('.')[2].substring(0, 20)}...` : 'None'
+          },
+          browserIdentityKey: {
+            kid: bik?.publicJwk?.kid || 'Not available',
+            kty: bik?.publicJwk?.kty || 'Not available',
+            crv: bik?.publicJwk?.crv || 'Not available',
+            publicKeyThumbprint: bik?.publicJwk ? await Stronghold.jwkThumbprint(bik.publicJwk) : 'Not available'
+          }
+        }
+      };
+    } catch (error) {
+      return {
+        error: 'Failed to capture request details',
+        details: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
   }
 
   // 5. Register Passkey

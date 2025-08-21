@@ -7,7 +7,7 @@ import { coreLogger } from './utils/logging.js';
 import { AuthenticationError, NetworkError, StorageError } from './utils/errors.js';
 import { CONFIG } from './utils/config.js';
 
-export { createJwsES256, idbWipe };
+export { createJwsES256, idbWipe, jwkThumbprint, createDpopProof };
 
 let CSRF = null;
 let REG_NONCE = null;
@@ -345,6 +345,27 @@ async function resumeViaPage() {
     return false;
   }
 }
+
+// Helper functions for DPoP information capture
+export async function getDpopNonce() {
+  return await get(CONFIG.STORAGE.KEYS.DPOP_NONCE);
+}
+
+export async function getBindToken() {
+  return await get(CONFIG.STORAGE.KEYS.BIND);
+}
+
+export async function getBIK() {
+  try {
+    return await idbGet(STORES.KEYS, CONFIG.STORAGE.KEYS.BIK_CURRENT);
+  } catch {
+    return null;
+  }
+}
+
+
+
+
 
 export async function clientFlush({ unregisterSW = false } = {}) {
   try {

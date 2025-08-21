@@ -100,10 +100,18 @@
                             <label for="apiMessage">Message to send to server:</label>
                             <textarea id="apiMessage" class="form-control" rows="3" placeholder="Enter your message here...">Hello from Browser Identity & DPoP Security Demo!</textarea>
                         </div>
-                        <div class="form-group">
-                            <label>Server Response:</label>
-                            <div id="apiResponse" class="response-box">
-                                <em>Click "Send Request" to test the API...</em>
+                        <div class="request-response-grid">
+                            <div class="form-group">
+                                <label>📤 Client Request (with DPoP):</label>
+                                <div id="clientRequest" class="response-box">
+                                    <em>Request details will appear here...</em>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>📥 Server Response:</label>
+                                <div id="apiResponse" class="response-box">
+                                    <em>Click "Send Request" to test the API...</em>
+                                </div>
                             </div>
                         </div>
                     </div>

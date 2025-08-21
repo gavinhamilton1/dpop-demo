@@ -574,6 +574,29 @@ body {
     background: rgba(239, 68, 68, 0.05);
 }
 
+.response-box.info {
+    border-color: var(--primary);
+    background: rgba(99, 102, 241, 0.05);
+}
+
+.request-response-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.request-response-grid .form-group {
+    margin-bottom: 0;
+}
+
+@media (max-width: 768px) {
+    .request-response-grid {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+}
+
 .modal-footer {
     display: flex;
     justify-content: flex-end;
