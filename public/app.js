@@ -23,7 +23,18 @@ import * as Passkeys from '/src/passkeys.js';
     if (btn) {
       btn.disabled = false;
       btn.classList.remove('loading');
-      btn.innerHTML = btn.getAttribute('data-original-text') || btn.innerHTML;
+      btn.classList.remove('disabled');
+      
+      // Restore original text for passkey buttons
+      if (id === 'regBtn') {
+        btn.innerHTML = '📝 Register Passkey';
+        btn.title = '';
+      } else if (id === 'authBtn') {
+        btn.innerHTML = '🔐 Authenticate Passkey';
+        btn.title = '';
+      } else {
+        btn.innerHTML = btn.getAttribute('data-original-text') || btn.innerHTML;
+      }
     }
   };
 
@@ -79,6 +90,50 @@ import * as Passkeys from '/src/passkeys.js';
   // Initialize all buttons as disabled except the first one
   const buttons = ['bikBtn', 'dpopBtn', 'apiBtn', 'regBtn', 'authBtn', 'linkBtn'];
   buttons.forEach(disableButton);
+
+  // Passkey support detection
+  let passkeySupport = { hasAPI: false, uvp: false };
+
+  // Function to check passkey support and update UI
+  const checkPasskeySupport = async () => {
+    try {
+      addLog('Checking passkey support...', 'info');
+      passkeySupport = await Passkeys.checkSupport();
+      
+      if (!passkeySupport.hasAPI) {
+        addLog('WebAuthn API not supported - passkeys disabled', 'warning');
+        disablePasskeyButtons('WebAuthn API not supported');
+      } else if (!passkeySupport.uvp) {
+        addLog('User-verifying platform authenticator not available - passkeys disabled', 'warning');
+        disablePasskeyButtons('No biometric/security key available');
+      } else {
+        addLog('Passkey support confirmed - biometric/security key available', 'success');
+      }
+    } catch (error) {
+      addLog(`Passkey support check failed: ${error.message}`, 'error');
+      disablePasskeyButtons('Support check failed');
+    }
+  };
+
+  // Function to disable passkey buttons with reason
+  const disablePasskeyButtons = (reason) => {
+    const regBtn = document.getElementById('regBtn');
+    const authBtn = document.getElementById('authBtn');
+    
+    if (regBtn) {
+      regBtn.disabled = true;
+      regBtn.title = `Disabled: ${reason}`;
+      regBtn.classList.add('disabled');
+      regBtn.innerHTML = `📝 Register Passkey <span class="disabled-reason">(${reason})</span>`;
+    }
+    
+    if (authBtn) {
+      authBtn.disabled = true;
+      authBtn.title = `Disabled: ${reason}`;
+      authBtn.classList.add('disabled');
+      authBtn.innerHTML = `🔐 Authenticate Passkey <span class="disabled-reason">(${reason})</span>`;
+    }
+  };
 
   // ---------- Button Handlers ----------
   
@@ -145,9 +200,13 @@ import * as Passkeys from '/src/passkeys.js';
         setButtonSuccess('dpopBtn', 'Bound!');
         addLog('DPoP token bound successfully', 'success');
         enableButton('apiBtn');
-        enableButton('regBtn');
-        enableButton('authBtn');
         enableButton('linkBtn');
+        
+        // Only enable passkey buttons if supported
+        if (passkeySupport.hasAPI && passkeySupport.uvp) {
+          enableButton('regBtn');
+          enableButton('authBtn');
+        }
         
         // Update service worker if available
         if (navigator.serviceWorker?.controller) {
@@ -338,6 +397,12 @@ import * as Passkeys from '/src/passkeys.js';
   const regBtn = document.getElementById('regBtn');
   if (regBtn) {
     regBtn.onclick = async () => {
+      // Check passkey support first
+      if (!passkeySupport.hasAPI || !passkeySupport.uvp) {
+        addLog('Passkey registration attempted but not supported on this device', 'warning');
+        return;
+      }
+
       try {
         setButtonLoading('regBtn', 'Creating...');
         addLog('Starting passkey registration...', 'info');
@@ -375,6 +440,12 @@ import * as Passkeys from '/src/passkeys.js';
   const authBtn = document.getElementById('authBtn');
   if (authBtn) {
     authBtn.onclick = async () => {
+      // Check passkey support first
+      if (!passkeySupport.hasAPI || !passkeySupport.uvp) {
+        addLog('Passkey authentication attempted but not supported on this device', 'warning');
+        return;
+      }
+
       try {
         setButtonLoading('authBtn', 'Verifying...');
         addLog('Starting passkey authentication...', 'info');
@@ -768,15 +839,22 @@ import * as Passkeys from '/src/passkeys.js';
       const qrContainer = document.querySelector('.qr-container');
       if (qrContainer) qrContainer.remove();
       
+      // Check passkey support first
+      await checkPasskeySupport();
+      
       const bind = (await Stronghold.get('bind'))?.value || null;
       if (bind) {
         addLog('Existing session found - ready to continue', 'info');
         enableButton('bikBtn');
         enableButton('dpopBtn');
         enableButton('apiBtn');
-        enableButton('regBtn');
-        enableButton('authBtn');
         enableButton('linkBtn');
+        
+        // Only enable passkey buttons if supported
+        if (passkeySupport.hasAPI && passkeySupport.uvp) {
+          enableButton('regBtn');
+          enableButton('authBtn');
+        }
       } else {
         addLog('No existing session - start with initialization', 'info');
       }
