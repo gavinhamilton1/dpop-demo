@@ -164,29 +164,92 @@ import * as Passkeys from '/src/passkeys.js';
 
   // 4. Test API Access
   const apiBtn = document.getElementById('apiBtn');
+  const apiModal = document.getElementById('apiModal');
+  const closeApiModal = document.getElementById('closeApiModal');
+  const cancelApiRequest = document.getElementById('cancelApiRequest');
+  const sendApiRequest = document.getElementById('sendApiRequest');
+  const apiMessage = document.getElementById('apiMessage');
+  const apiResponse = document.getElementById('apiResponse');
+
   if (apiBtn) {
-    apiBtn.onclick = async () => {
+    apiBtn.onclick = () => {
+      // Show modal
+      apiModal.style.display = 'block';
+      apiResponse.innerHTML = '<em>Click "Send Request" to test the API...</em>';
+      apiResponse.className = 'response-box';
+    };
+  }
+
+  // Close modal handlers
+  if (closeApiModal) {
+    closeApiModal.onclick = () => {
+      apiModal.style.display = 'none';
+    };
+  }
+
+  if (cancelApiRequest) {
+    cancelApiRequest.onclick = () => {
+      apiModal.style.display = 'none';
+    };
+  }
+
+  // Close modal when clicking outside
+  if (apiModal) {
+    apiModal.onclick = (e) => {
+      if (e.target === apiModal) {
+        apiModal.style.display = 'none';
+      }
+    };
+  }
+
+  // Close modal with Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && apiModal.style.display === 'block') {
+      apiModal.style.display = 'none';
+    }
+  });
+
+  // Send API request
+  if (sendApiRequest) {
+    sendApiRequest.onclick = async () => {
       try {
-        setButtonLoading('apiBtn', 'Testing...');
+        sendApiRequest.disabled = true;
+        sendApiRequest.textContent = 'Sending...';
+        apiResponse.innerHTML = 'Sending request...';
+        apiResponse.className = 'response-box';
+        
         addLog('Testing API access with DPoP token...', 'info');
+        
+        const message = apiMessage.value.trim() || 'Hello from Device Identity & DPoP Security Demo!';
         
         const j = await Stronghold.strongholdFetch('/api/echo', { 
           method: 'POST', 
           body: { 
-            message: 'Hello from Stronghold!',
+            message: message,
             timestamp: new Date().toISOString(),
             demo: 'DPoP-protected API call'
           } 
         });
         
+        // Display response in modal
+        apiResponse.innerHTML = JSON.stringify(j, null, 2);
+        apiResponse.className = 'response-box success';
+        
         setButtonSuccess('apiBtn', 'Working!');
         addLog('API access successful - DPoP token working!', 'success');
         addLog(`Response: ${JSON.stringify(j, null, 2)}`, 'info');
-        
         addLog('DPoP cryptographic binding verified', 'success');
+        
       } catch (e) {
+        // Display error in modal
+        apiResponse.innerHTML = `Error: ${e.message}`;
+        apiResponse.className = 'response-box error';
+        
         setButtonError('apiBtn', 'Failed');
         addLog(`API access failed: ${e.message}`, 'error');
+      } finally {
+        sendApiRequest.disabled = false;
+        sendApiRequest.textContent = 'Send Request';
       }
     };
   }
