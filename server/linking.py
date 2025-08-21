@@ -37,11 +37,12 @@ _WATCHERS_LOCK = threading.RLock()
 def _notify_watchers(link_id: str, event: Dict[str, Any]):
     with _WATCHERS_LOCK:
         qs = list(_WATCHERS.get(link_id, []))
+    log.info("Notifying %d watchers for link %s with event: %s", len(qs), link_id, event)
     for q in qs:
         try:
             q.put_nowait(event)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Failed to notify watcher: %s", e)
 
 def _put_link(link_id: str, rec: Dict[str, Any]):
     with _LINKS_LOCK:
@@ -119,23 +120,30 @@ def get_router(
         """Desktop polls; when 'linked', we patch desktop session if not already applied."""
         sid = req.session.get("sid"); s = await store.get_session(sid) if sid else None
         if not sid or not s:
+            log.warning("Link status - no session found for sid=%s", sid)
             raise HTTPException(status_code=401, detail="no session")
+
+        log.info("Link status check - link_id=%s sid=%s", link_id, sid)
 
         need_apply = False
         principal: Optional[str] = None
         with _LINKS_LOCK:
             rec = _LINKS.get(link_id)
             if not rec:
+                log.error("Link status - link not found: %s", link_id)
                 raise HTTPException(status_code=404, detail="no such link")
             if rec["desktop_sid"] != sid:
+                log.warning("Link status - wrong session: expected %s, got %s", rec["desktop_sid"], sid)
                 raise HTTPException(status_code=403, detail="not your link")
             # expiry
             now_ts = now_fn()
             if now_ts > rec["exp"] and rec["status"] != "linked":
                 rec["status"] = "expired"
+                log.info("Link status - link expired: %s", link_id)
             if rec["status"] == "linked" and not rec.get("applied") and rec.get("principal"):
                 need_apply = True
                 principal = rec["principal"]
+                log.info("Link status - need to apply principal: %s", principal)
 
         if need_apply and principal:
             try:
@@ -146,12 +154,17 @@ def get_router(
                 with _LINKS_LOCK:
                     if link_id in _LINKS:
                         _LINKS[link_id]["applied"] = True
+                log.info("Link status - desktop session updated successfully")
+            except Exception as e:
+                log.error("Link status - failed to update desktop session: %s", e)
             finally:
                 _notify_watchers(link_id, {"type":"status", **_public_view(_LINKS[link_id])})
 
         with _LINKS_LOCK:
             rec = _LINKS.get(link_id)
             out = _public_view(rec)
+        
+        log.info("Link status response - status=%s applied=%s", out.get("status"), out.get("applied"))
         return JSONResponse(out, headers=_nonce_headers(ctx))
 
     @router.get("/link/events/{link_id}")
@@ -163,15 +176,22 @@ def get_router(
         """
         sid = req.session.get("sid"); s = await store.get_session(sid) if sid else None
         if not sid or not s:
+            log.warning("Link events - no session found for sid=%s", sid)
             raise HTTPException(status_code=401, detail="no session")
+
+        log.info("Link events - starting SSE for link_id=%s sid=%s", link_id, sid)
 
         with _LINKS_LOCK:
             rec = _LINKS.get(link_id)
             if not rec:
+                log.error("Link events - link not found: %s", link_id)
                 raise HTTPException(status_code=404, detail="no such link")
             if rec["desktop_sid"] != sid:
+                log.warning("Link events - wrong session: expected %s, got %s", rec["desktop_sid"], sid)
                 raise HTTPException(status_code=403, detail="not your link")
             initial = _public_view(rec)
+
+        log.info("Link events - initial data: %s", initial)
 
         q: asyncio.Queue = asyncio.Queue()
         with _WATCHERS_LOCK:
@@ -181,10 +201,12 @@ def get_router(
             try:
                 # Send initial snapshot
                 yield f"event: status\ndata: {json.dumps(initial)}\n\n"
+                log.info("Link events - sent initial snapshot")
                 # Heartbeat every 15s if no events
                 while True:
                     try:
                         evt = await asyncio.wait_for(q.get(), timeout=15.0)
+                        log.info("Link events - sending event: %s", evt)
                         yield f"event: {evt.get('type','status')}\ndata: {json.dumps(evt)}\n\n"
                     except asyncio.TimeoutError:
                         # comment heartbeat
@@ -195,6 +217,7 @@ def get_router(
                     lst = _WATCHERS.get(link_id, [])
                     if q in lst:
                         lst.remove(q)
+                log.info("Link events - SSE connection closed for link_id=%s", link_id)
 
         return StreamingResponse(event_gen(), media_type="text/event-stream", headers={
             "Cache-Control": "no-cache",

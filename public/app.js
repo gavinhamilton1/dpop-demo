@@ -508,7 +508,7 @@ import * as Passkeys from '/src/passkeys.js';
         const qrContainer = document.createElement('div');
         qrContainer.className = 'qr-container';
         qrContainer.innerHTML = `
-          <h3>📱 Scan with your mobile device</h3>
+          <h3>📱 Scan with your mobile device camera</h3>
           <div class="qr-code" id="link-qr"></div>
           <div style="margin-top: 1rem; font-family: monospace; word-break: break-all; color: var(--text-muted);">
             ${url}
@@ -714,16 +714,25 @@ import * as Passkeys from '/src/passkeys.js';
     stopLinkMonitoring();
     
     _currentLinkId = linkId;
+    addLog(`Starting link status monitoring for: ${linkId}`, 'info');
     
     // Try SSE first
     if ('EventSource' in window) {
       try {
         addLog('Starting SSE monitoring for link status...', 'info');
-        _eventSource = new EventSource(`/link/events/${encodeURIComponent(linkId)}`);
+        const sseUrl = `/link/events/${encodeURIComponent(linkId)}`;
+        addLog(`SSE URL: ${sseUrl}`, 'info');
+        _eventSource = new EventSource(sseUrl);
+        
+        _eventSource.onopen = () => {
+          addLog('SSE connection opened successfully', 'success');
+        };
         
         _eventSource.onmessage = (event) => {
+          addLog(`SSE message received: ${event.data}`, 'info');
           try {
             const data = JSON.parse(event.data);
+            addLog(`Parsed SSE data: ${JSON.stringify(data)}`, 'info');
             updateLinkStatus(data);
             
             if ((data.status === 'linked' && data.applied) || data.status === 'expired') {
@@ -742,6 +751,7 @@ import * as Passkeys from '/src/passkeys.js';
         };
         
         _eventSource.onerror = (event) => {
+          addLog(`SSE connection failed: ${JSON.stringify(event)}`, 'error');
           addLog('SSE connection failed, falling back to polling...', 'warning');
           _eventSource.close();
           _eventSource = null;
@@ -749,8 +759,10 @@ import * as Passkeys from '/src/passkeys.js';
         };
         
         _eventSource.addEventListener('status', (event) => {
+          addLog(`SSE status event received: ${event.data}`, 'info');
           try {
             const data = JSON.parse(event.data);
+            addLog(`Parsed SSE status data: ${JSON.stringify(data)}`, 'info');
             updateLinkStatus(data);
             
             if ((data.status === 'linked' && data.applied) || data.status === 'expired') {
@@ -785,7 +797,9 @@ import * as Passkeys from '/src/passkeys.js';
       while (_pollAbort.on && _currentLinkId === linkId) {
         await new Promise(r => setTimeout(r, 2000));
         try {
+          addLog(`Polling link status for: ${linkId}`, 'info');
           const j = await Stronghold.strongholdFetch(`/link/status/${encodeURIComponent(linkId)}`, { method: 'GET' });
+          addLog(`Poll response: ${JSON.stringify(j)}`, 'info');
           updateLinkStatus(j);
           
           if ((j.status === 'linked' && j.applied) || j.status === 'expired') {
@@ -801,6 +815,7 @@ import * as Passkeys from '/src/passkeys.js';
           }
         } catch (e) {
           addLog(`Link status check failed: ${e.message}`, 'error');
+          addLog(`Error details: ${JSON.stringify(e)}`, 'error');
           stopLinkMonitoring();
         }
       }
@@ -823,9 +838,14 @@ import * as Passkeys from '/src/passkeys.js';
   }
 
   function updateLinkStatus(j) {
+    addLog(`Updating link status: ${JSON.stringify(j)}`, 'info');
     const statusEl = document.getElementById('link-status');
     if (statusEl) {
-      statusEl.textContent = `${j.status}${j.applied ? ' (applied)' : ''}`;
+      const newStatus = `${j.status}${j.applied ? ' (applied)' : ''}`;
+      addLog(`Setting status element to: ${newStatus}`, 'info');
+      statusEl.textContent = newStatus;
+    } else {
+      addLog('Status element not found in DOM', 'warning');
     }
   }
 
