@@ -1,6 +1,6 @@
 # server/passkeys.py
 from __future__ import annotations
-import os, base64, hashlib, json, secrets, struct, threading, time, inspect, logging
+import base64, hashlib, json, secrets, struct, inspect, logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple, Callable
 from urllib.parse import urlsplit
@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding, ed25519
 from cryptography.x509.oid import ObjectIdentifier
 
 from server.config import load_settings
+from server.utils import b64u, b64u_dec, ec_p256_thumbprint, now
 
 log = logging.getLogger("stronghold")
 SETTINGS = load_settings()
@@ -28,22 +29,12 @@ ATTESTATION_MODE = 'none' if POLICY == 'compat' else 'direct'
 _DEF_RP_NAME = "Stronghold Demo"
 
 # ---------------- utils ----------------
-def _b64u(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-def _b64u_dec(s: str) -> bytes:
-    pad = '=' * (-len(s) % 4)
-    return base64.urlsafe_b64decode((s + pad).encode())
-
 def _nonce_headers(ctx: Any) -> Dict[str, str]:
     try:
         n = ctx.get("next_nonce") if isinstance(ctx, dict) else None
         return {"DPoP-Nonce": n} if n else {}
     except Exception:
         return {}
-
-def _now() -> int:
-    return int(time.time())
 
 async def _maybe_await(x):
     return await x if inspect.isawaitable(x) else x
@@ -76,31 +67,31 @@ def cose_to_jwk(cbor_bytes: bytes) -> dict:
         crv = m.get(-1); x = m.get(-2); y = m.get(-3)
         if crv != 1:
             raise HTTPException(status_code=400, detail="unsupported EC curve")
-        return {"kty":"EC","crv":"P-256","x":_b64u(x),"y":_b64u(y),"alg":"ES256"}
+        return {"kty":"EC","crv":"P-256","x":b64u(x),"y":b64u(y),"alg":"ES256"}
     if kty == 3:  # RSA
         n = m.get(-1); e = m.get(-2)
-        return {"kty":"RSA","n":_b64u(n),"e":_b64u(e),"alg":"RS256"}
+        return {"kty":"RSA","n":b64u(n),"e":b64u(e),"alg":"RS256"}
     if kty == 1:  # OKP (Ed25519)
         crv = m.get(-1); x = m.get(-2)
         if crv == 6 and x:
-            return {"kty":"OKP","crv":"Ed25519","x":_b64u(x),"alg":"EdDSA"}
+            return {"kty":"OKP","crv":"Ed25519","x":b64u(x),"alg":"EdDSA"}
         raise HTTPException(status_code=400, detail="unsupported OKP curve")
     raise HTTPException(status_code=400, detail="unsupported COSE key")
 
 # JWK → public key
 def jwk_to_pub(jwk: dict):
     if jwk.get("kty") == "EC" and jwk.get("crv") == "P-256":
-        x = int.from_bytes(_b64u_dec(jwk["x"]), "big")
-        y = int.from_bytes(_b64u_dec(jwk["y"]), "big")
+        x = int.from_bytes(b64u_dec(jwk["x"]), "big")
+        y = int.from_bytes(b64u_dec(jwk["y"]), "big")
         numbers = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1())
         return numbers.public_key(), "ES256"
     if jwk.get("kty") == "RSA":
-        n = int.from_bytes(_b64u_dec(jwk["n"]), "big")
-        e = int.from_bytes(_b64u_dec(jwk["e"]), "big")
+        n = int.from_bytes(b64u_dec(jwk["n"]), "big")
+        e = int.from_bytes(b64u_dec(jwk["e"]), "big")
         pub = rsa.RSAPublicNumbers(e, n).public_key()
         return pub, "RS256"
     if jwk.get("kty") == "OKP" and jwk.get("crv") == "Ed25519":
-        pub = ed25519.Ed25519PublicKey.from_public_bytes(_b64u_dec(jwk["x"]))
+        pub = ed25519.Ed25519PublicKey.from_public_bytes(b64u_dec(jwk["x"]))
         return pub, "EdDSA"
     raise HTTPException(status_code=400, detail="unsupported JWK")
 
@@ -204,7 +195,7 @@ def verify_packed_attestation_x5c(
     jwk = cose_to_jwk(cose)
     return {
         'aaguid': aaguid,
-        'cred_id': _b64u(credId),
+        'cred_id': b64u(credId),
         'jwk': jwk,
         'sign_count': signCount,
         'trust_chain': fps,
@@ -335,7 +326,7 @@ def get_router(
         rp_id = _rp_id_from_origin(origin)
 
         challenge = secrets.token_bytes(32)
-        await session_store.update_session(sid, {"webauthn_reg": {"challenge": _b64u(challenge), "ts": now_fn()}})
+        await session_store.update_session(sid, {"webauthn_reg": {"challenge": b64u(challenge), "ts": now_fn()}})
 
         existing = await _maybe_await(repo.get_for_principal(principal)) or []
         exclude = [{"type": "public-key", "id": r["cred_id"]} for r in existing]
@@ -343,11 +334,11 @@ def get_router(
         body = {
             "rp": {"id": rp_id, "name": rp_name},
             "user": {
-                "id": _b64u(principal.encode()),
+                "id": b64u(principal.encode()),
                 "name": f"acct:{principal[:8]}",
                 "displayName": f"Acct {principal[:8]}"
             },
-            "challenge": _b64u(challenge),
+            "challenge": b64u(challenge),
             "pubKeyCredParams": [
                 {"type": "public-key", "alg": -7},    # ES256
                 {"type": "public-key", "alg": -257},  # RS256
@@ -381,7 +372,7 @@ def get_router(
 
         data = await req.json()
         try:
-            clientDataJSON = _b64u_dec(data["response"]["clientDataJSON"])
+            clientDataJSON = b64u_dec(data["response"]["clientDataJSON"])
             client = json.loads(clientDataJSON)
         except Exception:
             raise HTTPException(status_code=400, detail="bad clientDataJSON")
@@ -390,7 +381,7 @@ def get_router(
         if client.get("origin") != origin:         raise HTTPException(status_code=400, detail="origin mismatch")
         if client.get("challenge") != expected_chal: raise HTTPException(status_code=400, detail="challenge mismatch")
 
-        attObj = _b64u_dec(data["response"]["attestationObject"])
+        attObj = b64u_dec(data["response"]["attestationObject"])
         if len(attObj) < 1: raise HTTPException(status_code=400, detail="empty attestationObject")
         att = cbor2.loads(attObj)
         authData = att.get("authData")
@@ -418,12 +409,12 @@ def get_router(
             jwk = cose_to_jwk(info.get("rest") or b"")
             aaguid_hex = (info.get("aaguid") or b"").hex() or None
             sign_count = info["signCount"]; trust = []
-            cred_id = _b64u(info["credId"])
+            cred_id = b64u(info["credId"])
         elif fmt in ("android-safetynet", "android-key") and ALLOW_NO_ATTESTATION:
             jwk = cose_to_jwk(info.get("rest") or b"")
             aaguid_hex = (info.get("aaguid") or b"").hex() or None
             sign_count = info["signCount"]; trust = []
-            cred_id = _b64u(info["credId"])
+            cred_id = b64u(info["credId"])
         else:
             raise HTTPException(status_code=400, detail=f"unsupported attestation fmt: {fmt}")
 
@@ -458,7 +449,7 @@ def get_router(
 
         challenge = secrets.token_bytes(32)
         await session_store.update_session(
-            sid, {"webauthn_auth": {"challenge": _b64u(challenge), "ts": _now(), "principal": principal}}
+            sid, {"webauthn_auth": {"challenge": b64u(challenge), "ts": now(), "principal": principal}}
         )
 
         creds = await _maybe_await(repo.get_for_principal(principal)) or []
@@ -469,7 +460,7 @@ def get_router(
 
         body = {
             "rpId": rp_id,
-            "challenge": _b64u(challenge),
+            "challenge": b64u(challenge),
             "userVerification": UV_MODE,
             "allowCredentials": allow,   # present even when empty
             "_meta": {
@@ -495,13 +486,13 @@ def get_router(
             raise HTTPException(status_code=400, detail="no auth in progress")
 
         data = await req.json()
-        clientDataJSON = _b64u_dec(data["response"]["clientDataJSON"])
+        clientDataJSON = b64u_dec(data["response"]["clientDataJSON"])
         client = json.loads(clientDataJSON)
         if client.get("type") != "webauthn.get":   raise HTTPException(status_code=400, detail="wrong clientData type")
         if client.get("origin") != origin:         raise HTTPException(status_code=400, detail="origin mismatch")
         if client.get("challenge") != expected_chal: raise HTTPException(status_code=400, detail="challenge mismatch")
 
-        authData = _b64u_dec(data["response"]["authenticatorData"])
+        authData = b64u_dec(data["response"]["authenticatorData"])
         info = parse_authenticator_data(authData)
         rp_hash = hashlib.sha256(rp_id.encode()).digest()
         if info["rpIdHash"] != rp_hash:  raise HTTPException(status_code=400, detail="rpIdHash mismatch")
@@ -521,7 +512,7 @@ def get_router(
             if found_principal != principal:
                 raise HTTPException(status_code=403, detail="credential not associated with this principal")
 
-        sig = _b64u_dec(data["response"]["signature"])
+        sig = b64u_dec(data["response"]["signature"])
         ct_hash = hashlib.sha256(clientDataJSON).digest()
         msg = authData + ct_hash
 

@@ -1,6 +1,6 @@
 # server/attestation.py
 from __future__ import annotations
-import json, hashlib, base64
+import json, hashlib
 from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple, Optional
 
@@ -11,16 +11,12 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding
 from cryptography.x509.oid import ObjectIdentifier
 
 from server.config import load_settings
+from server.utils import b64u, b64u_dec
 
 # -------- Config-backed settings --------
 SETTINGS = load_settings()
 
-# Utilities
-b64u = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
 
-def b64u_dec(s: str) -> bytes:
-    pad = '=' * (-len(s) % 4)
-    return base64.urlsafe_b64decode((s + pad).encode())
 
 class AttestationFailure(Exception):
     pass

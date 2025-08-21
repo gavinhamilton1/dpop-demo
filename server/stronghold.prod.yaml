@@ -20,7 +20,6 @@ passkeys:
 
 security:
   skew_sec: 120
-  nonce_window: 5
   nonce_ttl: 60
   jti_ttl: 60
   bind_ttl: 3600

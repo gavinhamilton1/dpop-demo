@@ -1,5 +1,5 @@
 # server/main.py
-import os, json, time, base64, secrets, logging, asyncio
+import os, json, secrets, logging, asyncio, base64, hashlib
 from typing import Dict, Any, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
@@ -20,6 +20,7 @@ from server.config import load_settings
 from server.db import DB  # singleton DB instance
 from server.passkeys import get_router as get_passkeys_router
 from server.linking import get_router as get_linking_router
+from server.utils import ec_p256_thumbprint, now, b64u
 
 # ---------------- Config ----------------
 SETTINGS = load_settings()
@@ -29,7 +30,6 @@ SESSION_SAMESITE = SETTINGS.session_samesite
 SESSION_COOKIE_NAME = SETTINGS.session_cookie_name
 HTTPS_ONLY = SETTINGS.https_only
 SKEW_SEC = SETTINGS.skew_sec
-NONCE_WINDOW = SETTINGS.nonce_window
 NONCE_TTL = SETTINGS.nonce_ttl
 JTI_TTL = SETTINGS.jti_ttl
 BIND_TTL = SETTINGS.bind_ttl
@@ -95,11 +95,10 @@ def _pem_to_public_jwk_and_kid(pem_priv: str):
     pub = priv.public_key()
     nums = pub.public_numbers()
     x = nums.x.to_bytes(32, "big"); y = nums.y.to_bytes(32, "big")
-    b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
-    jwk = {"kty": "EC", "crv": "P-256", "x": b64(x), "y": b64(y), "alg": "ES256"}
+    jwk = {"kty": "EC", "crv": "P-256", "x": b64u(x), "y": b64u(y), "alg": "ES256"}
     ordered = {"kty": jwk["kty"], "crv": jwk["crv"], "x": jwk["x"], "y": jwk["y"]}
-    h = hashes.Hash(hashes.SHA256()); h.update(json.dumps(ordered, separators=(",", ":"), ensure_ascii=False).encode())
-    kid = b64(h.finalize()); jwk["kid"] = kid
+    h = hashlib.sha256(json.dumps(ordered, separators=(",", ":"), ensure_ascii=False).encode()).digest()
+    kid = b64u(h); jwk["kid"] = kid
     return {"jwk": jwk, "kid": kid}
 
 SERVER_JWK_INFO = _pem_to_public_jwk_and_kid(SERVER_EC_PRIVATE_KEY_PEM)
@@ -167,17 +166,13 @@ BASE_DIR = os.path.dirname(__file__)
 app.mount("/public", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public")), name="public")
 app.mount("/src", StaticFiles(directory=os.path.join(BASE_DIR, "..", "src")), name="src")
 
-def _now() -> int: return int(time.time())
-def _new_nonce() -> str: return base64.urlsafe_b64encode(secrets.token_bytes(18)).rstrip(b"=").decode()
+def _new_nonce() -> str: return b64u(secrets.token_bytes(18))
 
-def _ec_p256_thumbprint(jwk: Dict[str, Any]) -> str:
-    ordered = {"kty": jwk["kty"], "crv": jwk["crv"], "x": jwk["x"], "y": jwk["y"]}
-    import hashlib
-    return base64.urlsafe_b64encode(hashlib.sha256(json.dumps(ordered, separators=(",", ":"), ensure_ascii=False).encode()).digest()).rstrip(b"=").decode()
+
 
 def issue_binding_token(*, sid: str, bik_jkt: str, dpop_jkt: str, aud: str, ttl: int = BIND_TTL) -> str:
-    now = _now()
-    payload = {"sid": sid, "aud": aud, "nbf": now - 60, "exp": now + ttl, "cnf": {"bik_jkt": bik_jkt, "dpop_jkt": dpop_jkt}}
+    now_ts = now()
+    payload = {"sid": sid, "aud": aud, "nbf": now_ts - 60, "exp": now_ts + ttl, "cnf": {"bik_jkt": bik_jkt, "dpop_jkt": dpop_jkt}}
     protected = {"alg": "ES256", "typ": "bik-bind+jws", "kid": SERVER_KID}
     tok = jose_jws.sign(payload, SERVER_EC_PRIVATE_KEY_PEM, algorithm="ES256", headers=protected)
     log.info("issued bind token sid=%s aud=%s exp=%s", sid, aud, payload["exp"])
@@ -186,7 +181,7 @@ def issue_binding_token(*, sid: str, bik_jkt: str, dpop_jkt: str, aud: str, ttl:
 def verify_binding_token(token: str) -> Dict[str, Any]:
     payload = jose_jws.verify(token, SERVER_PUBLIC_JWK, algorithms=["ES256"])
     data = payload if isinstance(payload, dict) else json.loads(payload)
-    if data.get("exp", 0) < _now():
+    if data.get("exp", 0) < now():
         raise HTTPException(status_code=401, detail="bind token expired")
     return data
 
@@ -240,11 +235,11 @@ async def browser_register(req: Request):
         if header.get("alg") != "ES256": raise HTTPException(status_code=400, detail="bad alg")
         jose_jws.verify(jws_compact, header["jwk"], algorithms=["ES256"])
         if payload.get("nonce") != s.get("reg_nonce"): raise HTTPException(status_code=401, detail="bad nonce")
-        if abs(_now() - int(payload.get("iat",0))) > SKEW_SEC: raise HTTPException(status_code=401, detail="bad iat")
+        if abs(now() - int(payload.get("iat",0))) > SKEW_SEC: raise HTTPException(status_code=401, detail="bad iat")
         jwk = header.get("jwk") or {}
         if jwk.get("kty") != "EC" or jwk.get("crv") != "P-256" or not jwk.get("x") or not jwk.get("y"):
             raise HTTPException(status_code=400, detail="bad jwk")
-        bik_jkt = _ec_p256_thumbprint(jwk)
+        bik_jkt = ec_p256_thumbprint(jwk)
         await DB.update_session(sid, {"bik_jkt": bik_jkt, "state": "bound-bik", "reg_nonce": None})
         log.info("bik_register sid=%s jkt=%s rid=%s", sid, bik_jkt[:8], req.state.request_id)
         return {"bik_jkt": bik_jkt, "state": "bound-bik"}
@@ -266,18 +261,18 @@ async def dpop_bind(req: Request):
         if header.get("typ") != "dpop-bind+jws": raise HTTPException(status_code=400, detail="wrong typ")
         if header.get("alg") != "ES256": raise HTTPException(status_code=400, detail="bad alg")
         jose_jws.verify(jws_compact, header["jwk"], algorithms=["ES256"])
-        if abs(_now() - int(payload.get("iat",0))) > SKEW_SEC: raise HTTPException(status_code=401, detail="bad iat")
+        if abs(now() - int(payload.get("iat",0))) > SKEW_SEC: raise HTTPException(status_code=401, detail="bad iat")
         dpop_pub_jwk = payload.get("dpop_jwk") or {}
         if dpop_pub_jwk.get("kty") != "EC" or dpop_pub_jwk.get("crv") != "P-256" or not dpop_pub_jwk.get("x") or not dpop_pub_jwk.get("y"):
             raise HTTPException(status_code=400, detail="bad dpop jwk")
-        dpop_jkt = _ec_p256_thumbprint(dpop_pub_jwk)
+        dpop_jkt = ec_p256_thumbprint(dpop_pub_jwk)
         origin, _ = canonicalize_origin_and_url(req)
         bind = issue_binding_token(sid=sid, bik_jkt=s["bik_jkt"], dpop_jkt=dpop_jkt, aud=origin, ttl=BIND_TTL)
         next_nonce = _new_nonce()
         await DB.add_nonce(sid, next_nonce, NONCE_TTL)
         await DB.update_session(sid, {"dpop_jkt": dpop_jkt, "state": "bound"})
         log.info("dpop_bind sid=%s dpop_jkt=%s rid=%s", sid, dpop_jkt[:8], req.state.request_id)
-        return JSONResponse({"bind": bind, "cnf": {"dpop_jkt": dpop_jkt}, "expires_at": _now() + BIND_TTL}, headers={"DPoP-Nonce": next_nonce})
+        return JSONResponse({"bind": bind, "cnf": {"dpop_jkt": dpop_jkt}, "expires_at": now() + BIND_TTL}, headers={"DPoP-Nonce": next_nonce})
     except HTTPException: raise
     except Exception as e:
         log.exception("dpop bind failed sid=%s rid=%s", sid, req.state.request_id); raise HTTPException(status_code=400, detail=f"dpop bind failed: {e}")
@@ -330,7 +325,7 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
             _nonce_fail_response(sid, "htu mismatch")
         if payload.get("htm","").upper() != req.method.upper():
             _nonce_fail_response(sid, "htm mismatch")
-        if abs(_now() - int(payload.get("iat",0))) > SKEW_SEC:
+        if abs(now() - int(payload.get("iat",0))) > SKEW_SEC:
             _nonce_fail_response(sid, "bad iat")
 
         n = payload.get("nonce")
@@ -342,9 +337,7 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
             _nonce_fail_response(sid, "jti replay")
 
         def jkt_of(jwk_: Dict[str, Any]) -> str:
-            ordered = {"kty": "EC", "crv": "P-256", "x": jwk_["x"], "y": jwk_["y"]}
-            import hashlib
-            return base64.urlsafe_b64encode(hashlib.sha256(json.dumps(ordered, separators=(",", ":"), ensure_ascii=False).encode()).digest()).rstrip(b"=").decode()
+            return ec_p256_thumbprint(jwk_)
         if jkt_of(jwk) != (bind_payload.get("cnf") or {}).get("dpop_jkt"):
             _nonce_fail_response(sid, "dpop_jkt mismatch")
 
@@ -382,12 +375,12 @@ app.include_router(get_passkeys_router(
     DB,
     require_dpop,
     canonicalize_origin_and_url,
-    _now,
+    now,
     passkey_repo=PASSKEY_REPO,
 ))
 
 app.include_router(get_linking_router(
-    DB, require_dpop, canonicalize_origin_and_url, _now,
+    DB, require_dpop, canonicalize_origin_and_url, now,
 ))
 
 # ---------------- Resume (BIK) ----------------
@@ -411,11 +404,11 @@ async def resume_confirm(req: Request):
     header = json.loads(base64url_decode(h_b64.encode()))
     payload = json.loads(base64url_decode(p_b64.encode()))
     jose_jws.verify(jws_compact, header["jwk"], algorithms=["ES256"])
-    if abs(_now() - int(payload.get("iat",0))) > SKEW_SEC:
+    if abs(now() - int(payload.get("iat",0))) > SKEW_SEC:
         raise HTTPException(401, "bad iat")
     if payload.get("resume_nonce") != s.get("resume_nonce"):
         raise HTTPException(401, "bad resume_nonce")
-    if _ec_p256_thumbprint(header["jwk"]) != s.get("bik_jkt"):
+    if ec_p256_thumbprint(header["jwk"]) != s.get("bik_jkt"):
         raise HTTPException(401, "bik mismatch")
 
     origin, _ = canonicalize_origin_and_url(req)
@@ -431,7 +424,7 @@ async def api_echo(req: Request, ctx=Depends(require_dpop)):
     body = await req.json()
     headers = {"DPoP-Nonce": ctx["next_nonce"]}
     log.info("api_echo ok sid=%s rid=%s", ctx["sid"], req.state.request_id)
-    return JSONResponse({"ok": True, "echo": body, "ts": _now()}, headers=headers)
+    return JSONResponse({"ok": True, "echo": body, "ts": now()}, headers=headers)
 
 # ---------------- Admin ----------------
 @app.post("/_admin/flush")

@@ -16,11 +16,10 @@ session:
 passkeys:
   policy: compat                       # compat | strict
   aaguid_allow_path: null              # e.g. server/aaguid_allow.json
-  mds_roots_path: server/mds_roots.json
+  mds_roots_path: null                 # server/mds_roots.json
 
 security:
   skew_sec: 120
-  nonce_window: 5
   nonce_ttl: 60
   jti_ttl: 60
   bind_ttl: 3600

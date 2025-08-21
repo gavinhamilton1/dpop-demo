@@ -26,7 +26,6 @@ class Settings:
     mds_roots_path: Optional[str]
     # Security windows
     skew_sec: int
-    nonce_window: int
     nonce_ttl: int
     jti_ttl: int
     bind_ttl: int
@@ -62,7 +61,7 @@ _DEFAULTS: Dict[str, Any] = {
         "aaguid_allow_path": None,
         "mds_roots_path": None,
     },
-    "security": {"skew_sec": 120, "nonce_window": 5, "nonce_ttl": 60, "jti_ttl": 60, "bind_ttl": 3600},
+    "security": {"skew_sec": 120, "nonce_ttl": 60, "jti_ttl": 60, "bind_ttl": 3600},
     "linking": {"ttl_seconds": 180},
     "logging": {"level": "INFO"},
 }
@@ -185,7 +184,6 @@ def load_settings(path: Optional[str] = None) -> Settings:
         aaguid_allow_path=(cfg.get("passkeys") or {}).get("aaguid_allow_path"),
         mds_roots_path=(cfg.get("passkeys") or {}).get("mds_roots_path"),
         skew_sec=int((cfg.get("security") or {}).get("skew_sec", 120)),
-        nonce_window=int((cfg.get("security") or {}).get("nonce_window", 5)),
         nonce_ttl=int((cfg.get("security") or {}).get("nonce_ttl", 60)),
         jti_ttl=int((cfg.get("security") or {}).get("jti_ttl", 60)),
         bind_ttl=int((cfg.get("security") or {}).get("bind_ttl", 3600)),

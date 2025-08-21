@@ -1,16 +1,13 @@
 # server/linking.py
 from __future__ import annotations
-import json, secrets, hashlib, base64, threading, asyncio, time, logging
+import json, secrets, threading, asyncio, logging
 from typing import Any, Dict, Tuple, Optional, Callable, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature, decode_dss_signature
-
 from server.config import load_settings
+from server.utils import b64u, b64u_dec, jws_es256_sign, jws_es256_verify, now
 
 log = logging.getLogger("stronghold")
 SETTINGS = load_settings()
@@ -19,13 +16,6 @@ SETTINGS = load_settings()
 
 _LINK_TTL = SETTINGS.link_ttl_seconds  # seconds
 
-def _b64u(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-def _b64u_dec(s: str) -> bytes:
-    pad = '=' * (-len(s) % 4)
-    return base64.urlsafe_b64decode((s + pad).encode())
-
 def _nonce_headers(ctx: Any) -> Dict[str, str]:
     try:
         n = ctx.get("next_nonce") if isinstance(ctx, dict) else None
@@ -33,63 +23,7 @@ def _nonce_headers(ctx: Any) -> Dict[str, str]:
     except Exception:
         return {}
 
-def _now() -> int:
-    return int(time.time())
 
-# ---------------- JWS (ES256) key + helpers ----------------
-
-_SERVER_EC_KEY = None              # lazy-initialized P-256 key
-_SERVER_KID: Optional[str] = None  # short kid (hash of pubkey)
-
-def _ensure_server_signing_key():
-    """
-    Use server EC private key PEM from config.py (Settings.server_ec_private_key_pem).
-    If not provided, generate an ephemeral dev key (warning).
-    """
-    global _SERVER_EC_KEY, _SERVER_KID
-    if _SERVER_EC_KEY is not None:
-        return
-    pem = SETTINGS.server_ec_private_key_pem
-    if pem:
-        _SERVER_EC_KEY = serialization.load_pem_private_key(pem.encode(), password=None)
-        log.info("linking: loaded ES256 private key from config.")
-    else:
-        log.warning("linking: no server EC private key configured; generated ephemeral dev key.")
-        _SERVER_EC_KEY = ec.generate_private_key(ec.SECP256R1())
-    pub = _SERVER_EC_KEY.public_key().public_numbers()
-    x = pub.x.to_bytes(32, "big"); y = pub.y.to_bytes(32, "big")
-    _SERVER_KID = _b64u(hashlib.sha256(x + y).digest()[:8])
-
-def _jws_es256_sign(payload: Dict[str, Any]) -> str:
-    _ensure_server_signing_key()
-    header = {"alg": "ES256", "typ": "link+jws", "kid": _SERVER_KID}
-    h_b64 = _b64u(json.dumps(header, separators=(',', ':')).encode())
-    p_b64 = _b64u(json.dumps(payload, separators=(',', ':')).encode())
-    signing_input = f"{h_b64}.{p_b64}".encode()
-    der = _SERVER_EC_KEY.sign(signing_input, ec.ECDSA(hashes.SHA256()))
-    r, s = decode_dss_signature(der)
-    sig = r.to_bytes(32, "big") + s.to_bytes(32, "big")
-    return f"{h_b64}.{p_b64}.{_b64u(sig)}"
-
-def _jws_es256_verify(token: str) -> Dict[str, Any]:
-    _ensure_server_signing_key()
-    try:
-        h_b64, p_b64, s_b64 = token.split(".")
-        header = json.loads(_b64u_dec(h_b64))
-        if header.get("alg") != "ES256":
-            raise ValueError("alg")
-        signing_input = f"{h_b64}.{p_b64}".encode()
-        sig = _b64u_dec(s_b64)
-        if len(sig) != 64:
-            raise ValueError("sig")
-        r = int.from_bytes(sig[:32], "big")
-        s = int.from_bytes(sig[32:], "big")
-        der = encode_dss_signature(r, s)
-        _SERVER_EC_KEY.public_key().verify(der, signing_input, ec.ECDSA(hashes.SHA256()))
-        payload = json.loads(_b64u_dec(p_b64))
-        return payload
-    except Exception:
-        raise HTTPException(status_code=400, detail="bad link token")
 
 # ---------------- in-memory link state + watchers ----------------
 
@@ -115,13 +49,13 @@ def _put_link(link_id: str, rec: Dict[str, Any]):
     _notify_watchers(link_id, {"type": "status", **_public_view(rec)})
 
 def _public_view(rec: Dict[str, Any]) -> Dict[str, Any]:
-    now = _now()
+    now_ts = now()
     return {
         "id": rec["rid"],
         "status": rec.get("status"),
         "principal": rec.get("principal"),
         "applied": rec.get("applied", False),
-        "expires_in": max(0, rec["exp"] - now),
+        "expires_in": max(0, rec["exp"] - now_ts),
     }
 
 # ---------------- router factory ----------------
@@ -154,7 +88,7 @@ def get_router(
         iat = now_fn()
         exp = iat + _LINK_TTL
         payload = {"iss":"stronghold","aud":"link","iat":iat,"exp":exp,"lid":rid}
-        token = _jws_es256_sign(payload)
+        token = jws_es256_sign(payload)
 
         origin, _ = canonicalize_origin_and_url(req)
         qr_url = f"{origin}/public/link.html?token={token}"
@@ -185,8 +119,8 @@ def get_router(
             if rec["desktop_sid"] != sid:
                 raise HTTPException(status_code=403, detail="not your link")
             # expiry
-            now = now_fn()
-            if now > rec["exp"] and rec["status"] != "linked":
+            now_ts = now_fn()
+            if now_ts > rec["exp"] and rec["status"] != "linked":
                 rec["status"] = "expired"
             if rec["status"] == "linked" and not rec.get("applied") and rec.get("principal"):
                 need_apply = True
@@ -262,18 +196,18 @@ def get_router(
         token = body.get("token")
         if not token:
             raise HTTPException(status_code=400, detail="missing token")
-        claims = _jws_es256_verify(token)
-        now = _now()
+        claims = jws_es256_verify(token)
+        now_ts = now()
         if claims.get("aud") != "link":
             raise HTTPException(status_code=400, detail="bad aud")
-        if now > int(claims.get("exp", 0)):
+        if now_ts > int(claims.get("exp", 0)):
             raise HTTPException(status_code=400, detail="expired")
         lid = claims.get("lid")
         with _LINKS_LOCK:
             rec = _LINKS.get(lid)
             if not rec:
                 raise HTTPException(status_code=404, detail="no such link")
-            if now > rec["exp"] and rec["status"] != "linked":
+            if now_ts > rec["exp"] and rec["status"] != "linked":
                 rec["status"] = "expired"
                 _notify_watchers(lid, {"type":"status", **_public_view(rec)})
                 raise HTTPException(status_code=400, detail="expired")
@@ -302,7 +236,7 @@ def get_router(
             rec = _LINKS.get(lid)
             if not rec:
                 raise HTTPException(status_code=404, detail="no such link")
-            if _now() > rec["exp"] and rec["status"] != "linked":
+            if now() > rec["exp"] and rec["status"] != "linked":
                 rec["status"] = "expired"
                 _notify_watchers(lid, {"type":"status", **_public_view(rec)})
                 raise HTTPException(status_code=400, detail="expired")
@@ -345,9 +279,9 @@ def get_router(
             if not rec:
                 raise HTTPException(status_code=404, detail="no such link")
         # Re-issue token pointing at same link (keeps original exp)
-        now = _now()
-        payload = {"iss":"stronghold","aud":"link","iat":now,"exp":rec["exp"],"lid":link_id}
-        token = _jws_es256_sign(payload)
+        now_ts = now()
+        payload = {"iss":"stronghold","aud":"link","iat":now_ts,"exp":rec["exp"],"lid":link_id}
+        token = jws_es256_sign(payload)
         origin, _ = canonicalize_origin_and_url(req)
         uri = f"{origin}/public/link.html?token={token}"
         img = qrcode.make(uri)
