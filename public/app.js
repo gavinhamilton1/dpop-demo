@@ -716,6 +716,10 @@ import * as Passkeys from '/src/passkeys.js';
     _currentLinkId = linkId;
     addLog(`Starting link status monitoring for: ${linkId}`, 'info');
     
+    // Debug session info
+    addLog(`Current domain: ${location.origin}`, 'info');
+    addLog(`Session cookies: ${document.cookie}`, 'info');
+    
     // Try SSE first
     if ('EventSource' in window) {
       try {
@@ -798,7 +802,18 @@ import * as Passkeys from '/src/passkeys.js';
         await new Promise(r => setTimeout(r, 2000));
         try {
           addLog(`Polling link status for: ${linkId}`, 'info');
-          const j = await Stronghold.strongholdFetch(`/link/status/${encodeURIComponent(linkId)}`, { method: 'GET' });
+          const response = await fetch(`/link/status/${encodeURIComponent(linkId)}`, { 
+            method: 'GET',
+            credentials: 'include'
+          });
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            addLog(`Poll failed: ${response.status} - ${errorText}`, 'error');
+            continue;
+          }
+          
+          const j = await response.json();
           addLog(`Poll response: ${JSON.stringify(j)}`, 'info');
           updateLinkStatus(j);
           

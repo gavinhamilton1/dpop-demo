@@ -93,15 +93,12 @@ def get_router(
 
         origin, _ = canonicalize_origin_and_url(req)
         
-        # For multi-domain support, try to use the first allowed origin if available
-        # This ensures the QR code works across different domains
-        from server.config import load_settings
-        SETTINGS = load_settings()
-        if SETTINGS.allowed_origins:
-            # Use the first allowed origin for QR generation to ensure consistency
-            qr_origin = SETTINGS.allowed_origins[0]
-        else:
-            qr_origin = origin
+        # Use the current request's origin for QR generation to maintain session consistency
+        # This ensures the mobile device accesses the same domain as the desktop
+        qr_origin = origin
+        
+        # Log the QR generation for debugging
+        log.info("QR generation - desktop_origin=%s qr_origin=%s", origin, qr_origin)
             
         qr_url = f"{qr_origin}/public/link.html?token={token}"
 
@@ -116,7 +113,7 @@ def get_router(
         return JSONResponse({"linkId": rid, "exp": exp, "qr_url": qr_url}, headers=_nonce_headers(ctx))
 
     @router.get("/link/status/{link_id}")
-    async def link_status(link_id: str, req: Request, ctx=Depends(require_dpop)):
+    async def link_status(link_id: str, req: Request):
         """Desktop polls; when 'linked', we patch desktop session if not already applied."""
         sid = req.session.get("sid"); s = await store.get_session(sid) if sid else None
         if not sid or not s:
@@ -165,7 +162,7 @@ def get_router(
             out = _public_view(rec)
         
         log.info("Link status response - status=%s applied=%s", out.get("status"), out.get("applied"))
-        return JSONResponse(out, headers=_nonce_headers(ctx))
+        return JSONResponse(out)
 
     @router.get("/link/events/{link_id}")
     async def link_events(link_id: str, req: Request):
@@ -225,13 +222,20 @@ def get_router(
         })
 
     @router.post("/link/mobile/start")
-    async def link_mobile_start(body: Dict[str, Any]):
+    async def link_mobile_start(body: Dict[str, Any], req: Request):
         """Mobile posts the QR token it scanned. No DPoP yet."""
         token = body.get("token")
         if not token:
             raise HTTPException(status_code=400, detail="missing token")
         
-        log.info("Mobile link start - token=%s", token[:20] + "..." if token else "none")
+        # Log request details for debugging
+        origin = req.headers.get("origin", "unknown")
+        host = req.headers.get("host", "unknown")
+        user_agent = req.headers.get("user-agent", "unknown")
+        sid = req.session.get("sid")
+        
+        log.info("Mobile link start - token=%s origin=%s host=%s sid=%s", 
+                token[:20] + "..." if token else "none", origin, host, sid)
         
         claims = jws_es256_verify(token)
         now_ts = now()
@@ -255,7 +259,7 @@ def get_router(
                 raise HTTPException(status_code=400, detail="expired")
             if rec["status"] == "pending":
                 rec["status"] = "scanned"
-                log.info("Link status updated to scanned - lid=%s", lid)
+                log.info("Link status updated to scanned - lid=%s desktop_sid=%s", lid, rec.get("desktop_sid"))
         
         _notify_watchers(lid, {"type":"status", **_public_view(_LINKS[lid])})
         return {"ok": True, "link_id": lid}
@@ -275,7 +279,12 @@ def get_router(
         if not s.get("passkey_auth") or not s.get("passkey_principal"):
             raise HTTPException(status_code=403, detail="mobile not authenticated")
 
-        log.info("Mobile link complete - lid=%s sid=%s principal=%s", lid, sid, s.get("passkey_principal"))
+        # Log request details for debugging
+        origin = req.headers.get("origin", "unknown")
+        host = req.headers.get("host", "unknown")
+        
+        log.info("Mobile link complete - lid=%s sid=%s principal=%s origin=%s host=%s", 
+                lid, sid, s.get("passkey_principal"), origin, host)
 
         desktop_sid: Optional[str] = None
         with _LINKS_LOCK:
@@ -292,7 +301,7 @@ def get_router(
             rec["applied"] = False
             desktop_sid = rec.get("desktop_sid")
 
-        log.info("Link status updated - desktop_sid=%s", desktop_sid)
+        log.info("Link status updated - desktop_sid=%s mobile_sid=%s", desktop_sid, sid)
 
         # APPLY patch to desktop session right now (best-effort)
         applied = False
@@ -305,9 +314,9 @@ def get_router(
                         "passkey_principal": s["passkey_principal"],
                     })
                     applied = True
-                    log.info("Desktop session updated successfully")
+                    log.info("Desktop session updated successfully - desktop_sid=%s principal=%s", desktop_sid, s["passkey_principal"])
                 else:
-                    log.warning("Desktop session not found")
+                    log.warning("Desktop session not found - desktop_sid=%s", desktop_sid)
             except Exception as e:
                 log.error("Failed to update desktop session: %s", e)
                 applied = False
