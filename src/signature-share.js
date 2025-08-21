@@ -27,7 +27,7 @@ class SignatureShare {
         // Connect to WebSocket for sending signature data
         this.connectWebSocket();
         
-        console.log('Signature sharing initialized for mobile device');
+        console.log('Scribble sharing initialized for mobile device');
     }
 
     // Initialize signature sharing for desktop device (viewing)
@@ -41,7 +41,7 @@ class SignatureShare {
         // Connect to WebSocket for receiving signature data
         this.connectWebSocket();
         
-        console.log('Signature sharing initialized for desktop device');
+        console.log('Scribble sharing initialized for desktop device');
     }
 
     // Create and setup canvas
@@ -70,8 +70,20 @@ class SignatureShare {
                     document.body.appendChild(container);
                 }
             } else {
-                // For mobile, append to body
-                document.body.appendChild(container);
+                // For mobile, insert before the log container
+                const logContainer = document.getElementById('out');
+                if (logContainer && logContainer.parentNode) {
+                    logContainer.parentNode.insertBefore(container, logContainer);
+                } else {
+                    // Fallback to appending to main container
+                    const mainContainer = document.querySelector('.container');
+                    if (mainContainer) {
+                        mainContainer.appendChild(container);
+                    } else {
+                        // Fallback to body if container not found
+                        document.body.appendChild(container);
+                    }
+                }
             }
         }
 

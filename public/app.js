@@ -776,7 +776,7 @@ let signatureShare = null;
               if ((data.status === 'linked' && data.applied) || data.status === 'expired') {
                 stopLinkMonitoring();
                 if (data.status === 'linked') {
-                  setButtonSuccess('linkBtn', 'Linked!');
+                  setButtonSuccess('linkBtn', '📱 Start Device Linking (VDI/Step-up)');
                   addLog('Cross-device linking completed successfully!', 'success');
                   initSignatureSharing(linkId); // Initialize signature sharing on successful link
                 } else {
@@ -864,7 +864,7 @@ let signatureShare = null;
               if ((data.status === 'linked' && data.applied) || data.status === 'expired') {
                 stopLinkMonitoring();
                 if (data.status === 'linked') {
-                  setButtonSuccess('linkBtn', 'Linked!');
+                  setButtonSuccess('linkBtn', '📱 Start Device Linking (VDI/Step-up)');
                   addLog('Cross-device linking completed successfully!', 'success');
                   initSignatureSharing(linkId); // Initialize signature sharing on successful link
                 } else {
@@ -938,7 +938,7 @@ let signatureShare = null;
           if ((j.status === 'linked' && j.applied) || j.status === 'expired') {
             stopLinkMonitoring();
             if (j.status === 'linked') {
-              setButtonSuccess('linkBtn', 'Linked!');
+              setButtonSuccess('linkBtn', '📱 Start Device Linking (VDI/Step-up)');
               addLog('Cross-device linking completed successfully!', 'success');
               initSignatureSharing(linkId); // Initialize signature sharing on successful link
             } else {
