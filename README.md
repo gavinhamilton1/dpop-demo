@@ -1,14 +1,14 @@
-# 🔐 Device Identity & DPoP Security Reference Implementation
+# 🔐 Browser Identity & DPoP Security Reference Implementation
 
-A comprehensive reference implementation demonstrating **device identity management** using **non-exportable WebCrypto keys** and **DPoP (Demonstration of Proof-of-Possession)** tokens. This project showcases advanced cryptographic security patterns for web applications, including device-bound identity, cryptographic request signing, and protection against various web security threats.
+A comprehensive reference implementation demonstrating **browser identity management** using **non-exportable WebCrypto keys** and **DPoP (Demonstration of Proof-of-Possession)** tokens. This project showcases advanced cryptographic security patterns for web applications, including browser-bound identity, cryptographic request signing, and protection against various web security threats.
 
 ## 🎯 What This Demonstrates
 
-### **🔐 Device Identity & Cryptographic Security**
-- **Non-exportable WebCrypto keys**: Device-bound cryptographic identity that cannot be extracted
+### **🔐 Browser Identity & Cryptographic Security**
+- **Non-exportable WebCrypto keys**: Browser-bound cryptographic identity that cannot be extracted
 - **Browser Identity Keys (BIK)**: Unique cryptographic identity per browser session
-- **Device-bound authentication**: Keys tied to specific hardware/device characteristics
-- **Cross-device linking**: Secure device-to-device authentication using QR codes
+- **Browser-bound authentication**: Keys tied to specific browser security context
+- **Device linking**: Secure device-to-device authentication using QR codes
 
 ### **🛡️ DPoP (Demonstration of Proof-of-Possession)**
 - **Cryptographic request binding**: Every API request cryptographically signed
@@ -38,14 +38,14 @@ A comprehensive reference implementation demonstrating **device identity managem
 
 ## 🚀 Key Features
 
-### **🔑 Device Identity & Authentication**
-- **Non-exportable key generation**: Create device-bound cryptographic keys using WebCrypto API
+### **🔑 Browser Identity & Authentication**
+- **Non-exportable key generation**: Create browser-bound cryptographic keys using WebCrypto API
 - **Browser Identity Keys (BIK)**: Generate unique cryptographic identity for each browser session
-- **Device-bound verification**: Keys tied to specific hardware characteristics and cannot be exported
+- **Browser-bound verification**: Keys tied to specific browser security context and cannot be exported
 - **Secure key storage**: Keys stored in browser's secure key storage, protected from extraction
-- **Identity continuity**: Persistent device recognition across browser sessions
+- **Identity continuity**: Persistent browser recognition across sessions
 
-### **🔗 Cross-Device Linking & VDI Support**
+### **🔗 Device Linking & VDI Support**
 - **Corporate VDI Environments**: Enable authentication in virtual desktop environments where WebAuthn/Passkeys are unavailable
 - **Step-up Authentication**: Provide additional security verification for sensitive operations
 - **QR Code Flow**: Scan QR code to link desktop and mobile sessions
@@ -73,7 +73,7 @@ A comprehensive reference implementation demonstrating **device identity managem
 ### **Frontend (Client)**
 - **Vanilla JavaScript**: Modern ES6+ modules, no frameworks
 - **WebCrypto API**: Non-exportable key generation, ECDSA signing, SHA-256 hashing
-- **Device Identity Management**: Browser Identity Keys (BIK) and device-bound authentication
+- **Browser Identity Management**: Browser Identity Keys (BIK) and browser-bound authentication
 - **WebAuthn API**: Passkey registration and authentication (additional security layer)
 - **Service Workers**: Background processing, request interception, and caching
 - **IndexedDB**: Client-side secure data storage
@@ -87,15 +87,15 @@ A comprehensive reference implementation demonstrating **device identity managem
 - **WebAuthn**: Server-side passkey verification
 
 ### **Security Features & Attack Prevention**
-- **Non-exportable Keys**: Device-bound keys cannot be extracted or transferred
-- **Device Identity Binding**: Cryptographic binding to specific devices
+- **Non-exportable Keys**: Browser-bound keys cannot be extracted or transferred
+- **Browser Identity Binding**: Cryptographic binding to specific browsers
 - **DPoP Token Binding**: Cryptographic request binding prevents token theft and replay
 - **Two-Way Verification**: Client and server signing for mutual authentication
 - **Replay Attack Prevention**: Nonce-based request validation
 - **Man-in-the-Middle Protection**: Cryptographic signatures prevent request tampering
-- **Identity Continuity**: Persistent device recognition across sessions
+- **Identity Continuity**: Persistent browser recognition across sessions
 - **ATO Protection**: Account takeover attack vector reduction
-- **Cross-Device Security**: Multi-device authentication with cryptographic proof
+- **Device Linking**: Multi-device authentication with cryptographic proof
 - **VDI Authentication**: Virtual desktop environment support
 - **Step-up Authentication**: Enhanced security verification flows
 - **CSRF Protection**: Cross-site request forgery prevention
@@ -138,7 +138,7 @@ The demo page provides a comprehensive walkthrough of the device identity and DP
 ### **🚀 Key Features Section**
 - **Device Identity & Browser-Bound Keys**: Non-exportable WebCrypto keys that persist across browser sessions
 - **Identity Continuity & ATO Protection**: DPoP tokens with two-way verification for account takeover protection
-- **Cross-Device Security & VDI Support**: Corporate VDI authentication and step-up security
+- **Device Linking & VDI Support**: Corporate VDI authentication and step-up security
 - **Advanced Web Security**: Service worker interception, secure headers, and comprehensive validation
 
 ### **🎮 Interactive Demo Sequence**
@@ -148,9 +148,9 @@ Follow the numbered steps to experience the complete workflow:
 2. **Register Browser Identity** - Generate cryptographic key pair for your browser
 3. **Bind DPoP Token** - Cryptographically bind your session to a DPoP token
 4. **Test API Access** - Demonstrate secure, cryptographically signed API calls
-5. **Register Device Identity** - Create a WebAuthn passkey for additional security
-6. **Authenticate Device Identity** - Verify identity using the registered passkey
-7. **Start Cross-Device Link** - Begin VDI/step-up authentication process
+5. **Register Browser Identity** - Create a WebAuthn passkey for additional security
+6. **Authenticate Browser Identity** - Verify identity using the registered passkey
+7. **Start Device Linking** - Begin VDI/step-up authentication process
 
 ### **🔧 Admin & Testing**
 - **Server Flush** - Clear server-side session data
@@ -165,16 +165,16 @@ Real-time logging of all operations and security events for debugging and demons
 
 ### **Client-Side Implementation**
 
-#### **1. Device Identity & DPoP Token Management**
+#### **1. Browser Identity & DPoP Token Management**
 ```javascript
-// Generate non-exportable device identity key pair
+// Generate non-exportable browser identity key pair
 const deviceKeyPair = await crypto.subtle.generateKey(
   { name: "ECDSA", namedCurve: "P-256" },
   false, // Non-exportable - keys cannot be extracted
   ["sign", "verify"]
 );
 
-// Create DPoP token bound to device identity
+// Create DPoP token bound to browser identity
 const dpopToken = await createDpopToken(deviceKeyPair, {
   htu: "https://api.example.com/endpoint",
   htm: "POST",
@@ -182,9 +182,9 @@ const dpopToken = await createDpopToken(deviceKeyPair, {
 });
 ```
 
-#### **2. Device Identity & WebAuthn Integration**
+#### **2. Browser Identity & WebAuthn Integration**
 ```javascript
-// Register device-bound passkey (additional security layer)
+// Register browser-bound passkey (additional security layer)
 const credential = await navigator.credentials.create({
   publicKey: {
     challenge: challengeBuffer,
@@ -198,7 +198,7 @@ const credential = await navigator.credentials.create({
   }
 });
 
-// Authenticate with device-bound passkey
+// Authenticate with browser-bound passkey
 const assertion = await navigator.credentials.get({
   publicKey: {
     challenge: challengeBuffer,
@@ -208,21 +208,21 @@ const assertion = await navigator.credentials.get({
 });
 ```
 
-#### **3. Service Worker & Cryptographic Request Signing**
+#### **3. Service Worker & Browser Identity Request Signing**
 ```javascript
-// Intercept and cryptographically sign requests with device identity
+// Intercept and cryptographically sign requests with browser identity
 self.addEventListener('fetch', event => {
   if (event.request.url.includes('/api/')) {
     event.respondWith(signRequestWithDeviceIdentity(event.request));
   }
 });
 
-// Sign request with non-exportable device key
+// Sign request with non-exportable browser key
 async function signRequestWithDeviceIdentity(request) {
-  const deviceKey = await getDeviceIdentityKey();
+  const browserKey = await getBrowserIdentityKey();
   const signature = await crypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
-    deviceKey,
+browserKey,
     requestBody
   );
   // Add cryptographic signature to request
@@ -269,24 +269,24 @@ async def verify_passkey_registration(attestation_object: bytes, client_data: by
 
 ## 🔒 Security Considerations
 
-### **Device Identity & DPoP Implementation**
+### **Browser Identity & DPoP Implementation**
 - **Non-exportable Keys**: Store private keys in browser's secure key storage, cannot be extracted
-- **Device Binding**: Keys tied to specific hardware characteristics and browser session
+- **Browser Binding**: Keys tied to specific browser security context and session
 - **Token Expiration**: Implement appropriate token lifetimes with cryptographic binding
 - **Nonce Management**: Use cryptographically secure nonces for replay protection
 - **Replay Protection**: Validate nonces and timestamps to prevent request replay
 - **Key Rotation**: Implement secure key rotation mechanisms
 - **Identity Continuity**: Maintain device recognition across sessions for seamless experience
 
-### **WebAuthn & Device Identity Security**
-- **Device Attestation**: Verify device attestation for high-security applications
+### **WebAuthn & Browser Identity Security**
+- **Browser Attestation**: Verify browser attestation for high-security applications
 - **User Verification**: Require user verification for sensitive operations
 - **Key Protection**: Ensure keys are stored in secure hardware (TPM/SE)
 - **Origin Validation**: Validate origin and RP ID for security
 - **Device Binding**: Ensure passkeys are bound to specific devices
 - **Multi-factor Authentication**: Combine cryptographic keys with biometric verification
 
-### **Cross-Device Security & Attack Prevention**
+### **Device Linking & Attack Prevention**
 - **Corporate VDI Support**: Enable secure authentication in virtual desktop environments where WebAuthn/Passkeys are unavailable
 - **Step-up Authentication**: Provide additional security verification for sensitive operations using mobile device
 - **QR Code Security**: Use short-lived, cryptographically signed tokens for device linking

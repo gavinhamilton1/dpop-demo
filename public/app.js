@@ -220,7 +220,7 @@ import * as Passkeys from '/src/passkeys.js';
         
         addLog('Testing API access with DPoP token...', 'info');
         
-        const message = apiMessage.value.trim() || 'Hello from Device Identity & DPoP Security Demo!';
+        const message = apiMessage.value.trim() || 'Hello from Browser Identity & DPoP Security Demo!';
         
         const j = await Stronghold.strongholdFetch('/api/echo', { 
           method: 'POST', 

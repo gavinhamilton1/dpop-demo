@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔐 Device Identity & DPoP Security Demo</title>
+    <title>🔐 Browser Identity & DPoP Security Demo</title>
     <link rel="icon" type="image/x-icon" href="/public/favicon.ico">
     <link rel="stylesheet" href="/public/style.css">
 
@@ -11,24 +11,24 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔐 Device Identity & DPoP Security</h1>
-            <p>A comprehensive reference implementation demonstrating device identity management using non-exportable WebCrypto keys and DPoP (Demonstration of Proof-of-Possession) tokens for advanced cryptographic security.</p>
+                                <h1>🔐 Browser Identity & DPoP Security</h1>
+                    <p>A comprehensive reference implementation demonstrating browser identity management using non-exportable WebCrypto keys and DPoP (Demonstration of Proof-of-Possession) tokens for advanced cryptographic security.</p>
         </div>
 
         <div class="demo-section fade-in">
             <h2>🚀 Key Features</h2>
             <div class="feature-grid">
                 <div class="feature-card">
-                    <h4>🔐 Device Identity & Browser-Bound Keys</h4>
-                    <p>Browser-bound cryptographic identity using WebCrypto API. Keys are non-exportable and persist across browser sessions, but remain within the secure browser context. Not hardware-backed like HSM keys, but provides device authentication within browser security model.</p>
+                    <h4>🔐 Browser Identity & Browser-Bound Keys</h4>
+                    <p>Browser-bound cryptographic identity using WebCrypto API. Keys are non-exportable and persist across browser sessions, but remain within the secure browser context. Not hardware-backed like HSM keys, but provides browser authentication within browser security model.</p>
                 </div>
                 <div class="feature-card">
                     <h4>🛡️ Identity Continuity & ATO Protection</h4>
                     <p>DPoP tokens with client and server signing for two-way verification, providing identity continuity and limiting account takeover attack vectors through cryptographic request binding.</p>
                 </div>
                 <div class="feature-card">
-                    <h4>📱 Cross-Device Security & VDI Support</h4>
-                    <p>Corporate VDI authentication and step-up security using QR codes. Enables authentication in virtual desktop environments where WebAuthn/Passkeys are unavailable.</p>
+                    <h4>📱 Device Linking & VDI Support</h4>
+                    <p>Cross-device linking for step-up authentication and Corporate VDI environments. Enables secure session sharing between devices while maintaining cryptographic binding and preventing session hijacking.</p>
                 </div>
                 <div class="feature-card">
                     <h4>⚡ Advanced Web Security</h4>
@@ -40,7 +40,7 @@
         <div class="demo-section fade-in">
             <h2>🎮 Interactive Demo</h2>
             <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
-                Follow the execution story below to experience the complete device identity and cryptographic security workflow:
+                Follow the execution story below to experience the complete browser identity and cryptographic security workflow:
             </p>
             
             <div class="demo-sequence">
@@ -71,19 +71,19 @@
                 <div class="sequence-step">
                     <div class="step-number">5</div>
                     <button id="regBtn" class="btn btn-secondary" disabled>
-                        📝 Register Device Identity
+                        📝 Register Browser Identity
                     </button>
                 </div>
                 <div class="sequence-step">
                     <div class="step-number">6</div>
                     <button id="authBtn" class="btn btn-secondary" disabled>
-                        🔐 Authenticate Device Identity
+                        🔐 Authenticate Browser Identity
                     </button>
                 </div>
                 <div class="sequence-step">
                     <div class="step-number">7</div>
                     <button id="linkBtn" class="btn btn-accent" disabled>
-                        📱 Start Cross-Device Link (VDI/Step-up)
+                        📱 Start Device Linking (VDI/Step-up)
                     </button>
                 </div>
             </div>
@@ -98,7 +98,7 @@
                     <div class="modal-body">
                         <div class="form-group">
                             <label for="apiMessage">Message to send to server:</label>
-                            <textarea id="apiMessage" class="form-control" rows="3" placeholder="Enter your message here...">Hello from Device Identity & DPoP Security Demo!</textarea>
+                            <textarea id="apiMessage" class="form-control" rows="3" placeholder="Enter your message here...">Hello from Browser Identity & DPoP Security Demo!</textarea>
                         </div>
                         <div class="form-group">
                             <label>Server Response:</label>
