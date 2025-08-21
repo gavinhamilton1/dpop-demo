@@ -67,7 +67,13 @@ let signatureShare = null;
       // Reset after 2 seconds
       setTimeout(() => {
         btn.classList.remove('success');
-        const originalText = btn.getAttribute('data-original-text') || btn.innerHTML.replace(/^✓ [^!]*! /, '');
+        let originalText;
+        if (id === 'linkBtn') {
+          // For link button, always use the correct original text
+          originalText = '📱 Start Device Linking (VDI/Step-up)';
+        } else {
+          originalText = btn.getAttribute('data-original-text') || btn.innerHTML.replace(/^✓ [^!]*! /, '');
+        }
         btn.innerHTML = `${originalText} <span class="btn-status-icon success">✓</span>`;
         // Keep the checkmark permanently
       }, 2000);
@@ -938,9 +944,10 @@ let signatureShare = null;
           if ((j.status === 'linked' && j.applied) || j.status === 'expired') {
             stopLinkMonitoring();
             if (j.status === 'linked') {
+              initSignatureSharing(linkId); // Initialize signature sharing on successful link
               setButtonSuccess('linkBtn', '📱 Start Device Linking (VDI/Step-up)');
               addLog('Cross-device linking completed successfully!', 'success');
-              initSignatureSharing(linkId); // Initialize signature sharing on successful link
+
             } else {
               setButtonError('linkBtn', 'Expired');
               addLog('Cross-device linking expired', 'warning');
