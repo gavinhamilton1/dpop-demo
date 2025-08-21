@@ -156,7 +156,9 @@ async function signedFetchFromEvent(req) {
     }
 
     const dpop = await ensureDPoP();
-    const url = canonicalUrl(req.url);
+    // Use current origin for canonicalization to support multi-domain
+    const currentOrigin = getOrigin();
+    const url = canonicalUrl(req.url, currentOrigin);
     const method = req.method.toUpperCase();
 
     swLogger.debug('Signing request:', { url, method });

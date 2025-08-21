@@ -1,6 +1,6 @@
 # server/main.py
 import os, json, secrets, logging, asyncio, base64, hashlib
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import FastAPI, Request, HTTPException, Depends
@@ -38,6 +38,7 @@ EXTERNAL_ORIGIN = SETTINGS.external_origin
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s stronghold %(message)s")
 log = logging.getLogger("stronghold")
 log.info("Loaded config from: %s", SETTINGS.cfg_file_used or "<defaults>")
+log.info("Allowed origins: %s", SETTINGS.allowed_origins)
 
 # ---------------- Security / request-id middleware ----------------
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -109,6 +110,43 @@ def _bracket_host(host: str) -> str:
     if host and ":" in host and not host.startswith("["):
         return f"[{host}]"
     return host
+
+def _is_allowed_origin(url: str, allowed_origins: List[str]) -> bool:
+    """Check if a URL's origin is in the allowed origins list."""
+    try:
+        parsed_url = urlsplit(url)
+        url_origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        return url_origin in allowed_origins
+    except Exception:
+        return False
+
+def _canonicalize_url_for_validation(url: str, allowed_origins: List[str]) -> Optional[str]:
+    """Canonicalize URL and validate against allowed origins."""
+    try:
+        parsed_url = urlsplit(url)
+        scheme = parsed_url.scheme.lower()
+        host = parsed_url.hostname.lower() if parsed_url.hostname else ""
+        port = parsed_url.port
+        
+        # Handle default ports
+        if ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
+            port = None
+            
+        # Reconstruct netloc
+        if port:
+            netloc = f"{host}:{port}"
+        else:
+            netloc = host
+            
+        # Reconstruct URL
+        canonical = urlunsplit((scheme, netloc, parsed_url.path or "/", parsed_url.query, ""))
+        
+        # Check if origin is allowed
+        if _is_allowed_origin(canonical, allowed_origins):
+            return canonical
+        return None
+    except Exception:
+        return None
 
 def canonicalize_origin_and_url(request: Request) -> Tuple[str, str]:
     if EXTERNAL_ORIGIN:
@@ -303,8 +341,13 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
         _nonce_fail_response(sid, "bind token sid mismatch")
 
     origin, full_url = canonicalize_origin_and_url(req)
-    if bind_payload.get("aud") != origin:
-        _nonce_fail_response(sid, "bind token aud mismatch")
+    # Validate aud against allowed origins (multi-domain support)
+    aud = bind_payload.get("aud")
+    if not aud:
+        _nonce_fail_response(sid, "missing aud")
+    
+    if aud not in SETTINGS.allowed_origins:
+        _nonce_fail_response(sid, f"bind token aud not allowed: {aud}")
 
     try:
         h_b64, p_b64, _ = dpop_hdr.split(".")
@@ -321,8 +364,32 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
 
         jose_jws.verify(dpop_hdr, jwk, algorithms=["ES256"])
 
-        if payload.get("htu") != full_url:
-            _nonce_fail_response(sid, "htu mismatch")
+        # Validate htu against allowed origins (multi-domain support)
+        htu = payload.get("htu")
+        if not htu:
+            _nonce_fail_response(sid, "missing htu")
+        
+        log.debug("DPoP validation - htu: %s, full_url: %s, allowed_origins: %s", htu, full_url, SETTINGS.allowed_origins)
+        
+        # Try to canonicalize and validate the htu against allowed origins
+        canonical_htu = _canonicalize_url_for_validation(htu, SETTINGS.allowed_origins)
+        if not canonical_htu:
+            log.warning("DPoP validation failed - htu origin not allowed: %s (allowed: %s)", htu, SETTINGS.allowed_origins)
+            _nonce_fail_response(sid, f"htu origin not allowed: {htu}")
+        
+        log.debug("DPoP validation - canonical_htu: %s", canonical_htu)
+        
+        # For path and query validation, we can use the canonicalized htu
+        # but we need to ensure the path and query match what we expect
+        expected_parts = urlsplit(full_url)
+        htu_parts = urlsplit(canonical_htu)
+        
+        if expected_parts.path != htu_parts.path:
+            log.warning("DPoP validation failed - path mismatch: expected %s, got %s", expected_parts.path, htu_parts.path)
+            _nonce_fail_response(sid, f"htu path mismatch: expected {expected_parts.path}, got {htu_parts.path}")
+        if expected_parts.query != htu_parts.query:
+            log.warning("DPoP validation failed - query mismatch: expected %s, got %s", expected_parts.query, htu_parts.query)
+            _nonce_fail_response(sid, f"htu query mismatch: expected {expected_parts.query}, got {htu_parts.query}")
         if payload.get("htm","").upper() != req.method.upper():
             _nonce_fail_response(sid, "htm mismatch")
         if abs(now() - int(payload.get("iat",0))) > SKEW_SEC:

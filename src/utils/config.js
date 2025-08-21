@@ -16,6 +16,12 @@ export const CONFIG = {
     WEBAUTHN_AUTHENTICATION_OPTIONS: '/webauthn/authentication/options',
     WEBAUTHN_AUTHENTICATION_VERIFY: '/webauthn/authentication/verify',
   },
+  // Allowed origins for multi-domain support
+  ALLOWED_ORIGINS: [
+    'http://localhost:8000',
+    'https://dpop.fun',
+    'https://stronghold.onrender.com'
+  ],
   CRYPTO: {
     KEY_SIZE: 32,
     ALGORITHM: 'ES256',

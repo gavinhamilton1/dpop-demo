@@ -1,6 +1,10 @@
 # server/stronghold.dev.yaml
 server:
   external_origin: null                # e.g. https://dpop.fun in prod; null in dev to infer from Host
+  allowed_origins:                     # List of allowed origins for multi-domain support
+    - http://localhost:8000
+    - https://dpop.fun
+    - https://stronghold.onrender.com
   ec_private_key_pem_file: null        # optional: path to ES256 private key PEM
   ec_private_key_pem: null             # optional: inline PEM (dev only)
 

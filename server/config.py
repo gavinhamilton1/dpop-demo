@@ -4,7 +4,7 @@ import os
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Literal, Dict, Any, List
 import yaml
 
 log = logging.getLogger("stronghold")
@@ -13,6 +13,7 @@ log = logging.getLogger("stronghold")
 class Settings:
     # Server / external
     external_origin: Optional[str]
+    allowed_origins: List[str]  # List of allowed origins for multi-domain support
     # Cookie/session
     session_cookie_name: str
     session_samesite: Literal["lax","strict","none"]
@@ -46,6 +47,7 @@ class Settings:
 _DEFAULTS: Dict[str, Any] = {
     "server": {
         "external_origin": None,
+        "allowed_origins": [],  # List of allowed origins for multi-domain support
         "ec_private_key_pem": None,
         "ec_private_key_pem_file": None,
     },
@@ -175,6 +177,7 @@ def load_settings(path: Optional[str] = None) -> Settings:
 
     s = Settings(
         external_origin=(cfg.get("server") or {}).get("external_origin"),
+        allowed_origins=(cfg.get("server") or {}).get("allowed_origins", []),
         session_cookie_name=(cfg.get("session") or {}).get("cookie_name") or "stronghold_session",
         session_samesite=((cfg.get("session") or {}).get("same_site") or "lax").lower(),  # type: ignore
         session_secret_key=(cfg.get("session") or {}).get("secret_key"),

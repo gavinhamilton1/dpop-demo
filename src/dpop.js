@@ -8,14 +8,20 @@ import { CONFIG } from './utils/config.js';
 export function canonicalUrl(inputUrl, base) {
   try {
     validateUrl(inputUrl);
-    const u = new URL(inputUrl, base ?? (globalThis.location?.origin ?? globalThis.self?.location?.origin ?? 'http://localhost'));
+    
+    // If no base is provided, use the current origin
+    if (!base) {
+      base = globalThis.location?.origin || globalThis.self?.location?.origin || 'http://localhost';
+    }
+    
+    const u = new URL(inputUrl, base);
     const scheme = u.protocol.toLowerCase();
     const host = u.hostname.toLowerCase();
     let port = u.port;
     if ((scheme === 'https:' && port === '443') || (scheme === 'http:' && port === '80')) port = '';
     const netloc = port ? `${host}:${port}` : host;
     const canonical = `${scheme}//${netloc}${u.pathname || '/'}${u.search || ''}`;
-    cryptoLogger.debug('Canonicalized URL:', { input: inputUrl, output: canonical });
+    cryptoLogger.debug('Canonicalized URL:', { input: inputUrl, output: canonical, base });
     return canonical;
   } catch (error) {
     if (error.name === 'StrongholdError') throw error;

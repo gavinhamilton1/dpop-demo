@@ -272,7 +272,9 @@ export async function strongholdFetch(url, { method = 'GET', body = null } = {})
     
     const bind = await ensureBinding();
     const dpop = await ensureDPoP();
-    const fullUrl = canonicalUrl(url);
+    // Use current origin for canonicalization to support multi-domain
+    const currentOrigin = globalThis.location?.origin || globalThis.self?.location?.origin || 'http://localhost';
+    const fullUrl = canonicalUrl(url, currentOrigin);
     
     let proof = await createDpopProof({ 
       url: fullUrl, method, 

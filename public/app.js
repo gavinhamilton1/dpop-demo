@@ -464,7 +464,7 @@ import * as Passkeys from '/src/passkeys.js';
         }
         
         // Start monitoring link status
-        pollLinkStatus(linkId);
+        monitorLinkStatus(linkId);
         
         addLog('Cross-device linking initiated - scan QR code with mobile device', 'info');
       } catch (e) {
@@ -633,19 +633,92 @@ import * as Passkeys from '/src/passkeys.js';
 
   // ---------- Helper Functions ----------
   
-  // Polling for link status
+  // Link status monitoring with SSE as primary, polling as fallback
+  let _currentLinkId = null;
+  let _eventSource = null;
   let _pollAbort = { on: false };
-  async function pollLinkStatus(linkId) {
+  
+  async function monitorLinkStatus(linkId) {
+    // Stop any existing monitoring
+    stopLinkMonitoring();
+    
+    _currentLinkId = linkId;
+    
+    // Try SSE first
+    if ('EventSource' in window) {
+      try {
+        addLog('Starting SSE monitoring for link status...', 'info');
+        _eventSource = new EventSource(`/link/events/${encodeURIComponent(linkId)}`);
+        
+        _eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            updateLinkStatus(data);
+            
+            if ((data.status === 'linked' && data.applied) || data.status === 'expired') {
+              stopLinkMonitoring();
+              if (data.status === 'linked') {
+                setButtonSuccess('linkBtn', 'Linked!');
+                addLog('Cross-device linking completed successfully!', 'success');
+              } else {
+                setButtonError('linkBtn', 'Expired');
+                addLog('Cross-device linking expired', 'warning');
+              }
+            }
+          } catch (e) {
+            addLog(`Failed to parse SSE data: ${e.message}`, 'error');
+          }
+        };
+        
+        _eventSource.onerror = (event) => {
+          addLog('SSE connection failed, falling back to polling...', 'warning');
+          _eventSource.close();
+          _eventSource = null;
+          startPolling(linkId);
+        };
+        
+        _eventSource.addEventListener('status', (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            updateLinkStatus(data);
+            
+            if ((data.status === 'linked' && data.applied) || data.status === 'expired') {
+              stopLinkMonitoring();
+              if (data.status === 'linked') {
+                setButtonSuccess('linkBtn', 'Linked!');
+                addLog('Cross-device linking completed successfully!', 'success');
+              } else {
+                setButtonError('linkBtn', 'Expired');
+                addLog('Cross-device linking expired', 'warning');
+              }
+            }
+          } catch (e) {
+            addLog(`Failed to parse SSE status event: ${e.message}`, 'error');
+          }
+        });
+        
+        return; // SSE started successfully
+      } catch (e) {
+        addLog(`SSE setup failed: ${e.message}, falling back to polling...`, 'warning');
+      }
+    }
+    
+    // Fallback to polling
+    startPolling(linkId);
+  }
+  
+  async function startPolling(linkId) {
+    addLog('Starting polling for link status...', 'info');
     _pollAbort.on = true;
     try {
-      while (_pollAbort.on) {
+      while (_pollAbort.on && _currentLinkId === linkId) {
         await new Promise(r => setTimeout(r, 2000));
         try {
           const j = await Stronghold.strongholdFetch(`/link/status/${encodeURIComponent(linkId)}`, { method: 'GET' });
           updateLinkStatus(j);
           
           if ((j.status === 'linked' && j.applied) || j.status === 'expired') {
-            _pollAbort.on = false;
+            stopLinkMonitoring();
             if (j.status === 'linked') {
               setButtonSuccess('linkBtn', 'Linked!');
               addLog('Cross-device linking completed successfully!', 'success');
@@ -657,11 +730,24 @@ import * as Passkeys from '/src/passkeys.js';
           }
         } catch (e) {
           addLog(`Link status check failed: ${e.message}`, 'error');
-          _pollAbort.on = false;
+          stopLinkMonitoring();
         }
       }
     } finally {
       _pollAbort.on = false;
+    }
+  }
+  
+  function stopLinkMonitoring() {
+    _pollAbort.on = false;
+    
+    if (_eventSource) {
+      _eventSource.close();
+      _eventSource = null;
+    }
+    
+    if (_currentLinkId) {
+      _currentLinkId = null;
     }
   }
 
@@ -675,6 +761,13 @@ import * as Passkeys from '/src/passkeys.js';
   // Initial status check
   const checkInitialStatus = async () => {
     try {
+      // Stop any existing monitoring
+      stopLinkMonitoring();
+      
+      // Clear any existing QR containers
+      const qrContainer = document.querySelector('.qr-container');
+      if (qrContainer) qrContainer.remove();
+      
       const bind = (await Stronghold.get('bind'))?.value || null;
       if (bind) {
         addLog('Existing session found - ready to continue', 'info');
