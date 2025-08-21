@@ -1,10 +1,11 @@
 // test/stronghold.test.js
 import { jest } from '@jest/globals';
 import {
-  canonicalUrl, ensureBIK, ensureDPoP, createDpopProof,
+  ensureBIK, ensureDPoP,
   strongholdFetch, sessionInit, bikRegisterStep, dpopBindStep,
   get as CoreGet, set as CoreSet, clientFlush
 } from '/src/stronghold.js';
+import { canonicalUrl, createDpopProof } from '/src/dpop.js';
 import { idbGet, idbPut, STORES } from '/src/idb.js';
 
 const jsonRes = (status, body, headers = {}) => ({
