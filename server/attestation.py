@@ -3,14 +3,17 @@ from __future__ import annotations
 import json, hashlib, base64
 from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple, Optional
-from urllib.parse import urlsplit
 
 import cbor2
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.x509.oid import ObjectIdentifier
+
+from server.config import load_settings
+
+# -------- Config-backed settings --------
+SETTINGS = load_settings()
 
 # Utilities
 b64u = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
@@ -27,55 +30,72 @@ class AAGUIDAllowlist:
     allowed: Set[str]
 
     @staticmethod
-    def load(path: str = None) -> 'AAGUIDAllowlist':
-        # Provide your own list (hex without dashes). Empty set means "allow any" *after* trust validation.
-        # Example: { "ee882879721c-...": true } → store as hex without dashes
-        default_allowed: Set[str] = set()  # TODO: populate with your approved AAGUIDs
+    def load(path: Optional[str] = None) -> 'AAGUIDAllowlist':
+        """
+        Loads an AAGUID allowlist JSON mapping of { aaguid_hex[with/without-dashes]: true/false }.
+        If `path` is not provided, falls back to Settings.aaguid_allow_path. Empty set => allow any
+        AAGUID *after* cryptographic verification and (optionally) trust-chain validation.
+        """
+        # Default: empty means "allow any AAGUID" (policy decided elsewhere)
+        if path is None:
+            path = SETTINGS.aaguid_allow_path
         if not path:
-            return AAGUIDAllowlist(allowed=default_allowed)
+            return AAGUIDAllowlist(allowed=set())
         with open(path, 'r') as f:
             j = json.load(f)
-        return AAGUIDAllowlist(allowed=set([k.replace('-', '').lower() for k,v in j.items() if v]))
+        return AAGUIDAllowlist(allowed=set([k.replace('-', '').lower() for k, v in j.items() if v]))
 
-# Minimal COSE EC2 → JWK and AAGUID extraction
+# -------- Minimal COSE → JWK --------
 
 def cose_to_jwk(cbor_bytes: bytes) -> dict:
     m = cbor2.loads(cbor_bytes)
-    kty = m.get(1); alg = m.get(3)
-    crv = m.get(-1); x = m.get(-2); y = m.get(-3)
-    if kty == 2 and crv == 1:  # EC2 P-256
+    kty = m.get(1)   # 1=OKP, 2=EC2, 3=RSA
+    if kty == 2:  # EC2
+        crv = m.get(-1); x = m.get(-2); y = m.get(-3)
+        if crv != 1:  # P-256 only
+            raise AttestationFailure("unsupported EC curve")
         return {"kty":"EC","crv":"P-256","x":b64u(x),"y":b64u(y),"alg":"ES256"}
     if kty == 3:  # RSA
         n = m.get(-1); e = m.get(-2)
         return {"kty":"RSA","n":b64u(n),"e":b64u(e),"alg":"RS256"}
     raise AttestationFailure("unsupported COSE key")
 
-# Verify cert chain to a set of trusted self-signed roots using naive path building
+# -------- Verify cert chain to trusted roots (naive path building) --------
 
 def _verify_chain_x5c(x5c: List[bytes], trusted_roots: List[x509.Certificate]) -> Tuple[bool, List[str]]:
     if not x5c:
         return False, []
     certs = [x509.load_der_x509_certificate(c) for c in x5c]
     # Step 1: verify linear chain signatures (leaf→...→root)
-    for i in range(len(certs)-1):
-        issuer = certs[i+1].public_key()
+    for i in range(len(certs) - 1):
+        issuer_pk = certs[i + 1].public_key()
         cert = certs[i]
-        issuer.verify(cert.signature, cert.tbs_certificate_bytes, padding.PKCS1v15() if hasattr(issuer, 'verifier') else ec.ECDSA(cert.signature_hash_algorithm), cert.signature_hash_algorithm)
-    # Step 2: anchor match (by SPKI hash) against any trusted root
-    anchors = [c for c in trusted_roots]
-    leaf_to_root = certs[-1]
-    anchors_fp = set([leaf_to_root.fingerprint(hashes.SHA256()) for leaf_to_root in anchors])
-    ok = certs[-1].fingerprint(hashes.SHA256()) in anchors_fp
+        try:
+            if isinstance(issuer_pk, rsa.RSAPublicKey):
+                issuer_pk.verify(cert.signature, cert.tbs_certificate_bytes, padding.PKCS1v15(), cert.signature_hash_algorithm)
+            else:
+                issuer_pk.verify(cert.signature, cert.tbs_certificate_bytes, ec.ECDSA(cert.signature_hash_algorithm))
+        except Exception:
+            return False, []
+    # Step 2: anchor match (accept if any provided cert matches a trusted root)
     chain_fps = [cert.fingerprint(hashes.SHA256()).hex() for cert in certs]
-    if not ok:
-        # Some attestation chains include an intermediate, and the actual anchor is external; relax: accept when any provided cert equals a trusted anchor.
-        anchor_fps = set([c.fingerprint(hashes.SHA256()) for c in anchors])
-        ok = any(c.fingerprint(hashes.SHA256()) in anchor_fps for c in certs)
+    if not trusted_roots:
+        return True, chain_fps
+    anchor_fps = set(c.fingerprint(hashes.SHA256()) for c in trusted_roots)
+    ok = any(c.fingerprint(hashes.SHA256()) in anchor_fps for c in certs)
     return ok, chain_fps
 
-# Packed attestation validation with x5c (basic)
+# -------- Packed attestation validation with x5c --------
 
-def verify_packed_attestation_x5c(attStmt: dict, authData: bytes, client_hash: bytes, *, expected_rp_id: str, allowed_aaguids: Set[str]):
+def verify_packed_attestation_x5c(
+    attStmt: dict,
+    authData: bytes,
+    client_hash: bytes,
+    *,
+    expected_rp_id: str,
+    allowed_aaguids: Set[str],
+    mds_roots_path: Optional[str] = None,  # if None, uses Settings.mds_roots_path
+):
     # Extract AAGUID, credId, COSE key
     if len(authData) < 37:
         raise AttestationFailure("authData too short")
@@ -98,7 +118,6 @@ def verify_packed_attestation_x5c(attStmt: dict, authData: bytes, client_hash: b
     x5c = attStmt.get('x5c')
     if not x5c:
         raise AttestationFailure("packed: missing x5c")
-    # x5c may be CBOR bstrs; ensure bytes list
     x5c_bytes = [bytes(x) for x in x5c]
     leaf = x509.load_der_x509_certificate(x5c_bytes[0])
     alg = attStmt.get('alg', -7)
@@ -112,36 +131,45 @@ def verify_packed_attestation_x5c(attStmt: dict, authData: bytes, client_hash: b
     else:
         raise AttestationFailure("unsupported packed alg")
 
-    # AAGUID extension in attestation cert (optional but nice): 1.3.6.1.4.1.45724.1.1.4
+    # Optional AAGUID cert extension check: 1.3.6.1.4.1.45724.1.1.4
     try:
         ext = leaf.extensions.get_extension_for_oid(ObjectIdentifier('1.3.6.1.4.1.45724.1.1.4')).value
-        if ext and hasattr(ext, 'value'):
-            if ext.value != aaguid:
-                raise AttestationFailure("certificate AAGUID != authData AAGUID")
+        if ext and hasattr(ext, 'value') and ext.value != aaguid:
+            raise AttestationFailure("certificate AAGUID != authData AAGUID")
     except Exception:
-        pass  # not all certs carry this extension
+        pass  # not all certs carry the extension
 
-    # Trust anchors — you must provide your own MDS-derived anchors per AAGUID; here we accept any if allowlist is empty.
-    chain_ok, chain_fps = True, []
+    # Trust anchors (per-AAGUID) — optional unless allowlist is enforced.
+    chain_fps: List[str] = []
     if allowed_aaguids:
-        # When enforcing allowlist, require x5c chain anchor to be present in your trust store.
-        # Load anchors from local file mapping AAGUID -> list of DER roots. Left as integration hook.
+        # Only enforce chain anchoring when you explicitly allowlist devices.
+        if mds_roots_path is None:
+            mds_roots_path = SETTINGS.mds_roots_path
+        if not mds_roots_path:
+            raise AttestationFailure("no MDS roots path configured; set passkeys.mds_roots_path or disable allowlist")
         try:
-            with open('server/mds_roots.json','r') as f:
-                m = json.load(f)
-            roots = [x509.load_pem_x509_certificate(r.encode()) for r in m.get(aaguid.hex(), [])]
-            if roots:
-                ok, chain_fps = _verify_chain_x5c(x5c_bytes, roots)
-                if not ok:
-                    raise AttestationFailure("attestation chain not anchored to trusted root for AAGUID")
+            with open(mds_roots_path, 'r') as f:
+                m = json.load(f)  # { aaguid_hex: [PEM, PEM, ...] }
+            pem_list = m.get(aaguid.hex(), [])
+            roots: List[x509.Certificate] = []
+            for pem in pem_list:
+                try:
+                    roots.append(x509.load_pem_x509_certificate(pem.encode()))
+                except Exception:
+                    pass
+            ok, chain_fps = _verify_chain_x5c(x5c_bytes, roots)
+            if not ok:
+                raise AttestationFailure("attestation chain not anchored to trusted root for AAGUID")
         except FileNotFoundError:
-            raise AttestationFailure("no MDS roots available; provide server/mds_roots.json or disable allowlist")
+            raise AttestationFailure("MDS roots file not found")
+        except json.JSONDecodeError:
+            raise AttestationFailure("invalid MDS roots file format")
 
     jwk = cose_to_jwk(cose)
 
     return {
         'aaguid': aaguid,
-        'cred_id': base64.urlsafe_b64encode(credId).rstrip(b'=').decode(),
+        'cred_id': b64u(credId),
         'jwk': jwk,
         'sign_count': signCount,
         'trust_chain': chain_fps,

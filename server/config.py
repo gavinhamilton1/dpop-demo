@@ -1,68 +1,26 @@
 # server/config.py
 from __future__ import annotations
 import os
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Optional, Literal, Dict, Any
+import yaml
 
-try:
-    import yaml  # add PyYAML to server/requirements.txt
-except Exception:  # pragma: no cover
-    yaml = None
-
-# Fallbacks
-_DEF_DB_PATH = str((Path(__file__).resolve().parent / "stronghold.db"))
-_DEF_SECRET_FILE = "/etc/secrets/STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM"
-
-def _load_yaml() -> dict:
-    """
-    Load YAML config from STRONGHOLD_CONFIG if set,
-    otherwise server/stronghold.yml or server/stronghold.yaml if present.
-    """
-    path = os.getenv("STRONGHOLD_CONFIG")
-    if not path:
-        base = Path(__file__).resolve().parent
-        for name in ("stronghold.yml", "stronghold.yaml"):
-            p = base / name
-            if p.exists():
-                path = str(p)
-                break
-    if not path or yaml is None:
-        return {}
-    p = Path(path)
-    if not p.exists():
-        return {}
-    return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-
-def _g(cfg: dict, dotted: str, default=None):
-    node = cfg
-    for part in dotted.split("."):
-        if not isinstance(node, dict) or part not in node:
-            return default
-        node = node[part]
-    return node
-
-def _bool_env(key: str, default: bool) -> bool:
-    v = os.getenv(key)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
-
-def _samesite(v: Optional[str], default: str="lax") -> Literal["lax","strict","none"]:
-    v = (v or default).strip().lower()
-    return v if v in ("lax","strict","none") else "lax"
+log = logging.getLogger("stronghold")
 
 @dataclass
 class Settings:
-    # Server
+    # Server / external
     external_origin: Optional[str]
-    # Cookies
+    # Cookie/session
     session_cookie_name: str
     session_samesite: Literal["lax","strict","none"]
+    session_secret_key: Optional[str]
     dev_allow_insecure_cookie: bool
     # DB
     db_path: str
-    # Passkeys
+    # Passkeys / attestation
     passkeys_policy: Literal["compat","strict"]
     aaguid_allow_path: Optional[str]
     mds_roots_path: Optional[str]
@@ -72,85 +30,169 @@ class Settings:
     nonce_ttl: int
     jti_ttl: int
     bind_ttl: int
+    # Linking
+    link_ttl_seconds: int
     # Keys
     server_ec_private_key_pem: Optional[str]
     server_ec_private_key_pem_file: Optional[str]
-    # For visibility
-    cfg_file_used: Optional[str]
+    # Logging
+    log_level: str
+    # Informational
+    cfg_file_used: Optional[str] = None
 
     @property
     def https_only(self) -> bool:
         return not self.dev_allow_insecure_cookie
 
-def load_settings() -> Settings:
-    cfg = _load_yaml()
+_DEFAULTS: Dict[str, Any] = {
+    "server": {
+        "external_origin": None,
+        "ec_private_key_pem": None,
+        "ec_private_key_pem_file": None,
+    },
+    "db": {"path": "/data/stronghold.db"},
+    "session": {
+        "cookie_name": "stronghold_session",
+        "same_site": "lax",
+        "secret_key": None,  # if None, app will generate an ephemeral key on startup (dev only)
+        "dev_allow_insecure_cookie": True,
+    },
+    "passkeys": {
+        "policy": "compat",
+        "aaguid_allow_path": None,
+        "mds_roots_path": None,
+    },
+    "security": {"skew_sec": 120, "nonce_window": 5, "nonce_ttl": 60, "jti_ttl": 60, "bind_ttl": 3600},
+    "linking": {"ttl_seconds": 180},
+    "logging": {"level": "INFO"},
+}
 
-    external_origin = (
-        os.getenv("EXTERNAL_ORIGIN")
-        or os.getenv("STRONGHOLD_EXTERNAL_ORIGIN")
-        or _g(cfg, "server.external_origin")
-    )
+_SEARCH_ORDER = (
+    "stronghold.yaml",
+    "stronghold.yml",
+    "stronghold.dev.yaml",
+)
 
-    db_path = os.getenv("STRONGHOLD_DB_PATH") or _g(cfg, "db.path", _DEF_DB_PATH)
+def _merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(a)
+    for k, v in (b or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _merge(out[k], v)
+        else:
+            out[k] = v
+    return out
 
-    session_cookie_name = (
-        os.getenv("SESSION_COOKIE_NAME")
-        or _g(cfg, "session.cookie_name", "stronghold_session")
-    )
-    session_samesite = _samesite(os.getenv("SESSION_SAMESITE") or _g(cfg, "session.same_site"), "lax")
-    dev_allow_insecure_cookie = _bool_env("DEV_ALLOW_INSECURE_COOKIE", _g(cfg, "session.dev_allow_insecure_cookie", False))
+def _resolve_path(s: str, base_dir: Path) -> Optional[Path]:
+    """
+    Try multiple resolution strategies for a relative path:
+    - as given relative to CWD
+    - relative to server/ (this module)
+    - relative to repo root (parent of server/)
+    Return first existing path; else None.
+    """
+    p = Path(s)
+    if p.is_absolute():
+        return p if p.exists() else None
+    candidates = [
+        Path.cwd() / p,
+        base_dir / p,
+        base_dir.parent / p,
+        p,  # raw relative
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return None
 
-    passkeys_policy = (os.getenv("PASSKEYS_POLICY") or _g(cfg, "passkeys.policy", "compat")).lower()
-    if passkeys_policy not in ("compat","strict"):
-        passkeys_policy = "compat"
-    aaguid_allow_path = os.getenv("AAGUID_ALLOW_PATH") or _g(cfg, "passkeys.aaguid_allow_path")
-    mds_roots_path = os.getenv("MDS_ROOTS_PATH") or _g(cfg, "passkeys.mds_roots_path")
+def load_settings(path: Optional[str] = None) -> Settings:
+    """
+    Load YAML settings with sensible overrides:
 
-    skew_sec     = int(os.getenv("STRONGHOLD_SKEW_SEC"    , _g(cfg, "security.skew_sec"   , 120)))
-    nonce_window = int(os.getenv("STRONGHOLD_NONCE_WINDOW", _g(cfg, "security.nonce_window", 5)))
-    nonce_ttl    = int(os.getenv("STRONGHOLD_NONCE_TTL"   , _g(cfg, "security.nonce_ttl"  , 60)))
-    jti_ttl      = int(os.getenv("STRONGHOLD_JTI_TTL"     , _g(cfg, "security.jti_ttl"    , 60)))
-    bind_ttl     = int(os.getenv("STRONGHOLD_BIND_TTL"    , _g(cfg, "security.bind_ttl"   , 3600)))
+    Priority:
+      1) explicit `path` arg (absolute or relative)
+      2) env STRONGHOLD_CONFIG (absolute or relative; robustly resolved)
+      3) search order inside server/: stronghold.yaml|yml|stronghold.dev.yaml
+    """
+    base_dir = Path(__file__).resolve().parent
+    cfg_file_used: Optional[Path] = None
 
-    pem_inline = os.getenv("STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM") or _g(cfg, "server.ec_private_key_pem")
-    pem_file   = (
-        os.getenv("STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM_FILE")
-        or _g(cfg, "server.ec_private_key_pem_file")
-        or (_DEF_SECRET_FILE if Path(_DEF_SECRET_FILE).exists() else None)
-    )
-    pem = pem_inline or (Path(pem_file).read_text(encoding="utf-8") if pem_file and Path(pem_file).exists() else None)
+    if path:
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = _resolve_path(path, base_dir) or candidate
+        if not candidate or not candidate.exists():
+            raise FileNotFoundError(f"Config file not found: {candidate}")
+        cfg_file_used = candidate
+    else:
+        env_cfg = os.getenv("STRONGHOLD_CONFIG")
+        if env_cfg:
+            candidate = _resolve_path(env_cfg, base_dir)
+            if not candidate:
+                tried = [
+                    str(Path(env_cfg)),
+                    str(base_dir / env_cfg),
+                    str(base_dir.parent / env_cfg),
+                    str(Path.cwd() / env_cfg),
+                ]
+                raise FileNotFoundError(
+                    "STRONGHOLD_CONFIG not found. Tried: " + ", ".join(tried)
+                )
+            cfg_file_used = candidate
+        else:
+            for name in _SEARCH_ORDER:
+                p = base_dir / name
+                if p.exists():
+                    cfg_file_used = p
+                    break
 
-    cfg_file_used = os.getenv("STRONGHOLD_CONFIG")
-    if not cfg_file_used:
-        base = Path(__file__).resolve().parent
-        for name in ("stronghold.yml", "stronghold.yaml"):
-            if (base / name).exists():
-                cfg_file_used = str(base / name)
-                break
+    data: Dict[str, Any] = {}
+    if cfg_file_used:
+        with open(cfg_file_used, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        log.info("Loaded config from: %s", str(cfg_file_used))
 
-    return Settings(
-        external_origin=external_origin,
-        session_cookie_name=session_cookie_name,
-        session_samesite=session_samesite,
-        dev_allow_insecure_cookie=dev_allow_insecure_cookie,
-        db_path=str(db_path),
-        passkeys_policy=passkeys_policy,
-        aaguid_allow_path=aaguid_allow_path,
-        mds_roots_path=mds_roots_path,
-        skew_sec=skew_sec,
-        nonce_window=nonce_window,
-        nonce_ttl=nonce_ttl,
-        jti_ttl=jti_ttl,
-        bind_ttl=bind_ttl,
+    cfg = _merge(_DEFAULTS, data)
+
+    # Resolve private key material: prefer inline, else file
+    pem_inline = (cfg.get("server") or {}).get("ec_private_key_pem")
+    pem_file   = (cfg.get("server") or {}).get("ec_private_key_pem_file")
+    pem: Optional[str] = None
+    if pem_inline:
+        pem = pem_inline
+    elif pem_file:
+        p = Path(pem_file)
+        if not p.is_absolute():
+            p = _resolve_path(pem_file, base_dir) or (base_dir / p)
+        if p and p.exists():
+            pem = p.read_text(encoding="utf-8")
+
+    # Normalize db path
+    db_path = (cfg.get("db") or {}).get("path") or "/data/stronghold.db"
+    dbp = Path(db_path)
+    if not dbp.is_absolute():
+        # relative to server/ to ease local dev (e.g., data/stronghold.db)
+        dbp = base_dir / dbp
+    db_path = str(dbp)
+
+    s = Settings(
+        external_origin=(cfg.get("server") or {}).get("external_origin"),
+        session_cookie_name=(cfg.get("session") or {}).get("cookie_name") or "stronghold_session",
+        session_samesite=((cfg.get("session") or {}).get("same_site") or "lax").lower(),  # type: ignore
+        session_secret_key=(cfg.get("session") or {}).get("secret_key"),
+        dev_allow_insecure_cookie=bool((cfg.get("session") or {}).get("dev_allow_insecure_cookie", False)),
+        db_path=db_path,
+        passkeys_policy=((cfg.get("passkeys") or {}).get("policy") or "compat"),
+        aaguid_allow_path=(cfg.get("passkeys") or {}).get("aaguid_allow_path"),
+        mds_roots_path=(cfg.get("passkeys") or {}).get("mds_roots_path"),
+        skew_sec=int((cfg.get("security") or {}).get("skew_sec", 120)),
+        nonce_window=int((cfg.get("security") or {}).get("nonce_window", 5)),
+        nonce_ttl=int((cfg.get("security") or {}).get("nonce_ttl", 60)),
+        jti_ttl=int((cfg.get("security") or {}).get("jti_ttl", 60)),
+        bind_ttl=int((cfg.get("security") or {}).get("bind_ttl", 3600)),
+        link_ttl_seconds=int((cfg.get("linking") or {}).get("ttl_seconds", 180)),
         server_ec_private_key_pem=pem,
         server_ec_private_key_pem_file=pem_file,
-        cfg_file_used=cfg_file_used,
+        log_level=str((cfg.get("logging") or {}).get("level") or "INFO").upper(),
+        cfg_file_used=str(cfg_file_used) if cfg_file_used else None,
     )
-
-def apply_env_overrides(s: Settings) -> None:
-    """
-    Ensure modules that read env at import time (db.py, passkeys.py) see the right values.
-    Call this BEFORE importing those modules.
-    """
-    os.environ.setdefault("STRONGHOLD_DB_PATH", s.db_path)
-    os.environ["PASSKEYS_POLICY"] = s.passkeys_policy
+    return s

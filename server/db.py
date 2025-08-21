@@ -1,23 +1,37 @@
 # server/db.py
 from __future__ import annotations
-import os, json, asyncio
+import json, asyncio
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
-import aiosqlite
 
-# Read from env (Render: set STRONGHOLD_DB_PATH=/data/stronghold.db)
-DB_PATH = os.getenv("STRONGHOLD_DB_PATH", str(Path(__file__).resolve().parent / "stronghold.db"))
+import aiosqlite
+from server.config import load_settings
+
+# Load config once at import
+_SETTINGS = load_settings()
+_DEFAULT_DB_PATH = Path(_SETTINGS.db_path)
 
 class Database:
     def __init__(self, path: Optional[str] = None):
-        self.path = str(Path(path or DB_PATH))
-        # Ensure parent dir exists (works for /data on Render too)
+        # Prefer explicit path, else config file path
+        self.path = str(Path(path) if path else _DEFAULT_DB_PATH)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._conn: Optional[aiosqlite.Connection] = None
         self._lock = asyncio.Lock()
 
-    async def init(self):
-        # Open once; do NOT await/enter this connection again (prevents “threads can only be started once”)
+    async def init(self, path: Optional[str] = None):
+        """
+        Initialize (or re-initialize) the DB connection.
+        If `path` is provided and differs from the current path, the connection is reopened.
+        """
+        if path:
+            new_path = str(Path(path))
+            if new_path != self.path:
+                # Re-point and reopen if needed
+                await self.close()
+                self.path = new_path
+                Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+
         if self._conn is None:
             self._conn = await aiosqlite.connect(self.path)
             self._conn.row_factory = aiosqlite.Row
@@ -244,4 +258,4 @@ class Database:
 
 
 # Export a singleton used by main.py
-DB = Database(DB_PATH)
+DB = Database()  # will use config-provided path by default

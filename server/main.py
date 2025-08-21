@@ -1,42 +1,45 @@
 # server/main.py
 import os, json, time, base64, secrets, logging, asyncio
 from typing import Dict, Any, Tuple
+from urllib.parse import urlsplit, urlunsplit
+
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware import Middleware
 from starlette.responses import FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
 from jose import jws as jose_jws
 from jose.utils import base64url_decode
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
-from urllib.parse import urlsplit, urlunsplit
 
-# Use the singleton DB that your db.py exports
-from server.db import DB  # <-- Database() instance with .init(), session + passkey methods
-
+from server.config import load_settings
+from server.db import DB  # singleton DB instance
 from server.passkeys import get_router as get_passkeys_router
 from server.linking import get_router as get_linking_router
 
-SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "lax").lower()  # default lax in dev
+# ---------------- Config ----------------
+SETTINGS = load_settings()
 
-LOG_LEVEL = os.getenv("STRONGHOLD_LOG_LEVEL", "INFO").upper()
-SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "stronghold_session")
-HTTPS_ONLY = os.getenv("DEV_ALLOW_INSECURE_COOKIE", "") != "1"
-SKEW_SEC = int(os.getenv("STRONGHOLD_SKEW_SEC", "120"))
-NONCE_WINDOW = int(os.getenv("STRONGHOLD_NONCE_WINDOW", "5"))
-NONCE_TTL = int(os.getenv("STRONGHOLD_NONCE_TTL", "60"))
-JTI_TTL = int(os.getenv("STRONGHOLD_JTI_TTL", "60"))
-BIND_TTL = int(os.getenv("STRONGHOLD_BIND_TTL", "3600"))
-EXTERNAL_ORIGIN = os.getenv("STRONGHOLD_EXTERNAL_ORIGIN")
+LOG_LEVEL = SETTINGS.log_level
+SESSION_SAMESITE = SETTINGS.session_samesite
+SESSION_COOKIE_NAME = SETTINGS.session_cookie_name
+HTTPS_ONLY = SETTINGS.https_only
+SKEW_SEC = SETTINGS.skew_sec
+NONCE_WINDOW = SETTINGS.nonce_window
+NONCE_TTL = SETTINGS.nonce_ttl
+JTI_TTL = SETTINGS.jti_ttl
+BIND_TTL = SETTINGS.bind_ttl
+EXTERNAL_ORIGIN = SETTINGS.external_origin
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s stronghold %(message)s")
 log = logging.getLogger("stronghold")
+log.info("Loaded config from: %s", SETTINGS.cfg_file_used or "<defaults>")
 
 # ---------------- Security / request-id middleware ----------------
-from starlette.middleware.base import BaseHTTPMiddleware
-
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         csp = (
@@ -74,53 +77,18 @@ class FetchMetadataMiddleware(BaseHTTPMiddleware):
         return JSONResponse({"detail": "blocked by fetch-metadata"}, status_code=403)
 
 # ---------------- Server signing key (ES256) ----------------
-def _load_server_private_key_pem() -> str | None:
-    """
-    Load PEM from (in order):
-      1) STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM (PEM text)
-      2) STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM (treat as filesystem path if exists)
-      3) STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM_FILE (explicit path env var)
-      4) /etc/secrets/STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM (Render Secret File)
-      5) ./STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM (project root file, optional)
-    """
-    env_val = os.getenv("STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM")
-    if env_val:
-        if "-----BEGIN" in env_val:
-            log.info("Loaded ES256 private key from STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM env (inline PEM).")
-            return env_val
-        if os.path.exists(env_val):
-            try:
-                with open(env_val, "r", encoding="utf-8") as f:
-                    log.info("Loaded ES256 private key from path in STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM env.")
-                    return f.read()
-            except Exception:
-                pass
-
-    path_env = os.getenv("STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM_FILE")
-    candidates = [
-        path_env,
-        "/etc/secrets/STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM",  # Render Secret File default
-        os.path.join(os.getcwd(), "STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM"),
-    ]
-    for p in [c for c in candidates if c]:
-        try:
-            if os.path.exists(p):
-                with open(p, "r", encoding="utf-8") as f:
-                    log.info(f"Loaded ES256 private key from file: {p}")
-                    return f.read()
-        except Exception:
-            pass
-    return None
-
-SERVER_EC_PRIVATE_KEY_PEM = _load_server_private_key_pem()
-if not SERVER_EC_PRIVATE_KEY_PEM:
+SERVER_EC_PRIVATE_KEY_PEM: str
+if SETTINGS.server_ec_private_key_pem:
+    SERVER_EC_PRIVATE_KEY_PEM = SETTINGS.server_ec_private_key_pem
+    log.info("Loaded ES256 private key from config.")
+else:
     _priv = ec.generate_private_key(ec.SECP256R1())
     SERVER_EC_PRIVATE_KEY_PEM = _priv.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     ).decode()
-    log.warning("STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM not provided; generated ephemeral dev key.")
+    log.warning("No server EC private key configured; generated ephemeral dev key.")
 
 def _pem_to_public_jwk_and_kid(pem_priv: str):
     priv = serialization.load_pem_private_key(pem_priv.encode(), password=None)
@@ -189,7 +157,7 @@ app = FastAPI(middleware=[
     Middleware(FetchMetadataMiddleware),
     Middleware(SecurityHeadersMiddleware),
     Middleware(SessionMiddleware,
-               secret_key=os.getenv("SESSION_SECRET_KEY", base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()),
+               secret_key=(SETTINGS.session_secret_key or base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()),
                session_cookie=SESSION_COOKIE_NAME,
                https_only=HTTPS_ONLY,
                same_site=SESSION_SAMESITE),
@@ -225,7 +193,13 @@ def verify_binding_token(token: str) -> Dict[str, Any]:
 # ---- DB startup ----
 @app.on_event("startup")
 async def _init_db():
-    await DB.init()
+    # Prefer path from config; fall back if DB.init() has no parameter
+    try:
+        await DB.init(SETTINGS.db_path)  # type: ignore[arg-type]
+        log.info("DB initialized at %s", SETTINGS.db_path)
+    except TypeError:
+        log.warning("DB.init(db_path) not supported; calling DB.init() without args. Ensure DB uses %s.", SETTINGS.db_path)
+        await DB.init()
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -306,7 +280,7 @@ async def dpop_bind(req: Request):
         return JSONResponse({"bind": bind, "cnf": {"dpop_jkt": dpop_jkt}, "expires_at": _now() + BIND_TTL}, headers={"DPoP-Nonce": next_nonce})
     except HTTPException: raise
     except Exception as e:
-        log.exception("dpop_bind failed sid=%s rid=%s", sid, req.state.request_id); raise HTTPException(status_code=400, detail=f"dpop bind failed: {e}")
+        log.exception("dpop bind failed sid=%s rid=%s", sid, req.state.request_id); raise HTTPException(status_code=400, detail=f"dpop bind failed: {e}")
 
 # ---------------- DPoP gate ----------------
 def _nonce_fail_response(sid: str, detail: str) -> None:

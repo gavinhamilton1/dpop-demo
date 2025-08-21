@@ -1,17 +1,17 @@
 # server/stronghold.dev.yaml
 server:
-  external_origin: null                # e.g. https://dpop.fun in prod; null in dev to infer from Host
-  ec_private_key_pem_file: null        # optional: path to ES256 private key PEM
+  external_origin: https://dpop.fun                # e.g. https://dpop.fun in prod; null in dev to infer from Host
+  ec_private_key_pem_file: /etc/secrets/STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM 
   ec_private_key_pem: null             # optional: inline PEM (dev only)
 
 db:
-  path: ../data/stronghold.db            # <-- requested path
+  path: /data/stronghold.db            # <-- requested path
 
 session:
   cookie_name: stronghold_session
   same_site: lax
   secret_key: null                     # dev-only default (auto-generated if null)
-  dev_allow_insecure_cookie: true      # false in prod
+  dev_allow_insecure_cookie: false      # false in prod
 
 passkeys:
   policy: compat                       # compat | strict

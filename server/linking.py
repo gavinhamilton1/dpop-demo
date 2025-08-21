@@ -1,6 +1,6 @@
 # server/linking.py
 from __future__ import annotations
-import os, json, secrets, hashlib, base64, threading, asyncio, time
+import json, secrets, hashlib, base64, threading, asyncio, time, logging
 from typing import Any, Dict, Tuple, Optional, Callable, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -10,17 +10,14 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature, decode_dss_signature
 
+from server.config import load_settings
+
+log = logging.getLogger("stronghold")
+SETTINGS = load_settings()
+
 # ---------------- utils ----------------
 
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL")  # e.g. http://localhost:8000
-_LINK_TTL = int(os.getenv("LINK_TTL_SECONDS", "180"))  # seconds
-
-def external_base(req: Request) -> str:
-    if PUBLIC_BASE_URL:
-        return PUBLIC_BASE_URL.rstrip("/")
-    scheme = req.url.scheme
-    host = (req.headers.get("host") or req.url.netloc).split(",")[0].strip()
-    return f"{scheme}://{host}"
+_LINK_TTL = SETTINGS.link_ttl_seconds  # seconds
 
 def _b64u(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
@@ -45,15 +42,19 @@ _SERVER_EC_KEY = None              # lazy-initialized P-256 key
 _SERVER_KID: Optional[str] = None  # short kid (hash of pubkey)
 
 def _ensure_server_signing_key():
-    """Use STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM if provided, else ephemeral dev key."""
+    """
+    Use server EC private key PEM from config.py (Settings.server_ec_private_key_pem).
+    If not provided, generate an ephemeral dev key (warning).
+    """
     global _SERVER_EC_KEY, _SERVER_KID
     if _SERVER_EC_KEY is not None:
         return
-    pem = os.getenv("STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM")
+    pem = SETTINGS.server_ec_private_key_pem
     if pem:
         _SERVER_EC_KEY = serialization.load_pem_private_key(pem.encode(), password=None)
+        log.info("linking: loaded ES256 private key from config.")
     else:
-        print("WARNING stronghold link: STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM not set; generated ephemeral dev key.")
+        log.warning("linking: no server EC private key configured; generated ephemeral dev key.")
         _SERVER_EC_KEY = ec.generate_private_key(ec.SECP256R1())
     pub = _SERVER_EC_KEY.public_key().public_numbers()
     x = pub.x.to_bytes(32, "big"); y = pub.y.to_bytes(32, "big")
@@ -156,8 +157,7 @@ def get_router(
         token = _jws_es256_sign(payload)
 
         origin, _ = canonicalize_origin_and_url(req)
-        base = external_base(req)
-        qr_url = f"{base}/public/link.html?token={token}"
+        qr_url = f"{origin}/public/link.html?token={token}"
 
         _put_link(rid, {
             "rid": rid,

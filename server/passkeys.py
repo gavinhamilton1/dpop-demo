@@ -13,10 +13,13 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding, ed25519
 from cryptography.x509.oid import ObjectIdentifier
 
+from server.config import load_settings
+
 log = logging.getLogger("stronghold")
+SETTINGS = load_settings()
 
 # ---------------- Policy (Android-friendly by default) ----------------
-POLICY = os.getenv('PASSKEYS_POLICY', 'compat')  # 'compat' | 'strict'
+POLICY = SETTINGS.passkeys_policy  # 'compat' | 'strict'
 ALLOW_NO_ATTESTATION = (POLICY == 'compat')
 UV_MODE = 'preferred' if POLICY == 'compat' else 'required'
 RESIDENT_MODE = 'preferred' if POLICY == 'compat' else 'required'
@@ -118,6 +121,7 @@ class AAGUIDAllowlist:
 def _verify_chain_x5c(x5c: List[bytes], trusted_roots: List[x509.Certificate]) -> Tuple[bool, List[str]]:
     if not x5c: return False, []
     certs = [x509.load_der_x509_certificate(c) for c in x5c]
+    # simple chain validation (leaf->...->root)
     for i in range(len(certs)-1):
         issuer_pk = certs[i+1].public_key(); cert = certs[i]
         try:
@@ -134,7 +138,15 @@ def _verify_chain_x5c(x5c: List[bytes], trusted_roots: List[x509.Certificate]) -
     ok = any(c.fingerprint(hashes.SHA256()) in anchor_fps for c in certs)
     return ok, fps
 
-def verify_packed_attestation_x5c(attStmt: dict, authData: bytes, client_hash: bytes, *, expected_rp_id: str, allowed_aaguids: Set[str]):
+def verify_packed_attestation_x5c(
+    attStmt: dict,
+    authData: bytes,
+    client_hash: bytes,
+    *,
+    expected_rp_id: str,
+    allowed_aaguids: Set[str],
+    mds_roots_path: Optional[str]
+):
     if len(authData) < 37: raise AttestationFailure("authData too short")
     rpIdHash = authData[0:32]; flags = authData[32]
     signCount = int.from_bytes(authData[33:37], 'big')
@@ -161,6 +173,7 @@ def verify_packed_attestation_x5c(attStmt: dict, authData: bytes, client_hash: b
     else:
         raise AttestationFailure("unsupported packed alg")
 
+    # AAGUID extension sanity (best-effort)
     try:
         ext = leaf.extensions.get_extension_for_oid(ObjectIdentifier('1.3.6.1.4.1.45724.1.1.4')).value
         if ext and hasattr(ext, 'value') and ext.value != aaguid:
@@ -170,9 +183,11 @@ def verify_packed_attestation_x5c(attStmt: dict, authData: bytes, client_hash: b
 
     fps: List[str] = []
     if allowed_aaguids:
+        if not mds_roots_path:
+            raise AttestationFailure("no MDS roots available; set mds_roots_path in config or disable allowlist")
         try:
-            with open('server/mds_roots.json','r') as f:
-                m = json.load(f)
+            with open(mds_roots_path, 'r') as f:
+                m = json.load(f)  # { aaguid_hex: [PEM, PEM, ...] }
             pem_list = m.get(aaguid.hex(), [])
             roots = []
             for pem in pem_list:
@@ -182,7 +197,9 @@ def verify_packed_attestation_x5c(attStmt: dict, authData: bytes, client_hash: b
             if not ok:
                 raise AttestationFailure("attestation chain not anchored to trusted root for AAGUID")
         except FileNotFoundError:
-            raise AttestationFailure("no MDS roots available; provide server/mds_roots.json or disable allowlist")
+            raise AttestationFailure("MDS roots file not found")
+        except json.JSONDecodeError:
+            raise AttestationFailure("invalid MDS roots file format")
 
     jwk = cose_to_jwk(cose)
     return {
@@ -304,7 +321,7 @@ def get_router(
             raise HTTPException(status_code=409, detail="no stable principal on session; complete BIK/DPoP first")
         return str(pid)
 
-    # -------- Registration options (MISSING before; restored) --------
+    # -------- Registration options --------
     @router.post("/webauthn/registration/options")
     async def webauthn_reg_options(req: Request, ctx=Depends(require_dpop)):
         sid = req.session.get("sid"); s = await session_store.get_session(sid) if sid else None
@@ -385,11 +402,16 @@ def get_router(
         if UV_MODE == 'required' and (info["flags"] & 0x04) == 0:
             raise HTTPException(status_code=400, detail="user verification required")
 
-        cfg = AAGUIDAllowlist.load()
+        cfg = AAGUIDAllowlist.load(SETTINGS.aaguid_allow_path)
 
         if fmt == "packed" and "x5c" in attStmt:
             client_hash = hashlib.sha256(clientDataJSON).digest()
-            result = verify_packed_attestation_x5c(attStmt, authData, client_hash, expected_rp_id=rp_id, allowed_aaguids=cfg.allowed)
+            result = verify_packed_attestation_x5c(
+                attStmt, authData, client_hash,
+                expected_rp_id=rp_id,
+                allowed_aaguids=cfg.allowed,
+                mds_roots_path=SETTINGS.mds_roots_path
+            )
             aaguid_hex = result["aaguid"].hex(); jwk = result["jwk"]; sign_count = result["sign_count"]; trust = result.get("trust_chain", [])
             cred_id = result["cred_id"]
         elif fmt == "none" and ALLOW_NO_ATTESTATION:
@@ -436,7 +458,7 @@ def get_router(
 
         challenge = secrets.token_bytes(32)
         await session_store.update_session(
-            sid, {"webauthn_auth": {"challenge": _b64u(challenge), "ts": now_fn(), "principal": principal}}
+            sid, {"webauthn_auth": {"challenge": _b64u(challenge), "ts": _now(), "principal": principal}}
         )
 
         creds = await _maybe_await(repo.get_for_principal(principal)) or []
