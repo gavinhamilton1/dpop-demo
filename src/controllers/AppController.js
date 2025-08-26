@@ -1,0 +1,1015 @@
+// src/controllers/AppController.js
+// Main application controller
+
+import { ButtonManager } from '../components/ButtonManager.js';
+import { Logger } from '../components/Logger.js';
+import { StrongholdService } from '../services/StrongholdService.js';
+import { PasskeyService } from '../services/PasskeyService.js';
+import { LinkingService } from '../services/LinkingService.js';
+import { ErrorHandler } from '../utils/ErrorHandler.js';
+
+export class AppController {
+  constructor() {
+    // Initialize components
+    this.logger = new Logger('logContainer');
+    this.buttonManager = new ButtonManager();
+    this.errorHandler = new ErrorHandler(this.logger);
+    
+    // Initialize services
+    this.stronghold = new StrongholdService();
+    this.passkeys = new PasskeyService();
+    this.linking = new LinkingService(this.stronghold);
+    
+    // Application state
+    this.state = {
+      isInitialized: false,
+      hasSession: false,
+      hasBIK: false,
+      hasDPoP: false,
+      passkeySupported: false,
+      passkeyEnabled: false,
+      hasExistingPasskeys: false,
+      isLinking: false
+    };
+    
+    // Bind methods
+    this.handleError = this.handleError.bind(this);
+    this.updateState = this.updateState.bind(this);
+  }
+
+  /**
+   * Initialize the application
+   */
+  async initialize() {
+    try {
+      this.logger.info('Initializing application...');
+      
+            // Initialize button manager
+      this.buttonManager.initialize([
+        'initBtn', 'bikBtn', 'dpopBtn', 'apiBtn',
+        'regBtn', 'authBtn', 'linkBtn', 'flushBtn', 'clientFlushBtn',
+        'swRegBtn', 'swUnregBtn', 'echoSWBtn', 'testSWBtn'
+      ]);
+      
+      // Check passkey support
+      await this.checkPasskeySupport();
+      
+      // Check for existing session and restore state
+      await this.checkExistingSession();
+      
+      // Update initial state
+      this.updateState();
+      
+      // Set up event listeners
+      this.setupEventListeners();
+      
+      // Set up modal functionality
+      this.setupModalHandlers();
+      
+      this.state.isInitialized = true;
+      this.logger.success('Application initialized successfully');
+      
+    } catch (error) {
+      this.handleError(error, 'Application initialization');
+    }
+  }
+
+  /**
+   * Check passkey support and update UI
+   */
+  async checkPasskeySupport() {
+    try {
+      // Only check browser support during initialization
+      const supportStatus = await this.passkeys.getBasicSupportStatus();
+      
+      this.state.passkeySupported = supportStatus.isSupported;
+      this.state.passkeyEnabled = supportStatus.hasUVPA;
+      
+      // Update passkey buttons
+      if (this.state.passkeySupported && this.state.passkeyEnabled) {
+        this.buttonManager.enable('regBtn');
+        this.buttonManager.enable('authBtn');
+      } else {
+        this.buttonManager.disable('regBtn');
+        this.buttonManager.disable('authBtn');
+        
+        const reason = !this.state.passkeySupported ? 
+          'WebAuthn not supported' : 
+          'User-verifying platform authenticator not available';
+        
+        this.logger.warn(`Passkey buttons disabled: ${reason}`);
+      }
+      
+    } catch (error) {
+      // Don't fail initialization if passkey check fails
+      this.logger.warn('Passkey support check failed, continuing without passkeys', error);
+      this.state.passkeySupported = false;
+      this.state.passkeyEnabled = false;
+      this.buttonManager.disable('regBtn');
+      this.buttonManager.disable('authBtn');
+    }
+  }
+
+  /**
+   * Check for existing session and restore state
+   */
+  async checkExistingSession() {
+    try {
+      this.logger.info('Checking for existing session...');
+      
+      // Check if we have a valid session
+      const sessionStatus = await this.stronghold.getSessionStatus();
+      this.logger.debug('Session status received:', sessionStatus);
+      
+      if (sessionStatus && sessionStatus.valid) {
+        this.logger.info('Valid session found, checking DPoP binding...');
+        this.logger.debug('Session details:', {
+          state: sessionStatus.state,
+          bik_registered: sessionStatus.bik_registered,
+          dpop_bound: sessionStatus.dpop_bound
+        });
+        
+        this.state.hasSession = true;
+        
+        // Restore the service's internal state
+        await this.stronghold.restoreSessionState();
+        
+        // Check if DPoP is bound
+        if (sessionStatus.dpop_bound) {
+          this.logger.info('DPoP binding found - resuming session to get fresh binding token');
+          this.state.hasSession = true;
+          this.state.hasBIK = true;
+          this.state.hasDPoP = true;
+          
+          // Check for existing passkeys
+          await this.checkExistingPasskeys();
+          
+          // Update passkey authentication state
+          this.passkeys.setAuthenticated(true);
+          
+          // Set success states for completed steps
+          this.buttonManager.setSuccess('initBtn', 'Session restored!');
+          this.buttonManager.setSuccess('bikBtn', 'BIK restored!');
+          this.buttonManager.setSuccess('dpopBtn', 'DPoP restored!');
+          
+          this.logger.success('Session resume completed - ready for secure operations');
+          
+        } else if (sessionStatus.bik_registered) {
+          this.logger.info('BIK registered but DPoP not bound');
+          this.state.hasBIK = true;
+          
+          // Set success state for session and BIK
+          this.buttonManager.setSuccess('initBtn', 'Session restored!');
+          this.buttonManager.setSuccess('bikBtn', 'BIK restored!');
+        } else {
+          this.logger.info('Session exists but BIK not registered');
+          
+          // Set success state for session only
+          this.buttonManager.setSuccess('initBtn', 'Session restored!');
+        }
+        
+      } else {
+        this.logger.info('No valid session found - starting fresh');
+      }
+      
+    } catch (error) {
+      this.logger.warn('Failed to check existing session, starting fresh', error);
+      // Continue with fresh state
+    }
+  }
+
+  /**
+   * Check for existing passkeys after authentication
+   */
+  async checkExistingPasskeys() {
+    try {
+      const hasPasskeys = await this.passkeys.hasExistingPasskeys();
+      this.state.hasExistingPasskeys = hasPasskeys;
+      
+      if (hasPasskeys) {
+        this.logger.info('Existing passkeys found for this domain');
+      } else {
+        this.logger.info('No existing passkeys found for this domain');
+      }
+      
+    } catch (error) {
+      this.logger.warn('Failed to check existing passkeys', error);
+      this.state.hasExistingPasskeys = false;
+    }
+  }
+
+  /**
+   * Set up event listeners
+   */
+  setupEventListeners() {
+    // Session initialization
+    document.getElementById('initBtn')?.addEventListener('click', () => {
+      this.initializeSession();
+    });
+
+    // BIK registration
+    document.getElementById('bikBtn')?.addEventListener('click', () => {
+      this.registerBIK();
+    });
+
+    // DPoP binding
+    document.getElementById('dpopBtn')?.addEventListener('click', () => {
+      this.bindDPoP();
+    });
+
+    // API testing
+    document.getElementById('apiBtn')?.addEventListener('click', () => {
+      this.testAPI();
+    });
+
+    // Passkey registration
+    document.getElementById('regBtn')?.addEventListener('click', () => {
+      this.registerPasskey();
+    });
+
+    // Passkey authentication
+    document.getElementById('authBtn')?.addEventListener('click', () => {
+      this.authenticatePasskey();
+    });
+
+    // Cross-device linking
+    document.getElementById('linkBtn')?.addEventListener('click', () => {
+      this.startLinking();
+    });
+
+    // Flush buttons
+    document.getElementById('flushBtn')?.addEventListener('click', () => {
+      this.serverFlush();
+    });
+
+    document.getElementById('clientFlushBtn')?.addEventListener('click', () => {
+      this.clientFlush();
+    });
+
+
+  }
+
+  /**
+   * Initialize session
+   */
+  async initializeSession() {
+    await this.errorHandler.handleAsync(async () => {
+      this.buttonManager.setLoading('initBtn', 'Initializing...');
+      
+      const session = await this.stronghold.initSession();
+      
+      this.state.hasSession = true;
+      this.updateState();
+      
+      this.buttonManager.setSuccess('initBtn', 'Session initialized!');
+      this.logger.success('Session initialized successfully', session);
+      
+    }, 'Session initialization', this.handleError);
+  }
+
+  /**
+   * Register BIK
+   */
+  async registerBIK() {
+    await this.errorHandler.handleAsync(async () => {
+      this.buttonManager.setLoading('bikBtn', 'Registering BIK...');
+      
+      const bik = await this.stronghold.registerBIK();
+      
+      this.state.hasBIK = true;
+      this.updateState();
+      
+      this.buttonManager.setSuccess('bikBtn', 'BIK registered!');
+      this.logger.success('BIK registered successfully', bik);
+      
+    }, 'BIK registration', this.handleError);
+  }
+
+  /**
+   * Bind DPoP
+   */
+  async bindDPoP() {
+    await this.errorHandler.handleAsync(async () => {
+      this.buttonManager.setLoading('dpopBtn', 'Binding DPoP...');
+      
+      this.logger.debug('Starting DPoP binding process...');
+      this.logger.debug('Current state before binding:', {
+        hasSession: this.state.hasSession,
+        hasBIK: this.state.hasBIK,
+        hasDPoP: this.state.hasDPoP
+      });
+      
+      const dpop = await this.stronghold.bindDPoP();
+      
+      this.logger.debug('DPoP binding completed:', dpop);
+      
+      this.state.hasDPoP = true;
+      
+      // Enable passkey service authentication after DPoP binding
+      this.passkeys.setAuthenticated(true);
+      
+      // Check for existing passkeys now that we're authenticated
+      await this.checkExistingPasskeys();
+      
+      this.updateState();
+      
+      this.buttonManager.setSuccess('dpopBtn', 'DPoP bound!');
+      this.logger.success('DPoP bound successfully', dpop);
+      
+    }, 'DPoP binding', this.handleError);
+  }
+
+  /**
+   * Test API
+   */
+  async testAPI() {
+    // Show the modal first
+    this.showApiModal();
+  }
+
+  /**
+   * Register passkey
+   */
+  async registerPasskey() {
+    await this.errorHandler.handleAsync(async () => {
+      this.buttonManager.setLoading('regBtn', 'Creating passkey...');
+      
+      try {
+        const result = await this.passkeys.registerPasskey();
+        
+        this.state.passkeyEnabled = true;
+        this.updateState();
+        
+        this.buttonManager.setSuccess('regBtn', 'Passkey created!');
+        this.logger.success('Passkey registered successfully', result);
+        
+      } catch (error) {
+        // Handle user cancellation gracefully
+        if (error.message && error.message.includes('cancelled')) {
+          this.buttonManager.reset('regBtn');
+          this.logger.info('Passkey registration cancelled by user');
+          return; // Don't treat cancellation as an error
+        }
+        
+        // Re-throw other errors for normal error handling
+        throw error;
+      }
+      
+    }, 'Passkey registration', this.handleError);
+  }
+
+  /**
+   * Authenticate passkey
+   */
+  async authenticatePasskey() {
+    await this.errorHandler.handleAsync(async () => {
+      this.buttonManager.setLoading('authBtn', 'Authenticating...');
+      
+      try {
+        const result = await this.passkeys.authenticatePasskey();
+        
+        this.buttonManager.setSuccess('authBtn', 'Authenticated!');
+        this.logger.success('Passkey authentication successful', result);
+        
+      } catch (error) {
+        // Handle user cancellation gracefully
+        if (error.message && error.message.includes('cancelled')) {
+          this.buttonManager.reset('authBtn');
+          this.logger.info('Passkey authentication cancelled by user');
+          return; // Don't treat cancellation as an error
+        }
+        
+        // Re-throw other errors for normal error handling
+        throw error;
+      }
+      
+    }, 'Passkey authentication', this.handleError);
+  }
+
+  /**
+   * Start cross-device linking
+   */
+  async startLinking() {
+    await this.errorHandler.handleAsync(async () => {
+      // Clean up existing elements
+      this.cleanupLinkingElements();
+      
+      this.buttonManager.setLoading('linkBtn', 'Creating QR...');
+      
+      const linkData = await this.linking.startLinking();
+      
+      this.state.isLinking = true;
+      this.updateState();
+      
+      // Create QR code
+      this.createQRCode(linkData.qr_url, linkData.linkId);
+      
+      // Start status monitoring
+      this.monitorLinkingStatus(linkData.linkId);
+      
+      this.buttonManager.setSuccess('linkBtn', 'QR created!');
+      this.logger.success('Cross-device linking started', linkData);
+      
+    }, 'Cross-device linking', this.handleError);
+  }
+
+  /**
+   * Monitor linking status
+   * @param {string} linkId - Link ID
+   */
+  monitorLinkingStatus(linkId) {
+    const onStatusUpdate = (status) => {
+      // Handle different message types
+      if (status.type === 'status') {
+        this.logger.info(`Linking status: ${status.status}`, status);
+        
+        if (status.status === 'scanned') {
+          this.updateQRStatus('scanned');
+        } else if (status.status === 'linked' || status.status === 'completed') {
+          this.handleLinkingComplete(linkId);
+        } else if (status.status === 'failed') {
+          this.handleLinkingFailed(status.error);
+        }
+      } else if (status.type === 'signature') {
+        this.logger.info('Signature data received', status.data);
+        // Handle signature data if needed
+      } else {
+        this.logger.info('Unknown message type received', status);
+      }
+    };
+
+    const onError = (error) => {
+      this.logger.error('Linking status monitoring failed', error);
+    };
+
+    // Try WebSocket first, fallback to polling
+    this.linking.monitorStatus(linkId, onStatusUpdate, onError, 'websocket');
+  }
+
+  /**
+   * Handle linking completion
+   * @param {string} linkId - Link ID
+   */
+  async handleLinkingComplete(linkId) {
+    try {
+      this.updateQRStatus('completed');
+      
+      // Remove QR code container
+      const qrContainer = document.querySelector('.qr-container');
+      if (qrContainer) {
+        qrContainer.remove();
+      }
+      
+      // Initialize signature sharing
+      await this.initializeSignatureSharing(linkId);
+      
+      this.state.isLinking = false;
+      this.updateState();
+      
+      this.logger.success('Cross-device linking completed successfully');
+      
+    } catch (error) {
+      this.handleError(error, 'Linking completion');
+    }
+  }
+
+  /**
+   * Handle linking failure
+   * @param {string} error - Error message
+   */
+  handleLinkingFailed(error) {
+    this.updateQRStatus('failed');
+    this.state.isLinking = false;
+    this.updateState();
+    
+    this.logger.error('Cross-device linking failed', error);
+  }
+
+  /**
+   * Initialize signature sharing
+   * @param {string} linkId - Link ID
+   */
+  async initializeSignatureSharing(linkId) {
+    try {
+      // Import and initialize signature sharing
+      const { SignatureShare } = await import('../signature-share.js');
+      const signatureShare = new SignatureShare();
+      
+      await signatureShare.initDesktop(linkId);
+      
+      this.logger.success('Signature sharing initialized');
+      
+    } catch (error) {
+      this.logger.error('Failed to initialize signature sharing', error);
+    }
+  }
+
+  /**
+   * Create QR code element
+   * @param {string} qrData - QR code data
+   * @param {string} linkId - Link ID
+   */
+  createQRCode(qrData, linkId) {
+    const container = document.createElement('div');
+    container.className = 'qr-container';
+    container.innerHTML = `
+      <h3>Scan QR Code with Mobile Device</h3>
+      <div class="qr-code" id="qrcode"></div>
+      <p>Link ID: ${linkId}</p>
+      <p><strong>URL:</strong> <code>${qrData}</code></p>
+      <div class="qr-status" id="qrStatus">Waiting for scan...</div>
+    `;
+
+    // Insert after the sequence step containing the link button
+    const linkBtn = document.getElementById('linkBtn');
+    if (linkBtn && linkBtn.parentNode) {
+      const sequenceStep = linkBtn.closest('.sequence-step');
+      if (sequenceStep && sequenceStep.parentNode) {
+        // Insert after the entire sequence step
+        sequenceStep.parentNode.insertBefore(container, sequenceStep.nextSibling);
+      } else {
+        // Fallback: insert after the button
+        linkBtn.parentNode.insertBefore(container, linkBtn.nextSibling);
+      }
+    }
+
+    // Generate QR code
+    if (window.QRCode) {
+      new QRCode(document.getElementById('qrcode'), qrData);
+    }
+  }
+
+  /**
+   * Update QR code status
+   * @param {string} status - Status ('scanned', 'completed', 'failed')
+   */
+  updateQRStatus(status) {
+    const statusElement = document.getElementById('qrStatus');
+    if (!statusElement) return;
+
+    const statusTexts = {
+      scanned: '📱 Device scanned - completing link...',
+      completed: '✅ Link completed successfully!',
+      failed: '❌ Link failed - please try again'
+    };
+
+    statusElement.textContent = statusTexts[status] || 'Unknown status';
+    statusElement.className = `qr-status qr-status-${status}`;
+  }
+
+  /**
+   * Clean up linking elements
+   */
+  cleanupLinkingElements() {
+    const existingQR = document.querySelector('.qr-container');
+    if (existingQR) existingQR.remove();
+    
+    const existingSignature = document.querySelector('.signature-container');
+    if (existingSignature) existingSignature.remove();
+  }
+
+  /**
+   * Set up modal handlers
+   */
+  setupModalHandlers() {
+    const modal = document.getElementById('apiModal');
+    const closeBtn = document.getElementById('closeApiModal');
+    const cancelBtn = document.getElementById('cancelApiRequest');
+    const sendBtn = document.getElementById('sendApiRequest');
+
+    // Close modal handlers
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        this.hideApiModal();
+      });
+    }
+
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => {
+        this.hideApiModal();
+      });
+    }
+
+    // Close modal when clicking outside
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          this.hideApiModal();
+        }
+      });
+    }
+
+    // Close modal with Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal && modal.classList.contains('show')) {
+        this.hideApiModal();
+      }
+    });
+
+    // Send API request
+    if (sendBtn) {
+      sendBtn.addEventListener('click', () => {
+        this.sendApiRequest();
+      });
+    }
+  }
+
+  /**
+   * Show API test modal
+   */
+  showApiModal() {
+    const modal = document.getElementById('apiModal');
+    if (modal) {
+      modal.classList.add('show');
+      
+      // Reset response boxes
+      const apiResponse = modal.querySelector('#apiResponse');
+      const clientRequest = modal.querySelector('#clientRequest');
+      
+      if (apiResponse) {
+        apiResponse.innerHTML = '<em>Click "Send Request" to test the API...</em>';
+        apiResponse.className = 'response-box';
+      }
+      
+      if (clientRequest) {
+        clientRequest.innerHTML = '<em>Request details will appear here...</em>';
+        clientRequest.className = 'response-box';
+      }
+    }
+  }
+
+  /**
+   * Hide API test modal
+   */
+  hideApiModal() {
+    const modal = document.getElementById('apiModal');
+    if (modal) {
+      modal.classList.remove('show');
+    }
+  }
+
+  /**
+   * Send API request from modal
+   */
+  async sendApiRequest() {
+    const sendBtn = document.getElementById('sendApiRequest');
+    const apiResponse = document.getElementById('apiResponse');
+    const clientRequest = document.getElementById('clientRequest');
+    const apiMessage = document.getElementById('apiMessage');
+
+    if (!sendBtn || !apiResponse || !clientRequest || !apiMessage) return;
+
+    try {
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Sending...';
+      apiResponse.innerHTML = 'Sending request...';
+      apiResponse.className = 'response-box';
+      clientRequest.innerHTML = 'Preparing request...';
+      clientRequest.className = 'response-box';
+
+      this.logger.info('Testing API access with DPoP token...');
+
+      const message = apiMessage.value.trim() || 'Hello from Browser Identity & DPoP Security Demo!';
+      
+      const testData = {
+        message: message,
+        timestamp: new Date().toISOString(),
+        userAgent: navigator.userAgent
+      };
+
+      // Capture request details before making the request
+      const requestDetails = await this.captureRequestDetails(testData);
+      
+      const response = await this.stronghold.testAPI(testData);
+
+      // Display request details
+      clientRequest.innerHTML = JSON.stringify(requestDetails, null, 2);
+      clientRequest.className = 'response-box info';
+
+      // Display response
+      apiResponse.innerHTML = JSON.stringify(response, null, 2);
+      apiResponse.className = 'response-box success';
+
+      this.buttonManager.setSuccess('apiBtn', 'API test successful!');
+      this.logger.success('API access successful - DPoP token working!');
+      this.logger.info(`Response: ${JSON.stringify(response, null, 2)}`);
+      this.logger.success('DPoP cryptographic binding verified');
+
+    } catch (error) {
+      // Display error
+      apiResponse.innerHTML = `Error: ${error.message}`;
+      apiResponse.className = 'response-box error';
+      clientRequest.innerHTML = 'Request details unavailable due to error';
+      clientRequest.className = 'response-box error';
+
+      this.buttonManager.setError('apiBtn', 'API test failed');
+      this.logger.error(`API access failed: ${error.message}`);
+    } finally {
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send Request';
+    }
+  }
+
+  /**
+   * Capture request details including DPoP
+   * @param {Object} testData - Test data
+   * @returns {Promise<Object>} Request details
+   */
+  async captureRequestDetails(testData) {
+    try {
+      // Import the stronghold module to access its functions
+      const Stronghold = await import('../stronghold.js');
+      
+      // Get current DPoP state
+      const dpopNonce = await Stronghold.getDpopNonce();
+      const bindToken = await Stronghold.getBindToken();
+      
+      // Get browser identity key info (without exposing private key)
+      const bik = await Stronghold.getBIK();
+      
+      // Ensure nonce is a string or undefined
+      const nonceValue = typeof dpopNonce === 'string' ? dpopNonce : undefined;
+      
+      // Create the actual DPoP proof that will be used
+      const dpopProof = await Stronghold.createDpopProof({
+        url: window.location.origin + '/api/echo',
+        method: 'POST',
+        nonce: nonceValue,
+        privateKey: bik.privateKey,
+        publicJwk: bik.publicJwk
+      });
+
+      return {
+        timestamp: new Date().toISOString(),
+        url: '/api/echo',
+        method: 'POST',
+        requestBody: testData,
+        headers: {
+          'Content-Type': 'application/json',
+          'DPoP': dpopProof,
+          'DPoP-Bind': bindToken || 'Not bound'
+        },
+        dpopDetails: {
+          nonce: dpopNonce || 'Not set',
+          proofStructure: {
+            header: dpopProof.split('.')[0],
+            payload: dpopProof.split('.')[1],
+            signature: dpopProof.split('.')[2] ? `${dpopProof.split('.')[2].substring(0, 20)}...` : 'None'
+          },
+          browserIdentityKey: {
+            kid: bik?.publicJwk?.kid || 'Not available',
+            kty: bik?.publicJwk?.kty || 'Not available',
+            crv: bik?.publicJwk?.crv || 'Not available',
+            publicKeyThumbprint: bik?.publicJwk ? await Stronghold.jwkThumbprint(bik.publicJwk) : 'Not available'
+          }
+        }
+      };
+    } catch (error) {
+      return {
+        error: 'Failed to capture request details',
+        details: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Update application state
+   */
+  updateState() {
+    this.logger.debug('Updating application state:', this.state);
+    
+    // Update button states based on dependencies, preserving success states
+    if (this.state.hasSession) {
+      this.buttonManager.enableIfNotSuccess('bikBtn');
+    } else {
+      this.buttonManager.disable('bikBtn');
+    }
+
+    if (this.state.hasSession && this.state.hasBIK && !this.state.hasDPoP) {
+      this.logger.debug('Enabling DPoP button - hasSession:', this.state.hasSession, 'hasBIK:', this.state.hasBIK, 'hasDPoP:', this.state.hasDPoP);
+      this.buttonManager.enableIfNotSuccess('dpopBtn');
+    } else if (this.state.hasDPoP) {
+      this.logger.debug('DPoP already bound - keeping button enabled');
+      this.buttonManager.enableIfNotSuccess('dpopBtn');
+    } else {
+      this.logger.debug('Disabling DPoP button - hasSession:', this.state.hasSession, 'hasBIK:', this.state.hasBIK, 'hasDPoP:', this.state.hasDPoP);
+      this.buttonManager.disable('dpopBtn');
+    }
+
+    if (this.state.hasDPoP) {
+      this.buttonManager.enableIfNotSuccess('apiBtn');
+      this.buttonManager.enableIfNotSuccess('linkBtn');
+    } else {
+      this.buttonManager.disable('apiBtn');
+      this.buttonManager.disable('linkBtn');
+    }
+
+    // Log state changes
+    this.logger.debug('Application state updated', this.state);
+  }
+
+  /**
+   * Handle errors
+   * @param {Error} error - Error object
+   * @param {string} context - Error context
+   */
+  handleError(error, context) {
+    const handledError = this.errorHandler.handle(error, context);
+    
+    // Show notification to user
+    this.errorHandler.showNotification(handledError);
+    
+    // Reset button states
+    this.buttonManager.resetAll();
+  }
+
+  /**
+   * Server flush - clear all server-side data
+   */
+  async serverFlush() {
+    try {
+      this.buttonManager.setLoading('flushBtn', 'Flushing...');
+      
+      const response = await fetch('/_admin/flush', {
+        method: 'POST',
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Server flush failed: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      this.logger.success('Server data flushed successfully');
+      
+      // Reset all states since server data is cleared
+      this.resetAllStates();
+      
+      this.buttonManager.setSuccess('flushBtn', 'Server flushed!');
+      
+    } catch (error) {
+      this.handleError(error, 'Server flush');
+      this.buttonManager.reset('flushBtn');
+    }
+  }
+
+  /**
+   * Client flush - clear all client-side data
+   */
+  async clientFlush() {
+    try {
+      this.buttonManager.setLoading('clientFlushBtn', 'Flushing...');
+      
+      // Clear IndexedDB storage
+      await this.clearClientStorage();
+      
+      this.logger.success('Client data flushed successfully');
+      
+      // Reset all states since client data is cleared
+      this.resetAllStates();
+      
+      this.buttonManager.setSuccess('clientFlushBtn', 'Client flushed!');
+      
+    } catch (error) {
+      this.handleError(error, 'Client flush');
+      this.buttonManager.reset('clientFlushBtn');
+    }
+  }
+
+    /**
+   * Clear client-side storage (IndexedDB)
+   */
+  async clearClientStorage() {
+    try {
+      // Clear IndexedDB manually since storage utilities don't exist
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open('stronghold', 1);
+        
+        request.onerror = () => {
+          reject(new Error('Failed to open IndexedDB'));
+        };
+        
+        request.onsuccess = () => {
+          const db = request.result;
+          try {
+            // Check what stores actually exist
+            const storeNames = Array.from(db.objectStoreNames);
+            this.logger.debug('Available IndexedDB stores:', storeNames);
+            
+            if (storeNames.length === 0) {
+              // No stores exist, nothing to clear
+              db.close();
+              resolve();
+              return;
+            }
+            
+            // Only clear stores that actually exist
+            const storesToClear = storeNames.filter(name => ['keys', 'meta'].includes(name));
+            
+            if (storesToClear.length === 0) {
+              // No matching stores found
+              db.close();
+              resolve();
+              return;
+            }
+            
+            const transaction = db.transaction(storesToClear, 'readwrite');
+            const clearPromises = storesToClear.map(storeName => {
+              return new Promise((storeResolve, storeReject) => {
+                const store = transaction.objectStore(storeName);
+                const clearRequest = store.clear();
+                
+                clearRequest.onsuccess = () => storeResolve();
+                clearRequest.onerror = () => storeReject(new Error(`Failed to clear ${storeName} store`));
+              });
+            });
+            
+            // Wait for all stores to be cleared
+            Promise.all(clearPromises)
+              .then(() => {
+                db.close();
+                resolve();
+              })
+              .catch((error) => {
+                db.close();
+                reject(error);
+              });
+            
+          } catch (error) {
+            db.close();
+            reject(new Error(`IndexedDB transaction failed: ${error.message}`));
+          }
+        };
+      });
+    } catch (error) {
+      throw new Error(`Failed to clear client storage: ${error.message}`);
+    }
+  }
+
+  /**
+   * Reset all application states
+   */
+  resetAllStates() {
+    // Reset state
+    this.state = {
+      isInitialized: false,
+      hasSession: false,
+      hasBIK: false,
+      hasDPoP: false,
+      passkeySupported: false,
+      passkeyEnabled: false,
+      hasExistingPasskeys: false
+    };
+    
+    // Reset service states
+    this.stronghold.clearSession();
+    this.passkeys.setAuthenticated(false);
+    
+    // Reset all buttons
+    this.buttonManager.reset('initBtn');
+    this.buttonManager.reset('bikBtn');
+    this.buttonManager.reset('dpopBtn');
+    this.buttonManager.reset('apiBtn');
+    this.buttonManager.reset('regBtn');
+    this.buttonManager.reset('authBtn');
+    this.buttonManager.reset('linkBtn');
+    
+    // Disable buttons that require authentication
+    this.buttonManager.disable('bikBtn');
+    this.buttonManager.disable('dpopBtn');
+    this.buttonManager.disable('apiBtn');
+    this.buttonManager.disable('regBtn');
+    this.buttonManager.disable('authBtn');
+    this.buttonManager.disable('linkBtn');
+    
+    // Re-enable passkey buttons if supported
+    if (this.state.passkeySupported && this.state.passkeyEnabled) {
+      this.buttonManager.enable('regBtn');
+      this.buttonManager.enable('authBtn');
+    }
+    
+    this.logger.info('All application states reset');
+  }
+
+  /**
+   * Get application state
+   * @returns {Object} Current state
+   */
+  getState() {
+    return { ...this.state };
+  }
+
+
+  getState() {
+    return { ...this.state };
+  }
+
+  /**
+   * Cleanup resources
+   */
+  cleanup() {
+    this.linking.stopStatusMonitoring();
+    this.buttonManager.resetAll();
+  }
+}

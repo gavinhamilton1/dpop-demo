@@ -5,10 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🔐 Browser Identity & DPoP Security Demo</title>
     <link rel="icon" type="image/x-icon" href="/public/favicon.ico">
+    <link rel="stylesheet" href="/css/design-system.css">
+    <link rel="stylesheet" href="/css/components.css">
+    <link rel="stylesheet" href="/css/notifications.css">
     <link rel="stylesheet" href="/public/style.css">
 
 </head>
 <body>
+    <!-- Notification container -->
+    <div id="notifications" class="notifications"></div>
+    
     <div class="container">
         <div class="header">
                                 <h1>🔐 Browser Identity & DPoP Security</h1>
@@ -49,42 +55,49 @@
                     <button id="initBtn" class="btn btn-primary">
                         🔄 Initialize Session
                     </button>
+                    <button class="info-btn" data-tooltip="Creates a new browser session with CSRF protection and registration nonce. This establishes the foundation for secure communication with the server.">💬</button>
                 </div>
                 <div class="sequence-step">
                     <div class="step-number">2</div>
                     <button id="bikBtn" class="btn btn-primary" disabled>
                         🔑 Register Browser Identity
                     </button>
+                    <button class="info-btn" data-tooltip="Generates a non-exportable ECDSA key pair in the browser and registers the public key with the server. This creates a unique cryptographic identity for this browser instance.">💬</button>
                 </div>
                 <div class="sequence-step">
                     <div class="step-number">3</div>
                     <button id="dpopBtn" class="btn btn-primary" disabled>
                         🛡️ Bind DPoP Token
                     </button>
+                    <button class="info-btn" data-tooltip="Creates a DPoP (Demonstration of Proof-of-Possession) token that cryptographically binds the browser identity to the session. This enables secure API access with request signing.">💬</button>
                 </div>
                 <div class="sequence-step">
                     <div class="step-number">4</div>
                     <button id="apiBtn" class="btn btn-primary" disabled>
                         🌐 Test API Access
                     </button>
+                    <button class="info-btn" data-tooltip="Tests the DPoP-protected API endpoint. Each request is cryptographically signed with the browser's private key, proving possession of the registered identity.">💬</button>
                 </div>
                 <div class="sequence-step">
                     <div class="step-number">5</div>
                     <button id="regBtn" class="btn btn-secondary" disabled>
                         📝 Register Passkey
                     </button>
+                    <button class="info-btn" data-tooltip="Creates a WebAuthn passkey for this domain using the device's biometric authenticator or security key. This enables passwordless authentication.">💬</button>
                 </div>
                 <div class="sequence-step">
                     <div class="step-number">6</div>
                     <button id="authBtn" class="btn btn-secondary" disabled>
                         🔐 Authenticate Passkey
                     </button>
+                    <button class="info-btn" data-tooltip="Authenticates using the registered passkey. This demonstrates biometric or security key verification for step-up authentication.">💬</button>
                 </div>
                 <div class="sequence-step">
                     <div class="step-number">7</div>
                     <button id="linkBtn" class="btn btn-accent" disabled>
                         📱 Start Device Linking (VDI/Step-up)
                     </button>
+                    <button class="info-btn" data-tooltip="Initiates cross-device linking for VDI environments or step-up authentication. Generates a QR code that can be scanned by a mobile device to establish a secure connection.">💬</button>
                 </div>
             </div>
 
@@ -126,7 +139,7 @@
         <div class="demo-section fade-in">
             <h2>🔧 Admin & Testing</h2>
             <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
-                Administrative functions and service worker testing:
+                Administrative functions for clearing server and client state:
             </p>
             
             <div class="button-grid">
@@ -135,15 +148,6 @@
                 </button>
                 <button id="clientFlushBtn" class="btn btn-secondary">
                     🧹 Client Flush
-                </button>
-                <button id="swRegBtn" class="btn btn-secondary">
-                    📝 Register Service Worker
-                </button>
-                <button id="swUnregBtn" class="btn btn-secondary">
-                    ❌ Unregister Service Worker
-                </button>
-                <button id="echoSWBtn" class="btn btn-secondary">
-                    🌐 Test SW Echo
                 </button>
             </div>
         </div>

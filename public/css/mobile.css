@@ -1,0 +1,224 @@
+/* Mobile-Specific Styles - Overrides for mobile link page */
+
+/* Mobile body overrides */
+body.mobile-page {
+  background: var(--mobile-background);
+  color: var(--mobile-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-4);
+}
+
+/* Mobile container overrides */
+.mobile-container {
+  background: var(--mobile-surface);
+  backdrop-filter: blur(10px);
+  border-radius: var(--radius-3xl);
+  padding: var(--spacing-8);
+  box-shadow: var(--shadow-2xl);
+  max-width: var(--mobile-container-max-width);
+  width: 100%;
+  text-align: center;
+  animation: var(--animation-fade-in);
+}
+
+/* Mobile header */
+.mobile-header {
+  margin-bottom: var(--spacing-8);
+}
+
+.mobile-logo {
+  font-size: var(--font-size-4xl);
+  margin-bottom: var(--spacing-4);
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: var(--font-weight-extrabold);
+}
+
+.mobile-title {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--mobile-text);
+  margin-bottom: var(--spacing-2);
+}
+
+.mobile-subtitle {
+  color: var(--mobile-text-muted);
+  font-size: var(--font-size-base);
+  margin-bottom: var(--spacing-8);
+}
+
+/* Mobile progress steps overrides */
+.mobile-container .progress-step.pending {
+  background: #f7fafc;
+  color: #a0aec0;
+}
+
+.mobile-container .progress-step.active {
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  color: white;
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.mobile-container .progress-step.completed {
+  background: var(--success);
+  color: white;
+}
+
+.mobile-container .progress-step.error {
+  background: var(--danger);
+  color: white;
+}
+
+.mobile-container .pending .step-number {
+  background: #e2e8f0;
+  color: #a0aec0;
+}
+
+.mobile-container .active .step-number,
+.mobile-container .completed .step-number,
+.mobile-container .error .step-number {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+/* Mobile log container overrides */
+.mobile-container .log-container {
+  background: #f7fafc;
+  border-radius: var(--radius-xl);
+  padding: var(--spacing-4);
+  margin-top: var(--spacing-6);
+  max-height: 200px;
+  overflow-y: auto;
+  text-align: left;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  color: var(--mobile-text-muted);
+  border: 1px solid var(--mobile-border);
+}
+
+.mobile-container .log-entry.info {
+  color: var(--primary);
+}
+
+.mobile-container .log-entry.success {
+  color: var(--success);
+}
+
+.mobile-container .log-entry.warn {
+  color: var(--warning);
+}
+
+.mobile-container .log-entry.error {
+  color: var(--danger);
+}
+
+/* Mobile signature container overrides */
+.mobile-container .signature-container {
+  margin-top: var(--spacing-6);
+  padding: var(--spacing-4);
+  background: #f7fafc;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--mobile-border);
+}
+
+.mobile-container .signature-container h3 {
+  color: var(--mobile-text);
+  margin-bottom: var(--spacing-4);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+
+.mobile-container .signature-container canvas {
+  border: var(--border-width-thick) solid var(--mobile-border);
+  border-radius: var(--radius-lg);
+  background: white;
+  cursor: crosshair;
+  display: block;
+  margin: 0 auto;
+}
+
+.mobile-container #reset-signature {
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  color: white;
+  border: none;
+  padding: var(--spacing-2) var(--spacing-4);
+  border-radius: var(--radius-lg);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  margin-top: var(--spacing-2);
+  transition: all var(--transition-normal);
+}
+
+.mobile-container #reset-signature:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 480px) {
+  .mobile-container {
+    padding: var(--spacing-6);
+    margin: var(--spacing-2);
+  }
+  
+  .mobile-title {
+    font-size: var(--font-size-xl);
+  }
+  
+  .mobile-subtitle {
+    font-size: var(--font-size-sm);
+  }
+  
+  .mobile-logo {
+    font-size: var(--font-size-3xl);
+  }
+  
+  .mobile-container .signature-container canvas {
+    width: 250px;
+    height: 250px;
+  }
+}
+
+/* Mobile touch optimizations */
+.mobile-container .btn {
+  min-height: 48px; /* Larger touch targets for mobile */
+  padding: var(--spacing-4) var(--spacing-6);
+}
+
+.mobile-container .step-number {
+  width: 36px;
+  height: 36px;
+  font-size: var(--font-size-base);
+}
+
+/* Mobile loading spinner adjustments */
+.mobile-container .loading-spinner {
+  width: 24px;
+  height: 24px;
+  border-width: 3px;
+}
+
+/* Mobile scrollbar styling */
+.mobile-container .log-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.mobile-container .log-container::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: var(--radius-full);
+}
+
+.mobile-container .log-container::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: var(--radius-full);
+}
+
+.mobile-container .log-container::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

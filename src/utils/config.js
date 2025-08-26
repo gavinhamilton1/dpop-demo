@@ -44,6 +44,8 @@ export const CONFIG = {
       DPOP_NONCE: 'dpop_nonce',
       BROWSER_UUID: 'browser_uuid',
       BIK_JKT: 'bik_jkt',
+      CSRF: 'csrf',
+      REG_NONCE: 'reg_nonce',
     }
   },
   HTTP: {

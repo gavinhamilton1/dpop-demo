@@ -4,7 +4,7 @@ from typing import Dict, Any, Tuple, List, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware import Middleware
@@ -201,8 +201,13 @@ app = FastAPI(middleware=[
 ])
 
 BASE_DIR = os.path.dirname(__file__)
+
+
+
+# Static file mounting
 app.mount("/public", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public")), name="public")
 app.mount("/src", StaticFiles(directory=os.path.join(BASE_DIR, "..", "src")), name="src")
+app.mount("/css", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public/css")), name="css")
 
 def _new_nonce() -> str: return b64u(secrets.token_bytes(18))
 
@@ -239,10 +244,7 @@ async def index():
     with open(os.path.join(BASE_DIR, "..", "public", "index.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
-@app.get("/stronghold-sw.js")
-async def stronghold_sw():
-    sw_path = os.path.join(BASE_DIR, "..", "src", "stronghold-sw.js")
-    return FileResponse(sw_path, media_type="application/javascript")
+
 
 @app.get("/.well-known/stronghold-jwks.json")
 async def jwks(): return {"keys": [SERVER_PUBLIC_JWK]}
@@ -314,6 +316,24 @@ async def dpop_bind(req: Request):
     except HTTPException: raise
     except Exception as e:
         log.exception("dpop bind failed sid=%s rid=%s", sid, req.state.request_id); raise HTTPException(status_code=400, detail=f"dpop bind failed: {e}")
+
+@app.get("/session/status")
+async def session_status(req: Request):
+    sid = req.session.get("sid")
+    s = await DB.get_session(sid) if sid else None
+    if not sid or not s:
+        return {"valid": False, "state": None, "bik_registered": False, "dpop_bound": False}
+    
+    state = s.get("state")
+    bik_registered = bool(s.get("bik_jkt"))
+    dpop_bound = bool(s.get("dpop_jkt"))
+    
+    return {
+        "valid": True,
+        "state": state,
+        "bik_registered": bik_registered,
+        "dpop_bound": dpop_bound
+    }
 
 # ---------------- DPoP gate ----------------
 def _nonce_fail_response(sid: str, detail: str) -> None:
@@ -492,6 +512,8 @@ async def api_echo(req: Request, ctx=Depends(require_dpop)):
     headers = {"DPoP-Nonce": ctx["next_nonce"]}
     log.info("api_echo ok sid=%s rid=%s", ctx["sid"], req.state.request_id)
     return JSONResponse({"ok": True, "echo": body, "ts": now()}, headers=headers)
+
+
 
 # ---------------- Admin ----------------
 @app.post("/_admin/flush")

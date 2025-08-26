@@ -136,6 +136,9 @@ export async function sessionInit({ sessionInitUrl = CONFIG.ENDPOINTS.SESSION_IN
     const j = await r.json();
     CSRF = j.csrf; 
     REG_NONCE = j.reg_nonce;
+    // Store CSRF and reg_nonce in IndexedDB for session restoration
+    await set(CONFIG.STORAGE.KEYS.CSRF, j.csrf);
+    await set(CONFIG.STORAGE.KEYS.REG_NONCE, j.reg_nonce);
     coreLogger.info('sessionInit ok', j);
     return j;
   } catch (error) {
@@ -248,6 +251,22 @@ async function ensureBinding() {
     const ok = await resumeViaPage();
     if (!ok) throw new AuthenticationError('no binding token (resume failed)');
     bind = (await get(CONFIG.STORAGE.KEYS.BIND))?.value;
+  } else {
+    // Check if binding token is expired (server TTL is 1 hour = 3600 seconds)
+    try {
+      const payload = JSON.parse(atob(bind.split('.')[1]));
+      const now = Math.floor(Date.now() / 1000);
+      const expiresAt = payload.exp || 0;
+      
+      if (now >= expiresAt) {
+        coreLogger.debug('Binding token expired, triggering resume');
+        const ok = await resumeViaPage();
+        if (!ok) throw new AuthenticationError('binding token expired and resume failed');
+        bind = (await get(CONFIG.STORAGE.KEYS.BIND))?.value;
+      }
+    } catch (error) {
+      coreLogger.warn('Failed to check binding token expiration, assuming valid');
+    }
   }
   return bind;
 }
@@ -365,33 +384,41 @@ export async function getBIK() {
   }
 }
 
+/**
+ * Restore CSRF token and reg_nonce from IndexedDB
+ */
+export async function restoreSessionTokens() {
+  try {
+    const csrf = await get(CONFIG.STORAGE.KEYS.CSRF);
+    const regNonce = await get(CONFIG.STORAGE.KEYS.REG_NONCE);
+    
+    if (csrf?.value) {
+      CSRF = csrf.value;
+      coreLogger.debug('Restored CSRF token from storage');
+    }
+    
+    if (regNonce?.value) {
+      REG_NONCE = regNonce.value;
+      coreLogger.debug('Restored reg_nonce from storage');
+    }
+    
+    return { csrf: CSRF, regNonce: REG_NONCE };
+  } catch (error) {
+    coreLogger.warn('Failed to restore session tokens:', error);
+    return { csrf: null, regNonce: null };
+  }
+}
 
 
 
 
-export async function clientFlush({ unregisterSW = false } = {}) {
+
+export async function clientFlush() {
   try {
     coreLogger.debug('Flushing client state');
     CSRF = null; 
     REG_NONCE = null;
     await idbWipe();
-    try {
-      if (navigator.serviceWorker?.controller) {
-        navigator.serviceWorker.controller.postMessage({ type: 'stronghold/flush-client' });
-      }
-    } catch (error) {
-      coreLogger.warn('Failed to send flush message to service worker:', error);
-    }
-    if (unregisterSW && 'serviceWorker' in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      for (const r of regs) { 
-        try { 
-          await r.unregister(); 
-        } catch (error) {
-          coreLogger.warn('Failed to unregister service worker:', error);
-        } 
-      }
-    }
     coreLogger.debug('Client flush completed');
     return { ok: true };
   } catch (error) {

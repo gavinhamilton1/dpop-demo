@@ -69,9 +69,30 @@ export async function registerPasskey() {
     cryptoLogger.debug('Passkey registration completed successfully');
     return result;
   } catch (error) {
-    cryptoLogger.error('Passkey registration failed:', error);
+    // Handle user cancellation gracefully first
+    if (error.name === 'NotAllowedError') {
+      cryptoLogger.info('User cancelled passkey registration');
+      throw new AuthenticationError('Registration cancelled by user', { 
+        originalError: error.message,
+        cancelled: true 
+      });
+    }
+    
+    // Handle specific error types
     if (error.name === 'AuthenticationError') throw error;
     if (error.name === 'NetworkError') throw error;
+    
+    // Handle other WebAuthn errors
+    if (error.name === 'InvalidStateError' || error.name === 'SecurityError') {
+      cryptoLogger.warn('Passkey registration failed - retryable error:', error);
+      throw new AuthenticationError('Registration failed - please try again', { 
+        originalError: error.message,
+        retryable: true 
+      });
+    }
+    
+    // Log other errors as errors
+    cryptoLogger.error('Passkey registration failed:', error);
     throw new AuthenticationError('Passkey registration failed', { originalError: error.message });
   }
 }
@@ -145,9 +166,30 @@ export async function authenticatePasskey(passedOpts) {
     cryptoLogger.debug('Passkey authentication completed successfully');
     return result;
   } catch (error) {
-    cryptoLogger.error('Passkey authentication failed:', error);
+    // Handle user cancellation gracefully first
+    if (error.name === 'NotAllowedError') {
+      cryptoLogger.info('User cancelled passkey authentication');
+      throw new AuthenticationError('Authentication cancelled by user', { 
+        originalError: error.message,
+        cancelled: true 
+      });
+    }
+    
+    // Handle specific error types
     if (error.name === 'AuthenticationError') throw error;
     if (error.name === 'NetworkError') throw error;
+    
+    // Handle other WebAuthn errors
+    if (error.name === 'InvalidStateError' || error.name === 'SecurityError') {
+      cryptoLogger.warn('Passkey authentication failed - retryable error:', error);
+      throw new AuthenticationError('Authentication failed - please try again', { 
+        originalError: error.message,
+        retryable: true 
+      });
+    }
+    
+    // Log other errors as errors
+    cryptoLogger.error('Passkey authentication failed:', error);
     throw new AuthenticationError('Passkey authentication failed', { originalError: error.message });
   }
 }
