@@ -1,6 +1,6 @@
 # DPoP Hands-On Lab: Browser Identity & Security
 
-## 🎯 Learning Objectives
+## Learning Objectives
 
 By the end of this 30-minute lab, participants will understand and implement:
 
@@ -10,14 +10,14 @@ By the end of this 30-minute lab, participants will understand and implement:
 4. **Cross-Device Linking** - Secure device-to-device communication
 5. **Session Management** - Secure session restoration and state management
 
-## 📋 Prerequisites
+## Prerequisites
 
 - Basic JavaScript knowledge
 - Understanding of web security concepts (CSRF, authentication)
 - Modern browser (Chrome, Firefox, Safari, Edge)
 - Code editor (VS Code recommended)
 
-## 🏗️ Lab Structure
+## Lab Structure
 
 ### Part 1: Setup & Application (5 minutes)
 - Clone the lab repository
@@ -36,7 +36,7 @@ By the end of this 30-minute lab, participants will understand and implement:
 - Verify security properties
 - Discuss real-world applications
 
-## 🎓 Key Concepts Covered
+## Key Concepts Covered
 
 ### Browser Identity Key (BIK)
 - **What**: Non-exportable cryptographic key pair stored in browser
@@ -58,30 +58,30 @@ By the end of this 30-minute lab, participants will understand and implement:
 - **Why**: Enables VDI environments and step-up authentication
 - **How**: QR codes, WebSockets, and cryptographic verification
 
-## 🔧 Technical Stack
+## Technical Stack
 
 - **Frontend**: Vanilla JavaScript, Web Crypto API, WebAuthn
 - **Backend**: FastAPI (Python), JWT, cryptographic operations
 - **Storage**: IndexedDB for client-side key storage
 - **Communication**: WebSockets for real-time device linking
 
-## 📚 Additional Resources
+## Additional Resources
 
 - [DPoP RFC 9449](https://datatracker.ietf.org/doc/html/rfc9449)
 - [WebAuthn Specification](https://www.w3.org/TR/webauthn/)
 - [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API)
 - [JWT RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519)
 
-## 🎯 Success Criteria
+## Success Criteria
 
 Participants will successfully:
-- ✅ Generate and store browser identity keys
-- ✅ Create DPoP proofs for API requests
-- ✅ Implement passkey registration and authentication
-- ✅ Establish secure cross-device communication
-- ✅ Understand the security benefits of each component
+- Generate and store browser identity keys
+- Create DPoP proofs for API requests
+- Implement passkey registration and authentication
+- Establish secure cross-device communication
+- Understand the security benefits of each component
 
-## 🚀 Next Steps
+## Next Steps
 
 After completing this lab, participants can:
 - Apply these concepts to their own applications

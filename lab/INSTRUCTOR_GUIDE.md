@@ -22,7 +22,7 @@ This 30-minute hands-on lab teaches participants how to implement browser identi
 - **30:00-33:00**: Testing the complete flow
 - **33:00-35:00**: Q&A and real-world applications discussion
 
-## 🎤 Talking Points & Script
+## Talking Points & Script
 
 ### **Opening (0:00-1:00)**
 
@@ -207,11 +207,11 @@ This 30-minute hands-on lab teaches participants how to implement browser identi
 ### **Assessment & Success Metrics**
 
 **Participants should be able to:**
-- ✅ Explain what DPoP is and why it's important
-- ✅ Implement basic cryptographic operations
-- ✅ Understand WebAuthn concepts
-- ✅ Describe cross-device security challenges
-- ✅ Identify real-world applications
+- Explain what DPoP is and why it's important
+- Implement basic cryptographic operations
+- Understand WebAuthn concepts
+- Describe cross-device security challenges
+- Identify real-world applications
 
 **Success indicators:**
 - Working implementation by end of lab
@@ -219,7 +219,7 @@ This 30-minute hands-on lab teaches participants how to implement browser identi
 - Ability to explain concepts to others
 - Interest in applying to their own projects
 
-## 🚀 Post-Lab Activities
+## Post-Lab Activities
 
 ### **Optional Extensions (if time permits)**
 - Add nonce challenge handling
@@ -239,7 +239,7 @@ This 30-minute hands-on lab teaches participants how to implement browser identi
 - Consider enterprise integration
 - Join security communities and discussions
 
-## 📚 Additional Resources
+## Additional Resources
 
 - [DPoP RFC 9449](https://datatracker.ietf.org/doc/html/rfc9449)
 - [WebAuthn Specification](https://www.w3.org/TR/webauthn/)

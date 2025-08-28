@@ -2,7 +2,7 @@
 
 This guide provides step-by-step instructions for implementing each component of the DPoP security system.
 
-## 🎯 Overview
+## Overview
 
 You will implement a complete browser identity and security system with:
 - Browser Identity Key (BIK) registration
@@ -11,14 +11,14 @@ You will implement a complete browser identity and security system with:
 - WebAuthn passkey support
 - Cross-device linking
 
-## 📋 Prerequisites
+## Prerequisites
 
 - Lab application running on http://localhost:8000
 - Modern browser with WebAuthn support
 - Basic JavaScript knowledge
 - Understanding of cryptographic concepts
 
-## 🚀 Step-by-Step Implementation
+## Step-by-Step Implementation
 
 ### Step 1: Browser Identity Key (BIK) Registration
 
@@ -529,7 +529,7 @@ async completeLinkManually() {
 - Device information is exchanged securely
 - Links can be used for step-up authentication
 
-## 🔧 Available Utilities
+## Available Utilities
 
 The lab provides several utility classes in `utils.js`:
 
@@ -541,7 +541,7 @@ The lab provides several utility classes in `utils.js`:
 - **QRCodeUtils**: QR code generation for device linking
 - **APIUtils**: HTTP request utilities with CSRF support
 
-## 🎯 Testing Your Implementation
+## Testing Your Implementation
 
 1. **Session Initialization**: Should create session and store CSRF token
 2. **BIK Registration**: Should generate keys and register with server
@@ -551,7 +551,7 @@ The lab provides several utility classes in `utils.js`:
 6. **Passkey Authentication**: Should authenticate using device biometrics
 7. **Device Linking**: Should establish cross-device communication
 
-## 🚀 Next Steps
+## Next Steps
 
 After completing this lab, you can:
 - Apply these concepts to your own applications
