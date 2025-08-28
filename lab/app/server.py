@@ -487,18 +487,15 @@ async def link_page(link_id: str):
         <p>Link ID: <code>{link_id}</code></p>
         <div id="status" class="status pending">
             <p>Connecting to desktop device...</p>
-            <p>Click the button below to complete the link:</p>
-            <button id="completeBtn" onclick="completeLink()">Complete Link</button>
+            <p>This page will automatically complete the link in a few seconds.</p>
         </div>
         <script>
             async function completeLink() {{
                 const statusDiv = document.getElementById('status');
-                const completeBtn = document.getElementById('completeBtn');
                 
                 try {{
                     statusDiv.className = 'status completing';
                     statusDiv.innerHTML = '<p>Completing link...</p>';
-                    completeBtn.disabled = true;
                     
                     // Send device info to complete the link
                     const response = await fetch('/link/complete/{link_id}', {{
@@ -522,23 +519,19 @@ async def link_page(link_id: str):
                     if (response.ok) {{
                         statusDiv.className = 'status linked';
                         statusDiv.innerHTML = '<p>✅ Successfully linked to desktop device!</p>';
-                        completeBtn.style.display = 'none';
                     }} else {{
                         throw new Error('Link completion failed');
                     }}
                 }} catch (error) {{
                     console.error('Link completion failed:', error);
                     statusDiv.className = 'status pending';
-                    statusDiv.innerHTML = '<p>Link completion failed. Please try again.</p><button id="completeBtn" onclick="completeLink()">Retry</button>';
+                    statusDiv.innerHTML = '<p>Link completion failed. Please refresh the page to try again.</p>';
                 }}
             }}
             
-            // Auto-complete after 3 seconds for convenience
+            // Auto-complete after 3 seconds
             setTimeout(() => {{
-                const completeBtn = document.getElementById('completeBtn');
-                if (completeBtn && !completeBtn.disabled) {{
-                    completeBtn.click();
-                }}
+                completeLink();
             }}, 3000);
         </script>
     </body>

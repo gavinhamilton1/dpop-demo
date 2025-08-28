@@ -14,12 +14,13 @@ This 30-minute hands-on lab teaches participants how to implement browser identi
 ### **Part 2: Core Implementation (20 minutes)**
 - **5:00-10:00**: Step 1 - BIK Registration (5 min)
 - **10:00-15:00**: Step 2 - DPoP Binding (5 min)
-- **15:00-20:00**: Step 3 - WebAuthn Integration (5 min)
-- **20:00-25:00**: Step 4 - Cross-Device Linking (5 min)
+- **15:00-20:00**: Step 3 - API Testing (5 min)
+- **20:00-25:00**: Step 4 - WebAuthn Integration (5 min)
+- **25:00-30:00**: Step 5 - Cross-Device Linking (5 min)
 
 ### **Part 3: Testing & Wrap-up (5 minutes)**
-- **25:00-28:00**: Testing the complete flow
-- **28:00-30:00**: Q&A and real-world applications discussion
+- **30:00-33:00**: Testing the complete flow
+- **33:00-35:00**: Q&A and real-world applications discussion
 
 ## 🎤 Talking Points & Script
 
@@ -36,15 +37,23 @@ This 30-minute hands-on lab teaches participants how to implement browser identi
 > "Let's look at our lab application. We have a simple web app with a basic UI and a Python FastAPI backend. The key files are:
 > 
 > - `index.html` - Our main interface
-> - `app.js` - Main application logic (we'll implement this)
+> - `app.js` - Main application logic with TODO comments (we'll implement this)
+> - `app-complete.js` - Complete implementation for reference
 > - `server.py` - Backend API (already implemented)
-> - `utils/` - Helper functions (we'll use these)
+> - `utils.js` - Helper functions (we'll use these)
 > 
 > **The lab application provides:**
 > - Basic UI with buttons for each step
+> - TODO comments in `app.js` for guided implementation
 > - Server endpoints for authentication
 > - Utility functions for crypto operations
-> - IndexedDB setup for secure storage"
+> - IndexedDB setup for secure storage
+> 
+> **Implementation approach:**
+> - Each method contains TODO comments with hints
+> - Students implement one step at a time
+> - Detailed logging shows what's happening
+> - Reference implementation available if needed"
 
 ### **Step 1: BIK Registration (5:00-10:00)**
 

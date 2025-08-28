@@ -27,8 +27,9 @@ By the end of this 30-minute lab, participants will understand and implement:
 ### Part 2: Core Implementation (20 minutes)
 - **Step 1**: Implement BIK registration (5 min)
 - **Step 2**: Implement DPoP binding (5 min)  
-- **Step 3**: Add WebAuthn passkey support (5 min)
-- **Step 4**: Implement cross-device linking (5 min)
+- **Step 3**: Test API with DPoP (5 min)
+- **Step 4**: Add WebAuthn passkey support (5 min)
+- **Step 5**: Implement cross-device linking (5 min)
 
 ### Part 3: Testing & Validation (5 minutes)
 - Test the complete flow
