@@ -468,6 +468,18 @@ async def link_page(link_id: str):
             .status {{ margin: 20px; padding: 10px; border-radius: 5px; }}
             .pending {{ background: #fff3cd; color: #856404; }}
             .linked {{ background: #d4edda; color: #155724; }}
+            .completing {{ background: #cce5ff; color: #004085; }}
+            button {{ 
+                background: #007bff; 
+                color: white; 
+                border: none; 
+                padding: 10px 20px; 
+                border-radius: 5px; 
+                cursor: pointer; 
+                margin: 10px;
+            }}
+            button:hover {{ background: #0056b3; }}
+            button:disabled {{ background: #6c757d; cursor: not-allowed; }}
         </style>
     </head>
     <body>
@@ -475,23 +487,59 @@ async def link_page(link_id: str):
         <p>Link ID: <code>{link_id}</code></p>
         <div id="status" class="status pending">
             <p>Connecting to desktop device...</p>
+            <p>Click the button below to complete the link:</p>
+            <button id="completeBtn" onclick="completeLink()">Complete Link</button>
         </div>
         <script>
-            // Simple status checking
-            setInterval(async () => {{
+            async function completeLink() {{
+                const statusDiv = document.getElementById('status');
+                const completeBtn = document.getElementById('completeBtn');
+                
                 try {{
-                    const response = await fetch('/link/status/{link_id}');
-                    const data = await response.json();
-                    const statusDiv = document.getElementById('status');
+                    statusDiv.className = 'status completing';
+                    statusDiv.innerHTML = '<p>Completing link...</p>';
+                    completeBtn.disabled = true;
                     
-                    if (data.status === 'linked') {{
+                    // Send device info to complete the link
+                    const response = await fetch('/link/complete/{link_id}', {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json'
+                        }},
+                        body: JSON.stringify({{
+                            device_type: 'mobile',
+                            user_agent: navigator.userAgent,
+                            timestamp: Date.now(),
+                            device_info: {{
+                                platform: navigator.platform,
+                                language: navigator.language,
+                                screen_width: screen.width,
+                                screen_height: screen.height
+                            }}
+                        }})
+                    }});
+                    
+                    if (response.ok) {{
                         statusDiv.className = 'status linked';
                         statusDiv.innerHTML = '<p>✅ Successfully linked to desktop device!</p>';
+                        completeBtn.style.display = 'none';
+                    }} else {{
+                        throw new Error('Link completion failed');
                     }}
                 }} catch (error) {{
-                    console.error('Status check failed:', error);
+                    console.error('Link completion failed:', error);
+                    statusDiv.className = 'status pending';
+                    statusDiv.innerHTML = '<p>Link completion failed. Please try again.</p><button id="completeBtn" onclick="completeLink()">Retry</button>';
                 }}
-            }}, 2000);
+            }}
+            
+            // Auto-complete after 3 seconds for convenience
+            setTimeout(() => {{
+                const completeBtn = document.getElementById('completeBtn');
+                if (completeBtn && !completeBtn.disabled) {{
+                    completeBtn.click();
+                }}
+            }}, 3000);
         </script>
     </body>
     </html>
