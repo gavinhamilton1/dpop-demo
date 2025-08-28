@@ -118,25 +118,25 @@
         </div>
 
         <div class="step">
-            <h3>Step 3: WebAuthn Passkey Support</h3>
-            <p>Add passwordless authentication using device biometrics or security keys.</p>
-            <button id="regBtn" disabled>4. Register Passkey</button>
-            <button id="authBtn" disabled>5. Authenticate Passkey</button>
-            <div id="passkeyStatus" class="status info">Complete Step 2 first</div>
+            <h3>Step 3: Testing</h3>
+            <p>Test the DPoP implementation and verify security properties.</p>
+            <button id="testBtn" disabled>4. Test API with DPoP</button>
+            <div id="testStatus" class="status info">Complete Step 2 first</div>
         </div>
 
         <div class="step">
-            <h3>Step 4: Testing</h3>
-            <p>Test the complete implementation and verify security properties.</p>
-            <button id="testBtn" disabled>6. Test API with DPoP</button>
-            <div id="testStatus" class="status info">Complete Step 3 first</div>
+            <h3>Step 4: WebAuthn Passkey Support</h3>
+            <p>Add passwordless authentication using device biometrics or security keys.</p>
+            <button id="regBtn" disabled>5. Register Passkey</button>
+            <button id="authBtn" disabled>6. Authenticate Passkey</button>
+            <div id="passkeyStatus" class="status info">Complete Step 3 first</div>
         </div>
 
         <div class="step">
             <h3>Step 5: Cross-Device Linking</h3>
             <p>Enable secure communication between devices for VDI and step-up authentication.</p>
             <button id="linkBtn" disabled>7. Start Device Linking</button>
-            <div id="linkStatus" class="status info">Complete Step 4 first</div>
+            <div id="linkStatus" class="status info">Complete Step 2 first</div>
             <div id="qrContainer" class="qr-container" style="display: none;">
                 <div class="qr-code">
                     <div id="qrCode"></div>

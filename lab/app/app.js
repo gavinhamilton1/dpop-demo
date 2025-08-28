@@ -319,17 +319,17 @@ class DPoPLab {
         // Enable/disable buttons based on state
         document.getElementById('bikBtn').disabled = !this.state.hasSession;
         document.getElementById('dpopBtn').disabled = !this.state.hasBIK;
+        document.getElementById('testBtn').disabled = !this.state.hasDPoP;
         document.getElementById('regBtn').disabled = !this.state.hasDPoP;
         document.getElementById('authBtn').disabled = !this.state.hasDPoP;
-        document.getElementById('testBtn').disabled = !this.state.hasPasskey;
-        document.getElementById('linkBtn').disabled = !this.state.hasPasskey;
+        document.getElementById('linkBtn').disabled = !this.state.hasDPoP;
         
         // Update status messages
         this.updateStatus('bikStatus', this.state.hasSession ? 'Ready to register BIK' : 'Complete session initialization first');
         this.updateStatus('dpopStatus', this.state.hasBIK ? 'Ready to bind DPoP' : 'Complete BIK registration first');
+        this.updateStatus('testStatus', this.state.hasDPoP ? 'Ready to test API' : 'Complete DPoP binding first');
         this.updateStatus('passkeyStatus', this.state.hasDPoP ? 'Ready to register passkey' : 'Complete DPoP binding first');
-        this.updateStatus('testStatus', this.state.hasPasskey ? 'Ready to test API' : 'Complete passkey registration first');
-        this.updateStatus('linkStatus', this.state.hasPasskey ? 'Ready to start linking' : 'Complete passkey registration first');
+        this.updateStatus('linkStatus', this.state.hasDPoP ? 'Ready to start linking' : 'Complete DPoP binding first');
     }
 
     setLoading(buttonId, text) {
