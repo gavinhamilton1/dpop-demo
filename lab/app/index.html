@@ -105,38 +105,38 @@
         <div class="step">
             <h3>Step 1: Browser Identity Key (BIK) Registration</h3>
             <p>Generate a non-exportable cryptographic key pair to establish browser identity.</p>
-            <button id="initBtn">1. Initialize Session</button>
-            <button id="bikBtn" disabled>2. Register BIK</button>
+            <button id="initBtn">1a. Initialize Session</button>
+            <button id="bikBtn" disabled>1b. Register BIK</button>
             <div id="bikStatus" class="status info">Click "Initialize Session" to begin</div>
         </div>
 
         <div class="step">
             <h3>Step 2: DPoP Binding</h3>
             <p>Create a DPoP proof that cryptographically binds browser identity to session tokens.</p>
-            <button id="dpopBtn" disabled>3. Bind DPoP</button>
+            <button id="dpopBtn" disabled>2. Bind DPoP</button>
             <div id="dpopStatus" class="status info">Complete Step 1 first</div>
         </div>
 
         <div class="step">
             <h3>Step 3: Testing</h3>
             <p>Test the DPoP implementation and verify security properties.</p>
-            <button id="testBtn" disabled>4. Test API with DPoP</button>
+            <button id="testBtn" disabled>3. Test API with DPoP</button>
             <div id="testStatus" class="status info">Complete Step 2 first</div>
         </div>
 
         <div class="step">
             <h3>Step 4: WebAuthn Passkey Support</h3>
             <p>Add passwordless authentication using device biometrics or security keys.</p>
-            <button id="regBtn" disabled>5. Register Passkey</button>
-            <button id="authBtn" disabled>6. Authenticate Passkey</button>
+            <button id="regBtn" disabled>4a. Register Passkey</button>
+            <button id="authBtn" disabled>4b. Authenticate Passkey</button>
             <div id="passkeyStatus" class="status info">Complete Step 3 first</div>
         </div>
 
         <div class="step">
             <h3>Step 5: Cross-Device Linking</h3>
             <p>Enable secure communication between devices for VDI and step-up authentication.</p>
-            <button id="linkBtn" disabled>7. Start Device Linking</button>
-            <button id="completeLinkBtn" disabled style="display: none;">8. Complete Link (Test)</button>
+            <button id="linkBtn" disabled>5. Start Device Linking</button>
+            <button id="completeLinkBtn" disabled style="display: none;">Complete Link (Test)</button>
             <div id="linkStatus" class="status info">Complete Step 2 first</div>
             <div id="qrContainer" class="qr-container" style="display: none;">
                 <div class="qr-code">
