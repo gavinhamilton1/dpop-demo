@@ -77,6 +77,30 @@ class FetchMetadataMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         return JSONResponse({"detail": "blocked by fetch-metadata"}, status_code=403)
 
+class CORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        origin = request.headers.get('Origin', '')
+        
+        # Allow all subdomains of jpmchase.net
+        if origin.endswith('.jpmchase.net') or origin == 'https://jpmchase.net':
+            response.headers['Access-Control-Allow-Origin'] = origin
+        # Also allow localhost for development
+        elif origin.startswith('http://localhost') or origin.startswith('https://localhost'):
+            response.headers['Access-Control-Allow-Origin'] = origin
+        # Allow all subdomains of dpop.fun
+        elif origin.endswith('.dpop.fun') or origin == 'https://dpop.fun':
+            response.headers['Access-Control-Allow-Origin'] = origin
+        else:
+            # Fallback for any other origins
+            response.headers['Access-Control-Allow-Origin'] = 'https://dpop.fun'
+        
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        
+        return response
+
 # ---------------- Server signing key (ES256) ----------------
 SERVER_EC_PRIVATE_KEY_PEM: str
 if SETTINGS.server_ec_private_key_pem:
@@ -193,6 +217,7 @@ app = FastAPI(middleware=[
     Middleware(RequestIDMiddleware),
     Middleware(FetchMetadataMiddleware),
     Middleware(SecurityHeadersMiddleware),
+    Middleware(CORSMiddleware),
     Middleware(SessionMiddleware,
                secret_key=(SETTINGS.session_secret_key or base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()),
                session_cookie=SESSION_COOKIE_NAME,
