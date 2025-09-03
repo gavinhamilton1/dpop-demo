@@ -669,7 +669,7 @@ async def reg_link(link_id: str):
             <div class="success-card">
                 <div class="success-icon">✅</div>
                 <h1>Link Registration Success!</h1>
-                <p>The link ID has been successfully stored in memory.</p>
+                <p></p>
                 
                 <div class="link-id">
                     <strong>Link ID:</strong><br>
