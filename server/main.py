@@ -79,6 +79,32 @@ class FetchMetadataMiddleware(BaseHTTPMiddleware):
 
 class CORSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # Handle CORS preflight OPTIONS requests
+        if request.method == "OPTIONS":
+            origin = request.headers.get('Origin', '')
+            
+            # Determine allowed origin
+            if origin.endswith('.jpmchase.net') or origin == 'https://jpmchase.net':
+                allowed_origin = origin
+            elif origin.startswith('http://localhost') or origin.startswith('https://localhost'):
+                allowed_origin = origin
+            elif origin.endswith('.dpop.fun') or origin == 'https://dpop.fun':
+                allowed_origin = origin
+            else:
+                allowed_origin = 'https://dpop.fun'
+            
+            # Return preflight response
+            return JSONResponse(
+                content={"ok": True},
+                headers={
+                    'Access-Control-Allow-Origin': allowed_origin,
+                    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+                    'Access-Control-Max-Age': '86400',  # Cache preflight for 24 hours
+                }
+            )
+        
+        # Handle regular requests
         response = await call_next(request)
         
         origin = request.headers.get('Origin', '')
@@ -96,8 +122,8 @@ class CORSMiddleware(BaseHTTPMiddleware):
             # Fallback for any other origins
             response.headers['Access-Control-Allow-Origin'] = 'https://dpop.fun'
         
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
         
         return response
 
