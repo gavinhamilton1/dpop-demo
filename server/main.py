@@ -589,11 +589,12 @@ async def test_cors():
     log.info("test-cors endpoint called")
     return {"ok": True, "message": "CORS test endpoint", "timestamp": time.time()}
 
-@app.post("/reg-link/{link_id}")
+@app.get("/reg-link/{link_id}")
 async def reg_link(link_id: str):
     """
     Store a link ID in memory for testing purposes.
     Completely independent of the main app.
+    Access via GET request - simply visit the URL to register the link ID.
     """
     try:
         log.info("reg-link endpoint called: link_id=%s", link_id)
