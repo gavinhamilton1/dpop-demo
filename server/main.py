@@ -515,6 +515,61 @@ async def api_echo(req: Request, ctx=Depends(require_dpop)):
 
 
 
+# ---------------- Testing Endpoints ----------------
+# Simple in-memory storage for testing (independent of app sessions)
+_test_link_storage = {}
+
+@app.post("/reg-link/{link_id}")
+async def reg_link(link_id: str):
+    """
+    Store a link ID in memory for testing purposes.
+    Completely independent of the main app.
+    """
+    try:
+        # Store the link ID in simple in-memory storage
+        _test_link_storage[link_id] = True
+        log.info("reg-link: stored link_id=%s", link_id)
+        
+        return {"ok": True, "link_id": link_id, "stored": True}
+        
+    except Exception as e:
+        log.exception("reg-link failed for link_id=%s", link_id)
+        raise HTTPException(500, f"reg-link failed: {e}")
+
+@app.get("/link-verify/{link_id}")
+async def link_verify(link_id: str):
+    """
+    Check if a link ID exists in memory for testing purposes.
+    Completely independent of the main app.
+    """
+    try:
+        # Check if the link ID exists in storage
+        found = link_id in _test_link_storage
+        
+        log.info("link-verify: link_id=%s found=%s", link_id, found)
+        
+        return {"ok": True, "link_id": link_id, "found": found}
+        
+    except Exception as e:
+        log.exception("link-verify failed for link_id=%s", link_id)
+        raise HTTPException(500, f"link-verify failed: {e}")
+
+@app.post("/_admin/clear-test-links")
+async def clear_test_links():
+    """
+    Clear all test link storage (for testing cleanup).
+    """
+    try:
+        count = len(_test_link_storage)
+        _test_link_storage.clear()
+        log.info("clear-test-links: cleared %d test links", count)
+        
+        return {"ok": True, "cleared_count": count}
+        
+    except Exception as e:
+        log.exception("clear-test-links failed")
+        raise HTTPException(500, f"clear-test-links failed: {e}")
+
 # ---------------- Admin ----------------
 @app.post("/_admin/flush")
 async def admin_flush():
