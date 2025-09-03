@@ -606,14 +606,15 @@ async def reg_link(link_id: str):
                 body {{
                     font-family: Arial, sans-serif;
                     text-align: center;
-                    padding: 50px;
+                    padding: 0;
                     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     color: white;
                     min-height: 100vh;
                     margin: 0;
                     display: flex;
-                    align-items: center;
+                    align-items: flex-start;
                     justify-content: center;
+                    padding-top: 80px;
                 }}
                 .success-card {{
                     background: rgba(255, 255, 255, 0.1);
