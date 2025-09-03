@@ -1,5 +1,5 @@
 # server/main.py
-import os, json, secrets, logging, asyncio, base64, hashlib
+import os, json, secrets, logging, asyncio, base64, hashlib, time
 from typing import Dict, Any, Tuple, List, Optional
 from urllib.parse import urlsplit, urlunsplit
 
@@ -580,14 +580,6 @@ async def api_echo(req: Request, ctx=Depends(require_dpop)):
 # ---------------- Testing Endpoints ----------------
 # Simple in-memory storage for testing (independent of app sessions)
 _test_link_storage = {}
-
-@app.get("/test-cors")
-async def test_cors():
-    """
-    Simple endpoint to test if CORS is working.
-    """
-    log.info("test-cors endpoint called")
-    return {"ok": True, "message": "CORS test endpoint", "timestamp": time.time()}
 
 @app.get("/reg-link/{link_id}")
 async def reg_link(link_id: str):
