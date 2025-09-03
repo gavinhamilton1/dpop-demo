@@ -71,18 +71,28 @@ class FetchMetadataMiddleware(BaseHTTPMiddleware):
     SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
     async def dispatch(self, request: Request, call_next):
         site = (request.headers.get("sec-fetch-site") or "").lower()
+        origin = request.headers.get("Origin", "")
+        
+        # Allow localhost requests to bypass fetch-metadata checks
+        if origin.startswith('http://localhost') or origin.startswith('https://localhost'):
+            log.info("FetchMetadata: allowing localhost request from %s", origin)
+            return await call_next(request)
+        
         if site in ("", "same-origin", "same-site", "none"):
             return await call_next(request)
         if request.method.upper() in self.SAFE_METHODS:
             return await call_next(request)
+        
+        log.warning("FetchMetadata: blocking request from site=%s, method=%s, origin=%s", site, request.method, origin)
         return JSONResponse({"detail": "blocked by fetch-metadata"}, status_code=403)
 
 class CORSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get('Origin', '')
+        log.info("CORS middleware: method=%s, origin=%s, path=%s", request.method, origin, request.url.path)
+        
         # Handle CORS preflight OPTIONS requests
         if request.method == "OPTIONS":
-            origin = request.headers.get('Origin', '')
-            
             # Determine allowed origin
             if origin.endswith('.jpmchase.net') or origin == 'https://jpmchase.net':
                 allowed_origin = origin
@@ -92,6 +102,8 @@ class CORSMiddleware(BaseHTTPMiddleware):
                 allowed_origin = origin
             else:
                 allowed_origin = 'https://dpop.fun'
+            
+            log.info("CORS preflight: returning allowed_origin=%s", allowed_origin)
             
             # Return preflight response
             return JSONResponse(
@@ -107,23 +119,22 @@ class CORSMiddleware(BaseHTTPMiddleware):
         # Handle regular requests
         response = await call_next(request)
         
-        origin = request.headers.get('Origin', '')
-        
-        # Allow all subdomains of jpmchase.net
+        # Determine allowed origin for response headers
         if origin.endswith('.jpmchase.net') or origin == 'https://jpmchase.net':
-            response.headers['Access-Control-Allow-Origin'] = origin
-        # Also allow localhost for development
+            allowed_origin = origin
         elif origin.startswith('http://localhost') or origin.startswith('https://localhost'):
-            response.headers['Access-Control-Allow-Origin'] = origin
-        # Allow all subdomains of dpop.fun
+            allowed_origin = origin
         elif origin.endswith('.dpop.fun') or origin == 'https://dpop.fun':
-            response.headers['Access-Control-Allow-Origin'] = origin
+            allowed_origin = origin
         else:
-            # Fallback for any other origins
-            response.headers['Access-Control-Allow-Origin'] = 'https://dpop.fun'
+            allowed_origin = 'https://dpop.fun'
         
+        # Set CORS headers
+        response.headers['Access-Control-Allow-Origin'] = allowed_origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        
+        log.info("CORS response: set headers for origin=%s, allowed_origin=%s", origin, allowed_origin)
         
         return response
 
@@ -570,6 +581,14 @@ async def api_echo(req: Request, ctx=Depends(require_dpop)):
 # Simple in-memory storage for testing (independent of app sessions)
 _test_link_storage = {}
 
+@app.get("/test-cors")
+async def test_cors():
+    """
+    Simple endpoint to test if CORS is working.
+    """
+    log.info("test-cors endpoint called")
+    return {"ok": True, "message": "CORS test endpoint", "timestamp": time.time()}
+
 @app.post("/reg-link/{link_id}")
 async def reg_link(link_id: str):
     """
@@ -577,11 +596,16 @@ async def reg_link(link_id: str):
     Completely independent of the main app.
     """
     try:
+        log.info("reg-link endpoint called: link_id=%s", link_id)
+        
         # Store the link ID in simple in-memory storage
         _test_link_storage[link_id] = True
         log.info("reg-link: stored link_id=%s", link_id)
         
-        return {"ok": True, "link_id": link_id, "stored": True}
+        response = {"ok": True, "link_id": link_id, "stored": True}
+        log.info("reg-link: returning response=%s", response)
+        
+        return response
         
     except Exception as e:
         log.exception("reg-link failed for link_id=%s", link_id)
