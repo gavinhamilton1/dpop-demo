@@ -599,13 +599,105 @@ async def reg_link(link_id: str):
         log.info("reg-link endpoint called: link_id=%s", link_id)
         
         # Store the link ID in simple in-memory storage
-        _test_link_storage[link_id] = True
+        _test_link_storage[link_id] = str(time.time())
         log.info("reg-link: stored link_id=%s", link_id)
         
-        response = {"ok": True, "link_id": link_id, "stored": True}
-        log.info("reg-link: returning response=%s", response)
+        # Return HTML success page
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Link Registration Success</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    text-align: center;
+                    padding: 50px;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    min-height: 100vh;
+                    margin: 0;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }}
+                .success-card {{
+                    background: rgba(255, 255, 255, 0.1);
+                    backdrop-filter: blur(10px);
+                    border-radius: 20px;
+                    padding: 40px;
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+                    border: 1px solid rgba(255, 255, 255, 0.2);
+                    max-width: 500px;
+                }}
+                .success-icon {{
+                    font-size: 64px;
+                    margin-bottom: 20px;
+                }}
+                h1 {{
+                    margin: 0 0 20px 0;
+                    font-size: 2.5em;
+                    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+                }}
+                .link-id {{
+                    background: rgba(255, 255, 255, 0.2);
+                    padding: 15px;
+                    border-radius: 10px;
+                    font-family: monospace;
+                    font-size: 1.1em;
+                    margin: 20px 0;
+                    word-break: break-all;
+                }}
+                .timestamp {{
+                    font-size: 0.9em;
+                    opacity: 0.8;
+                    margin-top: 20px;
+                }}
+                .back-link {{
+                    margin-top: 30px;
+                }}
+                .back-link a {{
+                    color: white;
+                    text-decoration: none;
+                    padding: 10px 20px;
+                    border: 2px solid white;
+                    border-radius: 25px;
+                    transition: all 0.3s ease;
+                }}
+                .back-link a:hover {{
+                    background: white;
+                    color: #667eea;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="success-card">
+                <div class="success-icon">✅</div>
+                <h1>Link Registration Success!</h1>
+                <p>The link ID has been successfully stored in memory.</p>
+                
+                <div class="link-id">
+                    <strong>Link ID:</strong><br>
+                    {link_id}
+                </div>
+                
+                <p>This link ID is now available for verification.</p>
+                
+                <div class="timestamp">
+                    Registered at: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}
+                </div>
+                
+                <div class="back-link">
+                    <a href="javascript:history.back()">← Go Back</a>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
         
-        return response
+        log.info("reg-link: returning HTML success page")
+        return HTMLResponse(html_content)
         
     except Exception as e:
         log.exception("reg-link failed for link_id=%s", link_id)
