@@ -103,13 +103,13 @@ if (typeof crypto !== 'undefined' && !crypto.randomUUID && crypto.getRandomValue
   };
 }
 
-function getTokenFromURL() {
+function getLinkIdFromURL() {
   const url = new URL(location.href);
-  const fromQuery = url.searchParams.get('token');
+  const fromQuery = url.searchParams.get('lid');
   if (fromQuery) return fromQuery;
   const hash = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash;
   if (!hash) return null;
-  return new URLSearchParams(hash).get('token');
+  return new URLSearchParams(hash).get('lid');
 }
 
 // Main linking process
@@ -233,13 +233,13 @@ async function link(linkId) {
   }
 }
 
-// Extract token and link_id from URL
-const token = getTokenFromURL();
-if (!token) {
-  log('No token provided in URL', 'error');
-  updateStep(1, 'error', 'Missing token');
+// Extract link ID from URL
+const linkId = getLinkIdFromURL();
+if (!linkId) {
+  log('No link ID provided in URL', 'error');
+  updateStep(1, 'error', 'Missing link ID');
 } else {
-  log(`Token found: ${token}`, 'info');
+  log(`Link ID found: ${linkId}`, 'info');
   
   // Start the linking process
   (async () => {
@@ -248,7 +248,7 @@ if (!token) {
       let r = await fetch('/link/mobile/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token })
+        body: JSON.stringify({ lid: linkId })
       });
       if (!r.ok) throw new Error(`start failed: ${r.status}`);
       const { link_id } = await r.json();

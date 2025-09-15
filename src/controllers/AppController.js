@@ -536,6 +536,14 @@ export class AppController {
     // Generate QR code
     if (window.QRCode) {
       new QRCode(document.getElementById('qrcode'), qrData);
+      
+      // Add AprilTag overlay after QR code is generated
+      setTimeout(async () => {
+        if (window.QRGenerator) {
+          const qrGenerator = new QRGenerator();
+          await qrGenerator.generateQRWithAprilTag('qrcode', qrData);
+        }
+      }, 100); // Small delay to ensure QR code is rendered
     }
   }
 
@@ -566,6 +574,10 @@ export class AppController {
     
     const existingSignature = document.querySelector('.signature-container');
     if (existingSignature) existingSignature.remove();
+    
+    // Clean up AprilTag overlay if it exists
+    const apriltagOverlay = document.getElementById('apriltag-overlay');
+    if (apriltagOverlay) apriltagOverlay.remove();
   }
 
   /**

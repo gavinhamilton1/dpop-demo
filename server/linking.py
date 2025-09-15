@@ -1,6 +1,6 @@
 # server/linking.py
 from __future__ import annotations
-import json, secrets, threading, asyncio, logging
+import json, secrets, threading, asyncio, logging, random, uuid
 from typing import Any, Dict, Tuple, Optional, Callable, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -128,7 +128,7 @@ def get_router(
         # Log the QR generation for debugging
         log.info("QR generation - desktop_origin=%s qr_origin=%s", origin, qr_origin)
             
-        qr_url = f"{qr_origin}/public/link.html?token={token}"
+        qr_url = f"{qr_origin}/public/link.html?lid={rid}"
 
         _put_link(rid, {
             "rid": rid,
@@ -368,10 +368,10 @@ def get_router(
 
     @router.post("/link/mobile/start")
     async def link_mobile_start(body: Dict[str, Any], req: Request):
-        """Mobile posts the QR token it scanned. No DPoP yet."""
-        token = body.get("token")
-        if not token:
-            raise HTTPException(status_code=400, detail="missing token")
+        """Mobile posts the link ID it scanned. No DPoP yet."""
+        lid = body.get("lid")
+        if not lid:
+            raise HTTPException(status_code=400, detail="missing link id")
         
         # Log request details for debugging
         origin = req.headers.get("origin", "unknown")
@@ -379,18 +379,23 @@ def get_router(
         user_agent = req.headers.get("user-agent", "unknown")
         sid = req.session.get("sid")
         
-        log.info("Mobile link start - token=%s origin=%s host=%s sid=%s", 
-                token[:20] + "..." if token else "none", origin, host, sid)
+        log.info("Mobile link start - lid=%s origin=%s host=%s sid=%s", 
+                lid, origin, host, sid)
         
-        claims = jws_es256_verify(token)
-        now_ts = now()
-        if claims.get("aud") != "link":
-            raise HTTPException(status_code=400, detail="bad aud")
-        if now_ts > int(claims.get("exp", 0)):
-            raise HTTPException(status_code=400, detail="expired")
-        lid = claims.get("lid")
+        # Verify the link ID exists and is still valid
+        with _LINKS_LOCK:
+            link_data = _LINKS.get(lid)
+            if not link_data:
+                raise HTTPException(status_code=400, detail="invalid or expired link id")
+            
+            # Check if link has expired
+            now_ts = now()
+            if now_ts > link_data.get("exp", 0):
+                log.warning("Link expired - lid=%s exp=%s now=%s", lid, link_data.get("exp"), now_ts)
+                _LINKS.pop(lid, None)  # Clean up expired link
+                raise HTTPException(status_code=400, detail="link expired")
         
-        log.info("Token verified - lid=%s aud=%s exp=%s", lid, claims.get("aud"), claims.get("exp"))
+        log.info("Link ID verified - lid=%s exp=%s", lid, link_data.get("exp"))
         
         with _LINKS_LOCK:
             rec = _LINKS.get(lid)
@@ -498,5 +503,38 @@ def get_router(
         import io
         buf = io.BytesIO(); img.save(buf, format="PNG")
         return Response(buf.getvalue(), media_type="image/png")
+
+
+
+    @router.post("/get-apriltags")
+    async def get_apriltags(request: Request):
+        """Simple endpoint to get AprilTag numbers for QR generation."""
+        try:
+            log.info("Generating AprilTag numbers for QR code")
+            
+            # Generate 5 random AprilTag numbers between 1 and 586
+            apriltag_numbers = []
+            for _ in range(5):
+                random_num = random.randint(1, 586)
+                apriltag_numbers.append(random_num)
+
+            # Return just the AprilTag numbers
+            response_json = {
+                "apriltag_numbers": apriltag_numbers
+            }
+            
+            log.info(f"AprilTag numbers generated: {apriltag_numbers}")
+            log.info(f"Full response: {response_json}")
+            return JSONResponse(content=response_json)
+
+        except Exception as e:
+            log.error(f"AprilTag generation failed: {str(e)}")
+            import traceback
+            log.error(f"Traceback: {traceback.format_exc()}")
+            return JSONResponse({
+                "result": False,
+                "error": f"AprilTag generation failed: {str(e)}"
+            })
+
 
     return router

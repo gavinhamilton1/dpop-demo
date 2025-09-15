@@ -124,6 +124,8 @@ class CORSMiddleware(BaseHTTPMiddleware):
             allowed_origin = origin
         elif origin.startswith('http://localhost') or origin.startswith('https://localhost'):
             allowed_origin = origin
+        elif origin == ('https://stronghold.onrender.com') or origin == 'https://stronghold-test.onrender.com':
+            allowed_origin = origin
         elif origin.endswith('.dpop.fun') or origin == 'https://dpop.fun':
             allowed_origin = origin
         else:
@@ -306,6 +308,13 @@ async def index():
     with open(os.path.join(BASE_DIR, "..", "public", "index.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
+@app.get("/favicon.ico")
+async def manifest():
+    return FileResponse("/public/favicon.ico")
+
+@app.get("/manifest.json")
+async def manifest():
+    return FileResponse("app/static/manifest.json")
 
 
 @app.get("/.well-known/stronghold-jwks.json")
