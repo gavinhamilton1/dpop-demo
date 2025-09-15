@@ -498,7 +498,7 @@ def get_router(
         payload = {"iss":"stronghold","aud":"link","iat":now_ts,"exp":rec["exp"],"lid":link_id}
         token = jws_es256_sign(payload)
         origin, _ = canonicalize_origin_and_url(req)
-        uri = f"{origin}/public/link.html?token={token}"
+        uri = f"{origin}/public/link.html?lid={link_id}"
         img = qrcode.make(uri)
         import io
         buf = io.BytesIO(); img.save(buf, format="PNG")

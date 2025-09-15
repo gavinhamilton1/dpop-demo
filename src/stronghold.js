@@ -295,9 +295,12 @@ export async function strongholdFetch(url, { method = 'GET', body = null } = {})
     const currentOrigin = globalThis.location?.origin || globalThis.self?.location?.origin || 'http://localhost';
     const fullUrl = canonicalUrl(url, currentOrigin);
     
+    const storedNonce = (await get(CONFIG.STORAGE.KEYS.DPOP_NONCE))?.value || null;
+    coreLogger.debug('Using DPoP nonce for request:', storedNonce);
+    
     let proof = await createDpopProof({ 
       url: fullUrl, method, 
-      nonce: (await get(CONFIG.STORAGE.KEYS.DPOP_NONCE))?.value || null, 
+      nonce: storedNonce, 
       privateKey: dpop.privateKey, 
       publicJwk: dpop.publicJwk 
     });
@@ -337,7 +340,7 @@ export async function strongholdFetch(url, { method = 'GET', body = null } = {})
   }
 }
 
-async function resumeViaPage() {
+export async function resumeViaPage() {
   try {
     coreLogger.debug('Attempting session resume');
     const r1 = await fetch(CONFIG.ENDPOINTS.SESSION_RESUME_INIT, { method: 'POST', credentials: 'include' });
@@ -357,7 +360,12 @@ async function resumeViaPage() {
     const j = await r2.json();
     await set(CONFIG.STORAGE.KEYS.BIND, j.bind);
     const n = r2.headers.get('DPoP-Nonce'); 
-    if (n) await set(CONFIG.STORAGE.KEYS.DPOP_NONCE, n);
+    if (n) {
+      await set(CONFIG.STORAGE.KEYS.DPOP_NONCE, n);
+      coreLogger.info('Fresh DPoP nonce received and stored:', n);
+    } else {
+      coreLogger.warn('No DPoP nonce received from session resume - this may cause authentication issues');
+    }
     
     coreLogger.debug('Session resume completed successfully');
     return true;

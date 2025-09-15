@@ -167,12 +167,11 @@ export class StrongholdService extends ApiService {
   }
 
   /**
-   * Restore session state from IndexedDB
+   * Restore session state from IndexedDB and get fresh nonces from server
    */
   async resumeSession() {
     try {
-      // Simply restore CSRF token and reg_nonce from IndexedDB
-      // This is all we need to make authenticated requests
+      // First restore CSRF token and reg_nonce from IndexedDB
       await Stronghold.restoreSessionTokens();
       
       // Verify we have the necessary tokens
@@ -187,7 +186,13 @@ export class StrongholdService extends ApiService {
         throw new Error('Binding token not found in storage');
       }
       
-      // Session state restored successfully
+      // Now call the server-side resume process to get fresh DPoP nonce
+      const resumeSuccess = await Stronghold.resumeViaPage();
+      if (!resumeSuccess) {
+        throw new Error('Server-side session resume failed');
+      }
+      
+      // Session state restored successfully with fresh nonce
       
       return true;
     } catch (error) {
