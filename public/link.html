@@ -50,6 +50,19 @@
       </div>
     </div>
 
+    <!-- BC card (hidden until issued) -->
+<section class="bc-card" id="bcCard" style="display:none;">
+  <div class="bc-url">Enter only at <code>https://verify.dpop.fun/device</code></div>
+  <div class="bc-code" id="bcCode">----</div>
+  <div class="bc-timer"><span id="bcTimer">60</span>s left</div>
+  <div class="bc-actions">
+    <button id="bcRegenerate" class="btn-secondary" disabled>Regenerate</button>
+    <button id="bcCancel" class="btn-danger">Cancel</button>
+  </div>
+  <p class="bc-hint">Open <strong>verify.dpop.fun/device</strong> on your computer and type the code exactly.</p>
+</section>
+
+
     <div class="log-container" id="out" aria-label="Activity log"></div>
   </main>
 
