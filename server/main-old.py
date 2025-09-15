@@ -35,16 +35,10 @@ JTI_TTL = SETTINGS.jti_ttl
 BIND_TTL = SETTINGS.bind_ttl
 EXTERNAL_ORIGIN = SETTINGS.external_origin
 
-# ----------- Subdomains (override with env if needed) -----------
-VERIFY_HOST = os.environ.get("VERIFY_HOST", "verify.dpop.fun").lower()
-MAIN_HOST   = os.environ.get("MAIN_HOST", "dpop.fun").lower()
-SHORT_HOST  = os.environ.get("SHORT_HOST", "v.dpop.fun").lower()
-
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s stronghold %(message)s")
 log = logging.getLogger("stronghold")
 log.info("Loaded config from: %s", SETTINGS.cfg_file_used or "<defaults>")
 log.info("Allowed origins: %s", SETTINGS.allowed_origins)
-log.info("Hosts: main=%s verify=%s short=%s", MAIN_HOST, VERIFY_HOST, SHORT_HOST)
 
 # ---------------- Security / request-id middleware ----------------
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -63,8 +57,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         resp.headers["Referrer-Policy"] = "no-referrer"
         resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=(self)"
         resp.headers["X-Content-Type-Options"] = "nosniff"
-        # HSTS hint (terminate TLS at proxy ideally)
-        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
         return resp
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -80,55 +72,72 @@ class FetchMetadataMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         site = (request.headers.get("sec-fetch-site") or "").lower()
         origin = request.headers.get("Origin", "")
-
-        # Allow localhost to bypass for dev
+        
+        # Allow localhost requests to bypass fetch-metadata checks
         if origin.startswith('http://localhost') or origin.startswith('https://localhost'):
+            log.info("FetchMetadata: allowing localhost request from %s", origin)
             return await call_next(request)
-
+        
         if site in ("", "same-origin", "same-site", "none"):
             return await call_next(request)
         if request.method.upper() in self.SAFE_METHODS:
             return await call_next(request)
-
-        log.warning("FetchMetadata: blocking site=%s method=%s origin=%s", site, request.method, origin)
+        
+        log.warning("FetchMetadata: blocking request from site=%s, method=%s, origin=%s", site, request.method, origin)
         return JSONResponse({"detail": "blocked by fetch-metadata"}, status_code=403)
 
 class CORSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         origin = request.headers.get('Origin', '')
-
-        # Preflight
+        log.info("CORS middleware: method=%s, origin=%s, path=%s", request.method, origin, request.url.path)
+        
+        # Handle CORS preflight OPTIONS requests
         if request.method == "OPTIONS":
-            allowed_origin = (
-                origin if (
-                    origin.endswith('.jpmchase.net') or origin == 'https://jpmchase.net' or
-                    origin.startswith('http://localhost') or origin.startswith('https://localhost') or
-                    origin.endswith('.dpop.fun') or origin == 'https://dpop.fun' or
-                    origin in ('https://stronghold.onrender.com', 'https://stronghold-test.onrender.com')
-                ) else 'https://dpop.fun'
-            )
+            # Determine allowed origin
+            if origin.endswith('.jpmchase.net') or origin == 'https://jpmchase.net':
+                allowed_origin = origin
+            elif origin.startswith('http://localhost') or origin.startswith('https://localhost'):
+                allowed_origin = origin
+            elif origin.endswith('.dpop.fun') or origin == 'https://dpop.fun':
+                allowed_origin = origin
+            else:
+                allowed_origin = 'https://dpop.fun'
+            
+            log.info("CORS preflight: returning allowed_origin=%s", allowed_origin)
+            
+            # Return preflight response
             return JSONResponse(
                 content={"ok": True},
                 headers={
                     'Access-Control-Allow-Origin': allowed_origin,
                     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
                     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
-                    'Access-Control-Max-Age': '86400',
+                    'Access-Control-Max-Age': '86400',  # Cache preflight for 24 hours
                 }
             )
-
+        
+        # Handle regular requests
         response = await call_next(request)
-        allowed_origin = (
-            origin if (
-                origin.endswith('.jpmchase.net') or origin == 'https://jpmchase.net' or
-                origin.startswith('http://localhost') or origin.startswith('https://localhost') or
-                origin in ('https://stronghold.onrender.com', 'https://stronghold-test.onrender.com') or
-                origin.endswith('.dpop.fun') or origin == 'https://dpop.fun'
-            ) else 'https://dpop.fun'
-        )
+        
+        # Determine allowed origin for response headers
+        if origin.endswith('.jpmchase.net') or origin == 'https://jpmchase.net':
+            allowed_origin = origin
+        elif origin.startswith('http://localhost') or origin.startswith('https://localhost'):
+            allowed_origin = origin
+        elif origin == ('https://stronghold.onrender.com') or origin == 'https://stronghold-test.onrender.com':
+            allowed_origin = origin
+        elif origin.endswith('.dpop.fun') or origin == 'https://dpop.fun':
+            allowed_origin = origin
+        else:
+            allowed_origin = 'https://dpop.fun'
+        
+        # Set CORS headers
         response.headers['Access-Control-Allow-Origin'] = allowed_origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        
+        log.info("CORS response: set headers for origin=%s, allowed_origin=%s", origin, allowed_origin)
+        
         return response
 
 # ---------------- Server signing key (ES256) ----------------
@@ -166,6 +175,7 @@ def _bracket_host(host: str) -> str:
     return host
 
 def _is_allowed_origin(url: str, allowed_origins: List[str]) -> bool:
+    """Check if a URL's origin is in the allowed origins list."""
     try:
         parsed_url = urlsplit(url)
         url_origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -174,15 +184,27 @@ def _is_allowed_origin(url: str, allowed_origins: List[str]) -> bool:
         return False
 
 def _canonicalize_url_for_validation(url: str, allowed_origins: List[str]) -> Optional[str]:
+    """Canonicalize URL and validate against allowed origins."""
     try:
         parsed_url = urlsplit(url)
         scheme = parsed_url.scheme.lower()
         host = parsed_url.hostname.lower() if parsed_url.hostname else ""
         port = parsed_url.port
+        
+        # Handle default ports
         if ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
             port = None
-        netloc = f"{_bracket_host(host)}:{port}" if port else _bracket_host(host)
+            
+        # Reconstruct netloc
+        if port:
+            netloc = f"{host}:{port}"
+        else:
+            netloc = host
+            
+        # Reconstruct URL
         canonical = urlunsplit((scheme, netloc, parsed_url.path or "/", parsed_url.query, ""))
+        
+        # Check if origin is allowed
         if _is_allowed_origin(canonical, allowed_origins):
             return canonical
         return None
@@ -200,7 +222,8 @@ def canonicalize_origin_and_url(request: Request) -> Tuple[str, str]:
             if host.startswith("["):
                 if "]:" in host:
                     h, p = host.split("]:", 1)
-                    host = h.strip("[]"); port = port or p
+                    host = h.strip("[]")
+                    port = port or p
                 else:
                     host = host.strip("[]")
             else:
@@ -211,6 +234,7 @@ def canonicalize_origin_and_url(request: Request) -> Tuple[str, str]:
             host = request.url.hostname or ""
             if request.url.port:
                 port = str(request.url.port)
+
         host = host.lower()
         if port and ((scheme == "https" and port == "443") or (scheme == "http" and port == "80")):
             netloc = _bracket_host(host)
@@ -219,6 +243,7 @@ def canonicalize_origin_and_url(request: Request) -> Tuple[str, str]:
         else:
             netloc = _bracket_host(host)
         origin = f"{scheme}://{netloc}"
+
     parts = urlsplit(str(request.url))
     o_parts = urlsplit(origin)
     path = parts.path or "/"
@@ -241,6 +266,8 @@ app = FastAPI(middleware=[
 
 BASE_DIR = os.path.dirname(__file__)
 
+
+
 # Static file mounting
 app.mount("/public", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public")), name="public")
 app.mount("/src", StaticFiles(directory=os.path.join(BASE_DIR, "..", "src")), name="src")
@@ -248,7 +275,8 @@ app.mount("/css", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public/css
 
 def _new_nonce() -> str: return b64u(secrets.token_bytes(18))
 
-# ---------------- Binding token helpers ----------------
+
+
 def issue_binding_token(*, sid: str, bik_jkt: str, dpop_jkt: str, aud: str, ttl: int = BIND_TTL) -> str:
     now_ts = now()
     payload = {"sid": sid, "aud": aud, "nbf": now_ts - 60, "exp": now_ts + ttl, "cnf": {"bik_jkt": bik_jkt, "dpop_jkt": dpop_jkt}}
@@ -267,31 +295,33 @@ def verify_binding_token(token: str) -> Dict[str, Any]:
 # ---- DB startup ----
 @app.on_event("startup")
 async def _init_db():
+    # Prefer path from config; fall back if DB.init() has no parameter
     try:
         await DB.init(SETTINGS.db_path)  # type: ignore[arg-type]
         log.info("DB initialized at %s", SETTINGS.db_path)
     except TypeError:
         log.warning("DB.init(db_path) not supported; calling DB.init() without args. Ensure DB uses %s.", SETTINGS.db_path)
         await DB.init()
-
-# ---------------- Basic routes ----------------
+        
+        
 @app.get("/", response_class=HTMLResponse)
 async def index():
     with open(os.path.join(BASE_DIR, "..", "public", "index.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
 @app.get("/favicon.ico")
-async def favicon():
+async def manifest():
     return FileResponse("/public/favicon.ico")
 
 @app.get("/manifest.json")
 async def manifest():
     return FileResponse("app/static/manifest.json")
 
+
 @app.get("/.well-known/stronghold-jwks.json")
 async def jwks(): return {"keys": [SERVER_PUBLIC_JWK]}
 
-# ---------------- Session + Bind endpoints (existing) ----------------
+# ---------------- Session + Bind endpoints ----------------
 @app.post("/session/init")
 async def session_init(req: Request):
     body = await req.json()
@@ -365,10 +395,19 @@ async def session_status(req: Request):
     s = await DB.get_session(sid) if sid else None
     if not sid or not s:
         return {"valid": False, "state": None, "bik_registered": False, "dpop_bound": False}
-    state = s.get("state"); bik_registered = bool(s.get("bik_jkt")); dpop_bound = bool(s.get("dpop_jkt"))
-    return {"valid": True, "state": state, "bik_registered": bik_registered, "dpop_bound": dpop_bound}
+    
+    state = s.get("state")
+    bik_registered = bool(s.get("bik_jkt"))
+    dpop_bound = bool(s.get("dpop_jkt"))
+    
+    return {
+        "valid": True,
+        "state": state,
+        "bik_registered": bik_registered,
+        "dpop_bound": dpop_bound
+    }
 
-# ---------------- DPoP gate for protected APIs (existing) ----------------
+# ---------------- DPoP gate ----------------
 def _nonce_fail_response(sid: str, detail: str) -> None:
     n = _new_nonce()
     asyncio.create_task(DB.add_nonce(sid, n, NONCE_TTL))
@@ -394,33 +433,55 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
         _nonce_fail_response(sid, "bind token sid mismatch")
 
     origin, full_url = canonicalize_origin_and_url(req)
+    # Validate aud against allowed origins (multi-domain support)
     aud = bind_payload.get("aud")
     if not aud:
         _nonce_fail_response(sid, "missing aud")
+    
     if aud not in SETTINGS.allowed_origins:
         _nonce_fail_response(sid, f"bind token aud not allowed: {aud}")
 
     try:
         h_b64, p_b64, _ = dpop_hdr.split(".")
         header = json.loads(base64url_decode(h_b64.encode())); payload = json.loads(base64url_decode(p_b64.encode()))
-        if header.get("typ") != "dpop+jwt": _nonce_fail_response(sid, "wrong typ")
-        if header.get("alg") != "ES256": _nonce_fail_response(sid, "bad alg")
+
+        if header.get("typ") != "dpop+jwt":
+            _nonce_fail_response(sid, "wrong typ")
+        if header.get("alg") != "ES256":
+            _nonce_fail_response(sid, "bad alg")
+
         jwk = header.get("jwk") or {}
         if jwk.get("kty") != "EC" or jwk.get("crv") != "P-256" or not jwk.get("x") or not jwk.get("y"):
             _nonce_fail_response(sid, "bad jwk")
+
         jose_jws.verify(dpop_hdr, jwk, algorithms=["ES256"])
 
-        htu = payload.get("htu"); 
-        if not htu: _nonce_fail_response(sid, "missing htu")
+        # Validate htu against allowed origins (multi-domain support)
+        htu = payload.get("htu")
+        if not htu:
+            _nonce_fail_response(sid, "missing htu")
+        
+        log.debug("DPoP validation - htu: %s, full_url: %s, allowed_origins: %s", htu, full_url, SETTINGS.allowed_origins)
+        
+        # Try to canonicalize and validate the htu against allowed origins
         canonical_htu = _canonicalize_url_for_validation(htu, SETTINGS.allowed_origins)
         if not canonical_htu:
+            log.warning("DPoP validation failed - htu origin not allowed: %s (allowed: %s)", htu, SETTINGS.allowed_origins)
             _nonce_fail_response(sid, f"htu origin not allowed: {htu}")
-
-        expected_parts = urlsplit(full_url); htu_parts = urlsplit(canonical_htu)
+        
+        log.debug("DPoP validation - canonical_htu: %s", canonical_htu)
+        
+        # For path and query validation, we can use the canonicalized htu
+        # but we need to ensure the path and query match what we expect
+        expected_parts = urlsplit(full_url)
+        htu_parts = urlsplit(canonical_htu)
+        
         if expected_parts.path != htu_parts.path:
-            _nonce_fail_response(sid, "htu path mismatch")
+            log.warning("DPoP validation failed - path mismatch: expected %s, got %s", expected_parts.path, htu_parts.path)
+            _nonce_fail_response(sid, f"htu path mismatch: expected {expected_parts.path}, got {htu_parts.path}")
         if expected_parts.query != htu_parts.query:
-            _nonce_fail_response(sid, "htu query mismatch")
+            log.warning("DPoP validation failed - query mismatch: expected %s, got %s", expected_parts.query, htu_parts.query)
+            _nonce_fail_response(sid, f"htu query mismatch: expected {expected_parts.query}, got {htu_parts.query}")
         if payload.get("htm","").upper() != req.method.upper():
             _nonce_fail_response(sid, "htm mismatch")
         if abs(now() - int(payload.get("iat",0))) > SKEW_SEC:
@@ -450,7 +511,7 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
     req.state.next_nonce = next_nonce
     return {"sid": sid, "next_nonce": next_nonce}
 
-# ---- Passkey repo adapter / routers (existing) ----
+# ---- Passkey repo adapter (maps passkeys.py expectations to DB.pk_* methods) ----
 class _PasskeyRepoAdapter:
     def __init__(self, db): self.db = db
     async def get_for_principal(self, principal: str):
@@ -468,6 +529,7 @@ class _PasskeyRepoAdapter:
 
 PASSKEY_REPO = _PasskeyRepoAdapter(DB)
 
+# ---------------- Routers ----------------
 app.include_router(get_passkeys_router(
     DB,
     require_dpop,
@@ -523,180 +585,165 @@ async def api_echo(req: Request, ctx=Depends(require_dpop)):
     log.info("api_echo ok sid=%s rid=%s", ctx["sid"], req.state.request_id)
     return JSONResponse({"ok": True, "echo": body, "ts": now()}, headers=headers)
 
-# ---------------- Testing (kept) ----------------
+
+
+# ---------------- Testing Endpoints ----------------
+# Simple in-memory storage for testing (independent of app sessions)
 _test_link_storage = {}
 
 @app.get("/reg-link/{link_id}")
 async def reg_link(link_id: str):
+    """
+    Store a link ID in memory for testing purposes.
+    Completely independent of the main app.
+    Access via GET request - simply visit the URL to register the link ID.
+    """
     try:
+        log.info("reg-link endpoint called: link_id=%s", link_id)
+        
+        # Store the link ID in simple in-memory storage
         _test_link_storage[link_id] = str(time.time())
-        html = f"""<!doctype html><html><body><h1>Registered</h1><p>{link_id}</p></body></html>"""
-        return HTMLResponse(html)
+        log.info("reg-link: stored link_id=%s", link_id)
+        
+        # Return HTML success page
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Link Registration Success</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    text-align: center;
+                    padding: 0;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    min-height: 100vh;
+                    margin: 0;
+                    display: flex;
+                    align-items: flex-start;
+                    justify-content: center;
+                    padding-top: 80px;
+                }}
+                .success-card {{
+                    background: rgba(255, 255, 255, 0.1);
+                    backdrop-filter: blur(10px);
+                    border-radius: 20px;
+                    padding: 40px;
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+                    border: 1px solid rgba(255, 255, 255, 0.2);
+                    max-width: 500px;
+                }}
+                .success-icon {{
+                    font-size: 64px;
+                    margin-bottom: 20px;
+                }}
+                h1 {{
+                    margin: 0 0 20px 0;
+                    font-size: 2.5em;
+                    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+                }}
+                .link-id {{
+                    background: rgba(255, 255, 255, 0.2);
+                    padding: 15px;
+                    border-radius: 10px;
+                    font-family: monospace;
+                    font-size: 1.1em;
+                    margin: 20px 0;
+                    word-break: break-all;
+                }}
+                .timestamp {{
+                    font-size: 0.9em;
+                    opacity: 0.8;
+                    margin-top: 20px;
+                }}
+                .back-link {{
+                    margin-top: 30px;
+                }}
+                .back-link a {{
+                    color: white;
+                    text-decoration: none;
+                    padding: 10px 20px;
+                    border: 2px solid white;
+                    border-radius: 25px;
+                    transition: all 0.3s ease;
+                }}
+                .back-link a:hover {{
+                    background: white;
+                    color: #667eea;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="success-card">
+                <div class="success-icon">✅</div>
+                <h1>Link Registration Success!</h1>
+                <p></p>
+                
+                <div class="link-id">
+                    <strong>Link ID:</strong><br>
+                    {link_id}
+                </div>
+                
+                <p>This link ID is now available for verification.</p>
+                
+                <div class="timestamp">
+                    Registered at: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}
+                </div>
+                
+                <div class="back-link">
+                    <a href="javascript:history.back()">← Go Back</a>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        log.info("reg-link: returning HTML success page")
+        return HTMLResponse(html_content)
+        
     except Exception as e:
+        log.exception("reg-link failed for link_id=%s", link_id)
         raise HTTPException(500, f"reg-link failed: {e}")
 
 @app.get("/link-verify/{link_id}")
 async def link_verify(link_id: str):
+    """
+    Check if a link ID exists in memory for testing purposes.
+    Completely independent of the main app.
+    """
     try:
+        # Check if the link ID exists in storage
         found = link_id in _test_link_storage
+        
+        log.info("link-verify: link_id=%s found=%s", link_id, found)
+        
         return {"ok": True, "link_id": link_id, "found": found}
+        
     except Exception as e:
+        log.exception("link-verify failed for link_id=%s", link_id)
         raise HTTPException(500, f"link-verify failed: {e}")
 
 @app.post("/_admin/clear-test-links")
 async def clear_test_links():
+    """
+    Clear all test link storage (for testing cleanup).
+    """
     try:
-        count = len(_test_link_storage); _test_link_storage.clear()
+        count = len(_test_link_storage)
+        _test_link_storage.clear()
+        log.info("clear-test-links: cleared %d test links", count)
+        
         return {"ok": True, "cleared_count": count}
+        
     except Exception as e:
+        log.exception("clear-test-links failed")
         raise HTTPException(500, f"clear-test-links failed: {e}")
 
+# ---------------- Admin ----------------
 @app.post("/_admin/flush")
 async def admin_flush():
     await DB.flush()
     log.warning("admin_flush: cleared demo stores")
     return {"ok": True}
-
-# ======================================================================
-# =============== NEW: verify subdomain desktop endpoints ===============
-# ======================================================================
-
-def _require_host(request: Request, host: str):
-    h = (request.headers.get("x-forwarded-host") or request.url.hostname or "").lower()
-    if h != host:
-        raise HTTPException(status_code=400, detail=f"wrong host: expected {host}")
-
-def _require_top_level_post(request: Request):
-    site = (request.headers.get("sec-fetch-site") or "").lower()
-    dest = (request.headers.get("sec-fetch-dest") or "").lower()
-    if site not in ("same-origin", "none"):
-        raise HTTPException(403, "cross-site blocked")
-    if dest not in ("document", "empty"):
-        raise HTTPException(400, "bad destination")
-
-def _parse_b64u(s: str) -> bytes:
-    pad = "=" * (-len(s) % 4)
-    return base64.urlsafe_b64decode(s + pad)
-
-def _parse_compact_jwt(compact: str) -> Tuple[Dict[str, Any], Dict[str, Any], bytes]:
-    try:
-        h_b64, p_b64, s_b64 = compact.split(".")
-        header = json.loads(_parse_b64u(h_b64))
-        payload = json.loads(_parse_b64u(p_b64))
-        sig = _parse_b64u(s_b64)
-        return header, payload, sig
-    except Exception:
-        raise HTTPException(400, "bad_dpop_format")
-
-@app.get("/device")
-async def verify_device_page(req: Request):
-    _require_host(req, VERIFY_HOST)
-
-    # Try common locations:
-    candidates = [
-        os.path.join(BASE_DIR, "..", "public", "verify.html"),
-    ]
-    for page_path in candidates:
-        if os.path.exists(page_path):
-            with open(page_path, "r", encoding="utf-8") as f:
-                return HTMLResponse(f.read())
-    # Not found → clear message
-    return HTMLResponse(
-        "<h1>Verification page not found</h1><p>Expected one of:<br>"
-        + "<br>".join(candidates)
-        + "</p>",
-        status_code=500,
-    )
-
-# ---- POST /device/redeem (accept BC -> issue short-lived DPoP nonce) ----
-@app.post("/device/redeem")
-async def verify_device_redeem(req: Request):
-    _require_host(req, VERIFY_HOST)
-    _require_top_level_post(req)
-
-    sid = req.session.get("sid")
-    s = await DB.get_session(sid) if sid else None
-    if not sid or not s:
-        raise HTTPException(401, "no session")
-
-    try:
-        body = await req.json()
-        bc = (body.get("bc") or "").upper().replace("-", "").strip()
-        if not (6 <= len(bc) <= 16):
-            raise HTTPException(400, "invalid_or_expired_code")
-        # TODO: integrate with your real mobile-issued BC validation:
-        # rec = await DB.bc_consume(bc)  -> should verify single-use + TTL + link_id
-        # For now, accept any format that matches (DEMO ONLY):
-        # If you have a testing path, verify via _test_link_storage / link_id mapping
-
-        # Mark link consumed if you have server-side state; then mint nonce
-        next_nonce = _new_nonce()
-        await DB.add_nonce(sid, next_nonce, NONCE_TTL)
-        log.info("device_redeem ok sid=%s rid=%s", sid, req.state.request_id)
-        return JSONResponse({"dpop_nonce": next_nonce, "exp": now() + NONCE_TTL})
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.exception("device_redeem failed sid=%s rid=%s", sid, req.state.request_id)
-        raise HTTPException(400, f"redeem failed: {e}")
-
-# ---- POST /link/finalize (verify raw DPoP; bind session to jkt) ----
-@app.post("/link/finalize")
-async def verify_link_finalize(req: Request, resp: Response):
-    _require_host(req, VERIFY_HOST)
-
-    sid = req.session.get("sid")
-    s = await DB.get_session(sid) if sid else None
-    if not sid or not s:
-        raise HTTPException(401, "no session")
-
-    dpop = req.headers.get("DPoP")
-    if not dpop:
-        # return nonce challenge if missing
-        n = _new_nonce(); await DB.add_nonce(sid, n, NONCE_TTL)
-        raise HTTPException(428, "dpop required", headers={"DPoP-Nonce": n})
-
-    try:
-        header, payload, sig = _parse_compact_jwt(dpop)
-        if header.get("alg") != "ES256" or header.get("typ") not in ("dpop+jwt", "DPoP"):
-            raise HTTPException(400, "bad dpop header")
-        jwk = header.get("jwk") or {}
-        # Verify signature with JOSE (over compact form)
-        jose_jws.verify(dpop, jwk, algorithms=["ES256"])
-
-        # Validate claims
-        origin, full_url = canonicalize_origin_and_url(req)
-        expected_url = full_url.split("?")[0]
-        if payload.get("htu") != expected_url:
-            raise HTTPException(400, "htu mismatch")
-        if payload.get("htm","").upper() != req.method.upper():
-            raise HTTPException(400, "htm mismatch")
-        if abs(now() - int(payload.get("iat",0))) > SKEW_SEC:
-            raise HTTPException(400, "iat skew")
-        n = payload.get("nonce")
-        if not n or not (await DB.nonce_valid(sid, n)):
-            raise HTTPException(401, "nonce missing/expired")
-        jti = payload.get("jti")
-        if not jti or not (await DB.add_jti(sid, jti, JTI_TTL)):
-            raise HTTPException(401, "jti replay")
-
-        # Compute jkt and bind to session (first-time bind if not present)
-        dpop_jkt = ec_p256_thumbprint(jwk)
-        if not s.get("dpop_jkt"):
-            await DB.update_session(sid, {"dpop_jkt": dpop_jkt, "state": "active"})
-        else:
-            # If already set, enforce continuity
-            if s.get("dpop_jkt") != dpop_jkt:
-                raise HTTPException(401, "dpop_jkt mismatch")
-
-        # Next nonce for caller
-        next_nonce = _new_nonce()
-        await DB.add_nonce(sid, next_nonce, NONCE_TTL)
-        resp.headers["DPoP-Nonce"] = next_nonce
-        log.info("link_finalize ok sid=%s jkt=%s rid=%s", sid, dpop_jkt[:8], req.state.request_id)
-        return JSONResponse({"ok": True, "session_state": "active", "jkt": dpop_jkt})
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.exception("link_finalize failed sid=%s rid=%s", sid, req.state.request_id)
-        raise HTTPException(400, f"finalize failed: {e}")
