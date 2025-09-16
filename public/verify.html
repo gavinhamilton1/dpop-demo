@@ -158,6 +158,8 @@
       width: 100%;
       border-radius: 0.75rem;
       background: #000;
+      /* Flip the video horizontally for easier phone positioning */
+      transform: scaleX(-1);
     }
     
     .hidden {
@@ -364,11 +366,18 @@ $('#codeForm').addEventListener('submit', async (e)=>{
 let stream, stopLoop;
 async function startCam(){
   try{
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:720} }});
+    stream = await navigator.mediaDevices.getUserMedia({ 
+      video: { 
+        facingMode:'environment', 
+        width:{ideal:1280}, 
+        height:{ideal:720} 
+      } 
+    });
   }catch(e){
     camStatus.textContent = "Camera permission denied or unavailable."; camStatus.className = "status err"; return;
   }
-  videoEl.srcObject = stream; await videoEl.play();
+  videoEl.srcObject = stream; 
+  await videoEl.play();
   camStatus.textContent = "Scanning…"; camStatus.className = "status";
 
   const loop = async () => {
@@ -379,26 +388,50 @@ async function startCam(){
     const w = Math.max(320, Math.floor(vw * scale));
     const h = Math.max(240, Math.floor(vh * scale));
     canvasEl.width = w; canvasEl.height = h;
-    ctx.drawImage(videoEl, 0, 0, w, h);
+    
+    // Flip the image horizontally for easier phone positioning
+    ctx.save();
+    ctx.scale(-1, 1);
+    ctx.drawImage(videoEl, -w, 0, w, h);
+    ctx.restore();
+    
     const img = ctx.getImageData(0, 0, w, h);
 
-    const result = jsQR(img.data, w, h, { inversionAttempts: "dontInvert" });
+    const result = jsQR(img.data, w, h, { 
+      // Try multiple inversion attempts for better detection
+      inversionAttempts: "attemptBoth"
+    });
+    
     if (result && result.data) {
       const text = (result.data + '').trim();
-      if (text.startsWith(EXPECTED_QR_PREFIX)) {
-        const bcRaw = text.slice(EXPECTED_QR_PREFIX.length);
+      console.log('QR detected:', text); // Debug log
+      
+      // Check for the expected prefix (more flexible matching)
+      if (text.includes('/verify/device?bc=') || text.startsWith(EXPECTED_QR_PREFIX)) {
+        let bcRaw;
+        if (text.includes('/verify/device?bc=')) {
+          bcRaw = text.split('/verify/device?bc=')[1];
+        } else {
+          bcRaw = text.slice(EXPECTED_QR_PREFIX.length);
+        }
+        
+        console.log('BC code extracted:', bcRaw); // Debug log
         autofillAndSubmit(bcRaw);
-        stopCam(); return;
+        stopCam(); 
+        return;
       } else {
+        console.log('QR code not matching expected format:', text); // Debug log
         // ignore foreign QR codes; keep scanning
       }
     }
+    
     if ('requestVideoFrameCallback' in HTMLVideoElement.prototype){
       videoEl.requestVideoFrameCallback(loop);
     } else {
       requestAnimationFrame(loop);
     }
   };
+  
   stopLoop = false;
   if ('requestVideoFrameCallback' in HTMLVideoElement.prototype){
     videoEl.requestVideoFrameCallback(loop);
