@@ -15,6 +15,9 @@
       max-width: 800px;
       margin: 2rem auto;
       padding: 0 1rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
     
     .verify-header {
@@ -48,25 +51,32 @@
     }
     
     .verify-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
       gap: 2rem;
       margin-top: 2rem;
     }
     
-    @media (max-width: 768px) {
-      .verify-grid {
-        grid-template-columns: 1fr;
-        gap: 1.5rem;
-      }
-    }
-    
     .verify-card {
+      width: 100%;
+      max-width: 500px;
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 1rem;
       padding: 1.5rem;
     }
+    
+    @media (max-width: 768px) {
+      .verify-grid {
+        gap: 1.5rem;
+      }
+      
+      .verify-card {
+        max-width: 100%;
+      }
+    }
+    
     
     .verify-card-title {
       font-size: 1.25rem;
@@ -154,6 +164,13 @@
       color: var(--muted);
     }
     
+    .camera-container {
+      position: relative;
+      width: 100%;
+      max-width: 400px;
+      margin: 0 auto;
+    }
+    
     .verify-video {
       width: 100%;
       border-radius: 0.75rem;
@@ -162,8 +179,136 @@
       transform: scaleX(-1);
     }
     
+    .privacy-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+      border-radius: 0.75rem;
+      overflow: hidden;
+    }
+    
+    .blur-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      /* Create an ellipse cutout using mask */
+      mask: 
+        radial-gradient(ellipse 80px 80px at center, transparent 80px, black 80px);
+      -webkit-mask: 
+        radial-gradient(ellipse 80px 80px at center, transparent 80px, black 80px);
+    }
+    
+    .scanning-blur {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 160px;
+      height: 160px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      background: rgba(255, 255, 255, 0.1);
+      pointer-events: none;
+    }
+    
+    .scanning-window {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 160px;
+      height: 160px;
+      transform: translate(-50%, -50%);
+      border: 2px solid rgba(255, 255, 255, 0.8);
+      border-radius: 16px;
+      background: transparent;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .scanning-text {
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 14px;
+      font-weight: 500;
+      text-align: center;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 8px 16px;
+      border-radius: 20px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      white-space: nowrap;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    
+    .scanning-corners {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 160px;
+      height: 160px;
+      transform: translate(-50%, -50%);
+    }
+    
+    .corner {
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      border: 3px solid #10b981;
+    }
+    
+    .corner.top-left {
+      top: 0;
+      left: 0;
+      border-right: none;
+      border-bottom: none;
+    }
+    
+    .corner.top-right {
+      top: 0;
+      right: 0;
+      border-left: none;
+      border-bottom: none;
+    }
+    
+    .corner.bottom-left {
+      bottom: 0;
+      left: 0;
+      border-right: none;
+      border-top: none;
+    }
+    
+    .corner.bottom-right {
+      bottom: 0;
+      right: 0;
+      border-left: none;
+      border-top: none;
+    }
+    
     .hidden {
       display: none !important;
+    }
+    
+    .verify-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 0.5rem;
+    }
+    
+    .verify-status {
+      text-align: center;
+      margin-top: 0.5rem;
     }
     
     canvas {
@@ -200,11 +345,26 @@
       <!-- Camera scan (jsQR) -->
       <div class="verify-card hidden" id="camCard" aria-labelledby="camTitle">
         <h2 id="camTitle" class="verify-card-title">Scan QR from your phone</h2>
-        <video id="video" class="verify-video" playsinline></video>
+        <div class="camera-container">
+          <video id="video" class="verify-video" playsinline></video>
+          <div class="privacy-overlay">
+            <div class="blur-overlay"></div>
+            <div class="scanning-blur"></div>
+            <div class="scanning-window">
+              <div class="scanning-text">Aim QR code here</div>
+            </div>
+            <div class="scanning-corners">
+              <div class="corner top-left"></div>
+              <div class="corner top-right"></div>
+              <div class="corner bottom-left"></div>
+              <div class="corner bottom-right"></div>
+            </div>
+          </div>
+        </div>
         <canvas id="qrCanvas"></canvas>
         <div class="verify-actions" style="margin-top:1rem">
           <button class="btn btn-secondary" id="stopCamBtn" type="button">Use code instead</button>
-          <span class="verify-subtitle" id="camHint">Point the camera at the QR shown on your phone.</span>
+          <span class="verify-subtitle" id="camHint">Position the QR code within the scanning area.</span>
         </div>
         <div class="verify-status" id="camStatus"></div>
       </div>
