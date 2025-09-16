@@ -255,6 +255,7 @@ export class AppController {
   async initializeSession() {
     await this.errorHandler.handleAsync(async () => {
       this.buttonManager.setLoading('initBtn', 'Initializing...');
+      console.log('Starting session initialization...');
       
       const session = await this.stronghold.initSession();
       
@@ -264,7 +265,161 @@ export class AppController {
       this.buttonManager.setSuccess('initBtn', 'Session initialized!');
       this.logger.success('Session initialized successfully', session);
       
+      // Collect device fingerprinting data after session is confirmed working
+      console.log('About to collect fingerprint...');
+      await this.collectFingerprint();
+      console.log('Fingerprint collection completed');
+      
     }, 'Session initialization', this.handleError);
+  }
+
+  /**
+   * Collect device fingerprinting data
+   */
+  async collectFingerprint() {
+    try {
+      console.log('🔍 FINGERPRINT COLLECTION STARTED');
+      this.logger.info('Starting fingerprint collection...');
+      
+      // Collect browser/device signals
+      const fingerprint = {
+        userAgent: navigator.userAgent,
+        screenResolution: `${screen.width}x${screen.height}`,
+        colorDepth: screen.colorDepth,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        language: navigator.language,
+        platform: navigator.platform,
+        hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
+        deviceMemory: navigator.deviceMemory || 'unknown',
+        cookieEnabled: navigator.cookieEnabled,
+        doNotTrack: navigator.doNotTrack || 'unknown',
+        webglVendor: this.getWebGLVendor(),
+        webglRenderer: this.getWebGLRenderer(),
+        timestamp: new Date().toISOString(),
+        deviceType: 'desktop' // Add device type to distinguish from mobile
+      };
+
+      this.logger.info('Fingerprint data collected:', fingerprint);
+      
+      // Send fingerprint data to server
+      const response = await fetch('/session/fingerprint', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify(fingerprint)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to collect fingerprint: ${response.status} ${errorText}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ FINGERPRINT COLLECTION SUCCESS:', result);
+      this.logger.info('Device fingerprint collected successfully:', result);
+    } catch (error) {
+      console.log('❌ FINGERPRINT COLLECTION FAILED:', error);
+      this.logger.error('Failed to collect fingerprint:', error);
+      // Don't throw - fingerprinting failure shouldn't break session initialization
+    }
+  }
+
+  /**
+   * Get WebGL vendor information
+   */
+  getWebGLVendor() {
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (!gl) return 'unknown';
+      
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+      if (!debugInfo) return 'unknown';
+      
+      return gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+    } catch (e) {
+      return 'unknown';
+    }
+  }
+
+  /**
+   * Get WebGL renderer information
+   */
+  getWebGLRenderer() {
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (!gl) return 'unknown';
+      
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+      if (!debugInfo) return 'unknown';
+      
+      return gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+    } catch (e) {
+      return 'unknown';
+    }
+  }
+
+  /**
+   * Get canvas fingerprint
+   */
+  getCanvasFingerprint() {
+    try {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      // Draw some text and shapes
+      ctx.textBaseline = 'top';
+      ctx.font = '14px Arial';
+      ctx.fillStyle = '#f60';
+      ctx.fillRect(125, 1, 62, 20);
+      ctx.fillStyle = '#069';
+      ctx.fillText('Canvas fingerprint', 2, 15);
+      ctx.fillStyle = 'rgba(102, 204, 0, 0.7)';
+      ctx.fillText('Canvas fingerprint', 4, 17);
+      
+      return canvas.toDataURL();
+    } catch (e) {
+      return 'unknown';
+    }
+  }
+
+  /**
+   * Get audio fingerprint
+   */
+  async getAudioFingerprint() {
+    try {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const analyser = audioContext.createAnalyser();
+      const gainNode = audioContext.createGain();
+      const scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+      
+      oscillator.type = 'triangle';
+      oscillator.frequency.value = 10000;
+      
+      gainNode.gain.value = 0;
+      
+      oscillator.connect(analyser);
+      analyser.connect(scriptProcessor);
+      scriptProcessor.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.start(0);
+      
+      return new Promise((resolve) => {
+        scriptProcessor.onaudioprocess = (event) => {
+          const buffer = event.inputBuffer.getChannelData(0);
+          const fingerprint = Array.from(buffer.slice(0, 30)).map(x => x.toFixed(3)).join(',');
+          audioContext.close();
+          resolve(fingerprint);
+        };
+      });
+    } catch (e) {
+      return 'unknown';
+    }
   }
 
   /**

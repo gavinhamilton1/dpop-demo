@@ -302,6 +302,14 @@ async def session_init(req: Request):
     req.session.update({"sid": sid})
     await DB.set_session(sid, {"state":"pending-bind","csrf":csrf,"reg_nonce":reg_nonce,"browser_uuid":body.get("browser_uuid")})
     log.info("session_init sid=%s rid=%s", sid, req.state.request_id)
+    log.info("session_init - session cookie set: %s", req.cookies.get("stronghold_session"))
+    
+    # Verify session was created in database
+    stored_session = await DB.get_session(sid)
+    if stored_session:
+        log.info("session_init - session verified in DB sid=%s keys=%s", sid, list(stored_session.keys()))
+    else:
+        log.error("session_init - session NOT found in DB sid=%s", sid)
     return JSONResponse({"csrf": csrf, "reg_nonce": reg_nonce, "state": "pending-bind"})
 
 @app.post("/browser/register")
@@ -523,6 +531,260 @@ async def resume_confirm(req: Request):
     n = _new_nonce(); await DB.add_nonce(sid, n, NONCE_TTL)
     await DB.update_session(sid, {"resume_nonce": None})
     return JSONResponse({"bind": bind}, headers={"DPoP-Nonce": n})
+
+@app.post("/session/kill")
+async def kill_session(req: Request):
+    """Kill the current session completely"""
+    sid = req.session.get("sid")
+    if not sid:
+        raise HTTPException(401, "no session")
+    
+    try:
+        # Delete the session from database
+        await DB.delete_session(sid)
+        
+        # Clear the session cookie
+        req.session.clear()
+        
+        log.info("Session killed successfully sid=%s", sid)
+        return JSONResponse({"ok": True, "message": "Session killed successfully"})
+    except Exception as e:
+        log.exception("Failed to kill session sid=%s", sid)
+        raise HTTPException(500, f"Failed to kill session: {e}")
+
+@app.post("/session/fingerprint")
+async def collect_fingerprint(req: Request):
+    """Collect device fingerprinting and geolocation data"""
+    log.info("POST /session/fingerprint endpoint called")
+    log.info("POST /session/fingerprint - request headers: %s", dict(req.headers))
+    log.info("POST /session/fingerprint - request cookies: %s", dict(req.cookies))
+    
+    sid = req.session.get("sid")
+    log.info("POST /session/fingerprint - session data: %s", dict(req.session))
+    if not sid:
+        log.error("POST /session/fingerprint - no session ID found")
+        raise HTTPException(401, "no session")
+    
+    log.info("POST /session/fingerprint called with sid=%s", sid)
+    log.info("POST /session/fingerprint - storing fingerprint data for session_id=%s", sid)
+    log.info("POST /session/fingerprint - session cookie: %s", req.cookies.get("stronghold_session"))
+    
+    try:
+        # Verify session exists before updating
+        existing_session = await DB.get_session(sid)
+        if not existing_session:
+            log.error("Session not found for fingerprint collection sid=%s", sid)
+            raise HTTPException(404, "session not found")
+        
+        log.info("Existing session found sid=%s keys=%s", sid, list(existing_session.keys()))
+        
+        # Get fingerprint data from request body
+        fingerprint_data = await req.json()
+        log.info("Received fingerprint data sid=%s device_type=%s data=%s", 
+                sid, fingerprint_data.get("deviceType", "unknown"), fingerprint_data)
+        
+        # Get client IP for geolocation
+        client_ip = req.client.host
+        if req.headers.get("x-forwarded-for"):
+            client_ip = req.headers.get("x-forwarded-for").split(",")[0].strip()
+        elif req.headers.get("x-real-ip"):
+            client_ip = req.headers.get("x-real-ip")
+        
+        # Add IP to fingerprint data
+        fingerprint_data["ip_address"] = client_ip
+        
+        # Store fingerprint data and device type in session
+        device_type = fingerprint_data.get("deviceType", "unknown")
+        await DB.update_session(sid, {
+            "fingerprint": fingerprint_data,
+            "device_type": device_type
+        })
+        
+        # Verify the data was stored
+        stored_session = await DB.get_session(sid)
+        stored_fingerprint = stored_session.get("fingerprint", {}) if stored_session else {}
+        stored_device_type = stored_session.get("device_type", "unknown") if stored_session else "unknown"
+        log.info("Fingerprint stored verification sid=%s device_type=%s stored_keys=%s", 
+                sid, stored_device_type, list(stored_fingerprint.keys()))
+        
+        # Final verification - check if fingerprint data is actually in the stored session
+        if not stored_fingerprint or len(stored_fingerprint) == 0:
+            log.error("Fingerprint data not found in stored session sid=%s", sid)
+            raise HTTPException(500, "Fingerprint data was not stored properly")
+        
+        log.info("Fingerprint data successfully stored sid=%s device_type=%s fingerprint_keys=%s", 
+                sid, stored_device_type, list(stored_fingerprint.keys()))
+        
+        log.info("Fingerprint collected sid=%s device_type=%s ip=%s", 
+                sid, fingerprint_data.get("deviceType", "unknown"), client_ip)
+        return JSONResponse({"ok": True, "message": "Fingerprint collected successfully"})
+    except Exception as e:
+        log.exception("Failed to collect fingerprint sid=%s", sid)
+        raise HTTPException(500, f"Failed to collect fingerprint: {e}")
+
+@app.get("/debug/test-mobile-fingerprint")
+async def test_mobile_fingerprint():
+    """Test endpoint to verify mobile fingerprint collection"""
+    try:
+        # Create a test session
+        test_sid = secrets.token_urlsafe(18)
+        test_fingerprint = {
+            "userAgent": "Test Mobile Agent",
+            "deviceType": "mobile",
+            "screenResolution": "375x667",
+            "timestamp": "2024-01-01T00:00:00Z"
+        }
+        
+        await DB.set_session(test_sid, {
+            "state": "test",
+            "fingerprint": test_fingerprint,
+            "device_type": "mobile"
+        })
+        
+        # Verify it was stored
+        stored = await DB.get_session(test_sid)
+        if stored and stored.get("device_type") == "mobile":
+            return JSONResponse({
+                "success": True,
+                "message": "Mobile fingerprint test successful",
+                "test_sid": test_sid,
+                "stored_data": stored
+            })
+        else:
+            return JSONResponse({
+                "success": False,
+                "message": "Mobile fingerprint test failed",
+                "stored_data": stored
+            })
+    except Exception as e:
+        log.exception("Mobile fingerprint test failed")
+        return JSONResponse({
+            "success": False,
+            "message": f"Test failed: {e}"
+        })
+
+@app.get("/debug/sessions")
+async def debug_sessions():
+    """Debug endpoint to see all sessions in database"""
+    try:
+        # Get all sessions from database
+        sessions = []
+        async with DB._conn.execute("SELECT sid, data, updated_at FROM sessions ORDER BY updated_at DESC LIMIT 10") as cursor:
+            async for row in cursor:
+                try:
+                    data = json.loads(row["data"])
+                    sessions.append({
+                        "sid": row["sid"],
+                        "device_type": data.get("device_type", "unknown"),
+                        "has_fingerprint": "fingerprint" in data,
+                        "fingerprint_keys": list(data.get("fingerprint", {}).keys()) if "fingerprint" in data else [],
+                        "updated_at": row["updated_at"]
+                    })
+                except Exception as e:
+                    sessions.append({
+                        "sid": row["sid"],
+                        "error": f"Failed to parse data: {e}",
+                        "updated_at": row["updated_at"]
+                    })
+        
+        return JSONResponse({"sessions": sessions})
+    except Exception as e:
+        log.exception("Failed to get debug sessions")
+        raise HTTPException(500, f"Failed to get debug sessions: {e}")
+
+@app.get("/session/fingerprint")
+async def get_fingerprint(req: Request):
+    """Get stored fingerprint data for current session"""
+    sid = req.session.get("sid")
+    log.info("GET /session/fingerprint - session cookie: %s", req.cookies.get("stronghold_session"))
+    log.info("GET /session/fingerprint - session data: %s", dict(req.session))
+    if not sid:
+        raise HTTPException(401, "no session")
+    
+    log.info("GET /session/fingerprint called with sid=%s", sid)
+    log.info("GET /session/fingerprint - checking database for session_id=%s", sid)
+    
+    try:
+        session_data = await DB.get_session(sid)
+        if not session_data:
+            raise HTTPException(404, "session not found")
+        
+        log.info("Full session data sid=%s keys=%s", sid, list(session_data.keys()))
+        log.info("Full session data sid=%s data=%s", sid, session_data)
+        fingerprint_data = session_data.get("fingerprint", {})
+        device_type = session_data.get("device_type", "unknown")
+        log.info("Retrieved fingerprint data sid=%s device_type=%s data=%s", sid, device_type, fingerprint_data)
+        return JSONResponse({
+            "fingerprint": fingerprint_data,
+            "device_type": device_type
+        })
+    except Exception as e:
+        log.exception("Failed to get fingerprint sid=%s", sid)
+        raise HTTPException(500, f"Failed to get fingerprint: {e}")
+
+@app.get("/session/fingerprint-data")
+async def get_fingerprint_data(req: Request):
+    """Get both desktop and mobile fingerprint data for the current session"""
+    sid = req.session.get("sid")
+    log.info("GET /session/fingerprint-data - session cookie: %s", req.cookies.get("stronghold_session"))
+    log.info("GET /session/fingerprint-data - session data: %s", dict(req.session))
+    if not sid:
+        raise HTTPException(401, "no session")
+    
+    log.info("GET /session/fingerprint-data called with sid=%s", sid)
+    
+    try:
+        # Get desktop session data
+        desktop_session = await DB.get_session(sid)
+        if not desktop_session:
+            raise HTTPException(404, "desktop session not found")
+        
+        log.info("Desktop session found sid=%s keys=%s", sid, list(desktop_session.keys()))
+        desktop_fingerprint = desktop_session.get("fingerprint", {})
+        desktop_device_type = desktop_session.get("device_type", "unknown")
+        
+        # Find mobile session ID from link store
+        mobile_sid = None
+        mobile_fingerprint = {}
+        mobile_device_type = "unknown"
+        
+        # Import linking module to access link store
+        from server.linking import _get_link_by_desktop_sid
+        
+        # Find any active links for this desktop session
+        link_data = _get_link_by_desktop_sid(sid)
+        if link_data and link_data.get("mobile_sid"):
+            mobile_sid = link_data["mobile_sid"]
+            log.info("Found linked mobile session mobile_sid=%s for desktop_sid=%s", mobile_sid, sid)
+            
+            # Get mobile session data
+            mobile_session = await DB.get_session(mobile_sid)
+            if mobile_session:
+                log.info("Mobile session found mobile_sid=%s keys=%s", mobile_sid, list(mobile_session.keys()))
+                mobile_fingerprint = mobile_session.get("fingerprint", {})
+                mobile_device_type = mobile_session.get("device_type", "unknown")
+                log.info("Retrieved mobile fingerprint data mobile_sid=%s device_type=%s fingerprint_keys=%s", 
+                        mobile_sid, mobile_device_type, list(mobile_fingerprint.keys()))
+            else:
+                log.warning("Mobile session not found mobile_sid=%s", mobile_sid)
+        else:
+            log.info("No linked mobile session found for desktop_sid=%s", sid)
+        
+        return JSONResponse({
+            "desktop": {
+                "fingerprint": desktop_fingerprint,
+                "device_type": desktop_device_type
+            },
+            "mobile": {
+                "fingerprint": mobile_fingerprint,
+                "device_type": mobile_device_type,
+                "linked": mobile_sid is not None
+            }
+        })
+        
+    except Exception as e:
+        log.exception("Failed to get fingerprint data sid=%s", sid)
+        raise HTTPException(500, f"Failed to get fingerprint data: {e}")
 
 # ---------------- Demo API ----------------
 @app.post("/api/echo")

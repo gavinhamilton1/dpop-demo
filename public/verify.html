@@ -430,7 +430,14 @@ const singleInput = $('#singleInput');
       // Handle individual character input
       inp.addEventListener('input',(e)=>{ 
         e.target.value = normalizeCode(e.target.value).slice(0,1); 
-        if(e.target.value && e.target.nextElementSibling) e.target.nextElementSibling.focus();
+        if(e.target.value) {
+          // Find next input element, skipping spacer divs
+          let nextEl = e.target.nextElementSibling;
+          while(nextEl && nextEl.tagName !== 'INPUT') {
+            nextEl = nextEl.nextElementSibling;
+          }
+          if(nextEl) nextEl.focus();
+        }
       });
       
       // Handle paste of full code
@@ -448,7 +455,16 @@ const singleInput = $('#singleInput');
         }
       });
       
-      inp.addEventListener('keydown',(e)=>{ if(e.key==='Backspace'&&!e.target.value&&e.target.previousElementSibling) e.target.previousElementSibling.focus();});
+      inp.addEventListener('keydown',(e)=>{ 
+        if(e.key==='Backspace'&&!e.target.value) {
+          // Find previous input element, skipping spacer divs
+          let prevEl = e.target.previousElementSibling;
+          while(prevEl && prevEl.tagName !== 'INPUT') {
+            prevEl = prevEl.previousElementSibling;
+          }
+          if(prevEl) prevEl.focus();
+        }
+      });
       codeBoxesEl.appendChild(inp);
     }
     if(gi < GROUPS.length-1){ const spacer=document.createElement('div'); spacer.style.width='0.75rem'; codeBoxesEl.appendChild(spacer); }

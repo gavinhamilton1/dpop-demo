@@ -29,6 +29,100 @@ const log = (msg, level = 'info') => {
   console.log(`[${level.toUpperCase()}] ${msg}`);
 };
 
+// --- Mobile Fingerprint Collection ---
+async function collectMobileFingerprint() {
+  console.log('🔍 MOBILE FINGERPRINT COLLECTION STARTED');
+  try {
+    log('Collecting mobile device fingerprint...', 'info');
+    
+    // Collect the same fingerprint data as desktop
+    const fingerprint = {
+      userAgent: navigator.userAgent,
+      screenResolution: `${screen.width}x${screen.height}`,
+      colorDepth: screen.colorDepth,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      language: navigator.language,
+      platform: navigator.platform,
+      hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
+      deviceMemory: navigator.deviceMemory || 'unknown',
+      cookieEnabled: navigator.cookieEnabled,
+      doNotTrack: navigator.doNotTrack || 'unknown',
+      webglVendor: getWebGLVendor(),
+      webglRenderer: getWebGLRenderer(),
+      timestamp: new Date().toISOString(),
+      deviceType: 'mobile' // Add device type to distinguish from desktop
+    };
+    
+    log(`Mobile fingerprint collected: ${Object.keys(fingerprint).length} signals`, 'info');
+    log(`Mobile fingerprint data: ${JSON.stringify(fingerprint, null, 2)}`, 'info');
+    
+    // Send fingerprint data to server
+    log('Sending mobile fingerprint to server...', 'info');
+    log(`Mobile fingerprint request body: ${JSON.stringify(fingerprint, null, 2)}`, 'info');
+    const response = await fetch('/session/fingerprint', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      credentials: 'include',
+      body: JSON.stringify(fingerprint)
+    });
+    
+    log(`Mobile fingerprint response status: ${response.status}`, 'info');
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      log(`Mobile fingerprint storage failed: ${response.status} ${errorText}`, 'error');
+      throw new Error(`Failed to store mobile fingerprint: ${response.status} ${errorText}`);
+    }
+    
+    const result = await response.json();
+    log(`Mobile fingerprint server response: ${JSON.stringify(result, null, 2)}`, 'info');
+    log('Mobile fingerprint stored successfully ✓', 'success');
+    console.log('✅ MOBILE FINGERPRINT COLLECTION COMPLETED SUCCESSFULLY');
+    return result;
+    
+  } catch (error) {
+    log(`Mobile fingerprint collection failed: ${error.message}`, 'error');
+    log(`Mobile fingerprint error details: ${error.stack}`, 'error');
+    console.log('❌ MOBILE FINGERPRINT COLLECTION FAILED:', error.message);
+    // Don't throw - fingerprinting failure shouldn't break the linking flow
+    return null;
+  }
+}
+
+// Helper functions for fingerprint collection
+function getWebGLVendor() {
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return 'unknown';
+    
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    if (!debugInfo) return 'unknown';
+    
+    return gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+  } catch (e) {
+    return 'unknown';
+  }
+}
+
+function getWebGLRenderer() {
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return 'unknown';
+    
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    if (!debugInfo) return 'unknown';
+    
+    return gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+  } catch (e) {
+    return 'unknown';
+  }
+}
+
+
 // --- Progress UI (uses your existing .progress-step blocks) ---
 const getDefaultMessage = (status) => (
   status === 'pending' ? 'Waiting...' :
@@ -343,12 +437,30 @@ function handleStatusUpdate(data, lid) {
 
 // --- Main linking flow (mobile) ---
 async function link(lid) {
+  console.log('🚀 MOBILE LINKING FLOW STARTED with lid:', lid);
+  console.log('📱 Mobile link function called - this should appear in mobile logs');
   try {
     // Step 1: Initialize session
     updateStep(1, 'active', 'Initializing session…');
     await Stronghold.sessionInit({ sessionInitUrl: '/session/init' });
     updateStep(1, 'completed', 'Session initialized');
     log('Session initialized ✓', 'success');
+    
+    // Collect mobile device fingerprint (with small delay to ensure session is established)
+    log('Starting mobile fingerprint collection...', 'info');
+    log(`Available cookies before fingerprint collection: ${document.cookie}`, 'info');
+    console.log('🍪 Cookies before fingerprint collection:', document.cookie);
+    await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
+    console.log('⏰ About to call collectMobileFingerprint()');
+    try {
+      await collectMobileFingerprint();
+      log('Mobile fingerprint collection completed successfully', 'success');
+      console.log('✅ Mobile fingerprint collection completed successfully');
+    } catch (error) {
+      log(`Mobile fingerprint collection failed: ${error.message}`, 'error');
+      console.log('❌ Mobile fingerprint collection failed:', error.message);
+      // Continue with linking flow even if fingerprinting fails
+    }
 
     // Step 2: BIK register + DPoP bind
     updateStep(2, 'active', 'Setting up security…');

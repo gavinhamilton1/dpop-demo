@@ -149,6 +149,10 @@ class Database:
         cur.update(patch)
         await self.set_session(sid, cur)
 
+    async def delete_session(self, sid: str):
+        """Delete a session from the database"""
+        await self.exec("DELETE FROM sessions WHERE sid=?", (sid,))
+
     async def add_nonce(self, sid: str, nonce: str, ttl_sec: int):
         exp = await self.fetchone("SELECT strftime('%s','now') + ? AS e", (ttl_sec,))
         await self.exec("INSERT OR REPLACE INTO nonces(sid, nonce, exp) VALUES(?,?,?)",

@@ -49,6 +49,14 @@ def _notify_watchers(link_id: str, event: Dict[str, Any]):
         except Exception as e:
             log.warning("Failed to notify watcher: %s", e)
 
+def _get_link_by_desktop_sid(desktop_sid: str) -> Optional[Dict[str, Any]]:
+    """Find a link by desktop session ID"""
+    with _LINKS_LOCK:
+        for link_id, link_data in _LINKS.items():
+            if link_data.get("desktop_sid") == desktop_sid:
+                return link_data
+    return None
+
 def _notify_websockets(link_id: str, event: Dict[str, Any]):
     """Notify WebSocket connections for a specific link."""
     with _WEBSOCKET_LOCK:
@@ -130,6 +138,9 @@ def get_router(
             
         qr_url = f"{qr_origin}/public/link.html?lid={rid}"
 
+        # Get desktop session device type for logging
+        desktop_device_type = s.get("device_type", "unknown")
+        
         _put_link(rid, {
             "rid": rid,
             "desktop_sid": sid,
@@ -138,6 +149,8 @@ def get_router(
             "created_at": iat,
             "exp": exp,
         })
+        log.info("Link created - rid=%s desktop_sid=%s desktop_device_type=%s status=pending exp=%s", 
+                rid, sid, desktop_device_type, exp)
         return JSONResponse({"linkId": rid, "exp": exp, "qr_url": qr_url}, headers=_nonce_headers(ctx))
 
     @router.get("/link/status/{link_id}")
@@ -459,7 +472,15 @@ def get_router(
             rec["applied"] = False
             desktop_sid = rec.get("desktop_sid")
 
+        # Get device types for logging
+        desktop_session = await store.get_session(desktop_sid) if desktop_sid else None
+        mobile_session = await store.get_session(sid) if sid else None
+        desktop_device_type = desktop_session.get("device_type", "unknown") if desktop_session else "unknown"
+        mobile_device_type = mobile_session.get("device_type", "unknown") if mobile_session else "unknown"
+        
         log.info("Link status updated - desktop_sid=%s mobile_sid=%s", desktop_sid, sid)
+        log.info("Link data after mobile complete - rid=%s desktop_sid=%s desktop_device_type=%s mobile_sid=%s mobile_device_type=%s status=%s", 
+                lid, desktop_sid, desktop_device_type, sid, mobile_device_type, rec.get("status"))
 
         # APPLY patch to desktop session right now (best-effort)
         applied = False
@@ -473,6 +494,8 @@ def get_router(
                     })
                     applied = True
                     log.info("Desktop session updated successfully - desktop_sid=%s principal=%s", desktop_sid, s["passkey_principal"])
+                    log.info("Desktop session data after update - desktop_sid=%s has_fingerprint=%s", 
+                            desktop_sid, "fingerprint" in ds)
                 else:
                     log.warning("Desktop session not found - desktop_sid=%s", desktop_sid)
             except Exception as e:
