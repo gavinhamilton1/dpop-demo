@@ -57,6 +57,14 @@ def _get_link_by_desktop_sid(desktop_sid: str) -> Optional[Dict[str, Any]]:
                 return link_data
     return None
 
+def _get_link_by_mobile_sid(mobile_sid: str) -> Optional[Dict[str, Any]]:
+    """Find a link by mobile session ID"""
+    with _LINKS_LOCK:
+        for link_id, link_data in _LINKS.items():
+            if link_data.get("mobile_sid") == mobile_sid:
+                return link_data
+    return None
+
 def _notify_websockets(link_id: str, event: Dict[str, Any]):
     """Notify WebSocket connections for a specific link."""
     with _WEBSOCKET_LOCK:

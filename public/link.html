@@ -67,6 +67,37 @@
   <p class="bc-hint">Open <strong>https://dpop.fun/verify</strong> on your computer and scan the QR code or type the code exactly.</p>
 </section>
 
+<!-- Success section (hidden until link is complete) -->
+<section class="success-section" id="successSection" style="display:none;">
+  <div class="success-header">
+    <div class="success-icon">✅</div>
+    <h2 class="success-title">Link Complete!</h2>
+    <p class="success-subtitle">Your mobile device is now connected to the desktop session</p>
+  </div>
+  
+
+  <!-- Mobile Device Fingerprint Summary -->
+  <div class="success-container">
+    <h3>📱 Mobile Device Fingerprint</h3>
+    <div class="fingerprint-summary" id="mobileFingerprintSummary">
+      <div class="fingerprint-loading">Loading mobile fingerprint data...</div>
+    </div>
+  </div>
+
+  <!-- Desktop Device Fingerprint Summary -->
+  <div class="success-container">
+    <h3>🖥️ Desktop Device Fingerprint</h3>
+    <div class="fingerprint-summary" id="desktopFingerprintSummary">
+      <div class="fingerprint-loading">Loading desktop fingerprint data...</div>
+    </div>
+  </div>
+
+  <!-- Action Buttons -->
+  <div class="success-actions">
+    <button id="killSessionBtn" class="btn-danger">Kill Session</button>
+    <button id="refreshFingerprintsBtn" class="btn-secondary">Refresh Fingerprints</button>
+  </div>
+</section>
 
     <div class="log-container" id="out" aria-label="Activity log"></div>
   </main>

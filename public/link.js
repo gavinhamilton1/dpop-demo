@@ -354,6 +354,10 @@ function handleStatusUpdate(data, lid) {
     log('Desktop session confirmed ✓', 'success');
     // Hide the BC card since linking is complete
     if (bcCard) bcCard.style.display = 'none';
+    
+    // Show success section and load fingerprint data
+    showSuccessSection(lid);
+    
     // Optional: start scribble after confirmation
     initSignatureSharing(lid);
   } else if (status === 'killed') {
@@ -494,3 +498,261 @@ function attachBcButtons() {
     updateStep(1, 'error', 'Failed to start link');
   }
 })();
+
+// --- Success Section Functions ---
+async function showSuccessSection(linkId) {
+  try {
+    log('Showing success section and loading fingerprint data...', 'info');
+    
+    // Show the success section
+    const successSection = document.getElementById('successSection');
+    if (successSection) {
+      successSection.style.display = 'block';
+    }
+    
+    // Load fingerprint data
+    await loadFingerprintData();
+    
+    // Setup button event listeners
+    setupSuccessButtons();
+    
+  } catch (error) {
+    log(`Error showing success section: ${error.message}`, 'error');
+  }
+}
+
+
+async function loadFingerprintData() {
+  try {
+    log('Loading fingerprint data for both desktop and mobile...', 'info');
+    
+    const response = await fetch('/session/fingerprint-data', {
+      credentials: 'include'
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to load fingerprint data: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    log('Fingerprint data received:', 'info');
+    
+    // Load mobile fingerprint
+    const mobileFingerprint = data.mobile.fingerprint;
+    const mobileDeviceType = data.mobile.device_type || 'unknown';
+    const mobileLinked = data.mobile.linked;
+    
+    log(`Mobile fingerprint data: ${JSON.stringify(mobileFingerprint)}`, 'info');
+    log(`Mobile device type: ${mobileDeviceType}`, 'info');
+    log(`Mobile linked: ${mobileLinked}`, 'info');
+    
+    if (!mobileFingerprint || Object.keys(mobileFingerprint).length === 0) {
+      document.getElementById('mobileFingerprintSummary').innerHTML = 
+        '<div class="fingerprint-loading">No mobile fingerprint data available</div>';
+    } else {
+      displayFingerprintData(mobileFingerprint, mobileDeviceType, 'mobileFingerprintSummary');
+    }
+    
+    // Load desktop fingerprint
+    const desktopFingerprint = data.desktop.fingerprint;
+    const desktopDeviceType = data.desktop.device_type || 'unknown';
+    const desktopLinked = data.desktop.linked;
+    
+    if (!desktopLinked) {
+      document.getElementById('desktopFingerprintSummary').innerHTML = 
+        '<div class="fingerprint-loading">No desktop session linked yet</div>';
+    } else if (!desktopFingerprint || Object.keys(desktopFingerprint).length === 0) {
+      document.getElementById('desktopFingerprintSummary').innerHTML = 
+        '<div class="fingerprint-loading">No desktop fingerprint data available</div>';
+    } else {
+      displayFingerprintData(desktopFingerprint, desktopDeviceType, 'desktopFingerprintSummary');
+    }
+    
+  } catch (error) {
+    log(`Failed to load fingerprint data: ${error.message}`, 'error');
+    document.getElementById('mobileFingerprintSummary').innerHTML = 
+      '<div class="fingerprint-loading">Failed to load mobile fingerprint data: ' + error.message + '</div>';
+    document.getElementById('desktopFingerprintSummary').innerHTML = 
+      '<div class="fingerprint-loading">Failed to load desktop fingerprint data: ' + error.message + '</div>';
+  }
+}
+
+function displayFingerprintData(fingerprint, deviceType = 'unknown', targetElementId = 'fingerprintSummary') {
+  const summaryEl = document.getElementById(targetElementId);
+  
+  const deviceInfo = {
+    'Device Type': deviceType.charAt(0).toUpperCase() + deviceType.slice(1),
+    'User Agent': fingerprint.userAgent || 'Unknown',
+    'Screen Resolution': fingerprint.screenResolution || 'Unknown',
+    'Color Depth': fingerprint.colorDepth || 'Unknown',
+    'Platform': fingerprint.platform || 'Unknown',
+    'Language': fingerprint.language || 'Unknown',
+    'Timezone': fingerprint.timezone || 'Unknown',
+    'Hardware Concurrency': fingerprint.hardwareConcurrency || 'Unknown',
+    'Device Memory': fingerprint.deviceMemory || 'Unknown',
+    'Cookie Enabled': fingerprint.cookieEnabled ? 'Yes' : 'No',
+    'Do Not Track': fingerprint.doNotTrack || 'Unknown'
+  };
+  
+  const graphicsInfo = {
+    'WebGL Vendor': fingerprint.webglVendor || 'Unknown',
+    'WebGL Renderer': fingerprint.webglRenderer || 'Unknown'
+  };
+  
+  const uaChInfo = fingerprint.ua_ch ? {
+    'Mobile Device': fingerprint.ua_ch.mobile ? 'Yes' : 'No',
+    'Platform': fingerprint.ua_ch.platform || 'Unknown',
+    'Platform Version': fingerprint.ua_ch.platformVersion || 'Unknown',
+    'Architecture': fingerprint.ua_ch.architecture || 'Unknown',
+    'Model': fingerprint.ua_ch.model || 'Unknown',
+    'Browser Version': fingerprint.ua_ch.uaFullVersion || 'Unknown',
+    'Bitness': fingerprint.ua_ch.bitness || 'Unknown',
+    'Full Version List': fingerprint.ua_ch.fullVersionList ? fingerprint.ua_ch.fullVersionList.map(v => `${v.brand}:${v.version}`).join(', ') : 'Unknown'
+  } : {
+    'User Agent Client Hints': 'Not Available'
+  };
+  
+  const automationInfo = fingerprint.automation ? {
+    'WebDriver Present': fingerprint.automation.webdriver ? 'Yes' : 'No',
+    'Headless Chrome': fingerprint.automation.headlessUA ? 'Yes' : 'No',
+    'Plugins Count': fingerprint.automation.pluginsLength || 'Unknown',
+    'MIME Types Count': fingerprint.automation.mimeTypesLength || 'Unknown',
+    'Visibility State': fingerprint.automation.visibilityState || 'Unknown',
+    'Has Focus': fingerprint.automation.hasFocus ? 'Yes' : 'No',
+    'Permissions': fingerprint.automation.permissionsAnomalies ? 
+      Object.entries(fingerprint.automation.permissionsAnomalies).map(([k,v]) => `${k}: ${v}`).join(', ') : 'Unknown'
+  } : {
+    'Automation Detection': 'Not Available'
+  };
+  
+  const networkInfo = {
+    'IP Address': fingerprint.ip_address || 'Unknown',
+    'Collection Time': fingerprint.timestamp ? new Date(fingerprint.timestamp).toLocaleString() : 'Unknown'
+  };
+  
+  const geolocationInfo = fingerprint.geolocation ? {
+    'City': fingerprint.geolocation.city || 'Unknown',
+    'Region': fingerprint.geolocation.region || 'Unknown',
+    'Country': fingerprint.geolocation.country || 'Unknown',
+    'Country Code': fingerprint.geolocation.country_code || 'Unknown',
+    'Postal Code': fingerprint.geolocation.postal || 'Unknown',
+    'Coordinates': `${fingerprint.geolocation.latitude}, ${fingerprint.geolocation.longitude}`,
+    'Timezone': fingerprint.geolocation.timezone || 'Unknown',
+    'Organization': fingerprint.geolocation.org || 'Unknown',
+    'ASN': fingerprint.geolocation.asn || 'Unknown'
+  } : {
+    'Geolocation': 'Not Available'
+  };
+  
+  let html = '';
+  
+  // Device Information
+  html += '<div class="fingerprint-category">';
+  html += '<div class="fingerprint-category-title">Device Information</div>';
+  for (const [label, value] of Object.entries(deviceInfo)) {
+    html += `<div class="fingerprint-item">
+      <span class="fingerprint-label">${label}:</span>
+      <span class="fingerprint-value">${value}</span>
+    </div>`;
+  }
+  html += '</div>';
+  
+  // Graphics Information
+  html += '<div class="fingerprint-category">';
+  html += '<div class="fingerprint-category-title">Graphics</div>';
+  for (const [label, value] of Object.entries(graphicsInfo)) {
+    html += `<div class="fingerprint-item">
+      <span class="fingerprint-label">${label}:</span>
+      <span class="fingerprint-value">${value}</span>
+    </div>`;
+  }
+  html += '</div>';
+  
+  // User Agent Client Hints Information
+  html += '<div class="fingerprint-category">';
+  html += '<div class="fingerprint-category-title">User Agent Client Hints</div>';
+  for (const [label, value] of Object.entries(uaChInfo)) {
+    html += `<div class="fingerprint-item">
+      <span class="fingerprint-label">${label}:</span>
+      <span class="fingerprint-value">${value}</span>
+    </div>`;
+  }
+  html += '</div>';
+  
+  // Automation Detection Information
+  html += '<div class="fingerprint-category">';
+  html += '<div class="fingerprint-category-title">Automation Detection</div>';
+  for (const [label, value] of Object.entries(automationInfo)) {
+    html += `<div class="fingerprint-item">
+      <span class="fingerprint-label">${label}:</span>
+      <span class="fingerprint-value">${value}</span>
+    </div>`;
+  }
+  html += '</div>';
+  
+  // Network Information
+  html += '<div class="fingerprint-category">';
+  html += '<div class="fingerprint-category-title">Network Information</div>';
+  for (const [label, value] of Object.entries(networkInfo)) {
+    html += `<div class="fingerprint-item">
+      <span class="fingerprint-label">${label}:</span>
+      <span class="fingerprint-value">${value}</span>
+    </div>`;
+  }
+  html += '</div>';
+  
+  // Geolocation Information
+  html += '<div class="fingerprint-category">';
+  html += '<div class="fingerprint-category-title">Geolocation</div>';
+  for (const [label, value] of Object.entries(geolocationInfo)) {
+    html += `<div class="fingerprint-item">
+      <span class="fingerprint-label">${label}:</span>
+      <span class="fingerprint-value">${value}</span>
+    </div>`;
+  }
+  html += '</div>';
+  
+  summaryEl.innerHTML = html;
+}
+
+function setupSuccessButtons() {
+  // Kill Session Button
+  const killSessionBtn = document.getElementById('killSessionBtn');
+  if (killSessionBtn) {
+    killSessionBtn.addEventListener('click', async () => {
+      if (confirm('Are you sure you want to kill this session? This will terminate the connection completely.')) {
+        try {
+          log('Killing session...', 'info');
+          const response = await fetch('/session/kill', {
+            method: 'POST',
+            credentials: 'include'
+          });
+          
+          if (response.ok) {
+            log('Session killed successfully', 'success');
+            // Hide success section and show message
+            const successSection = document.getElementById('successSection');
+            if (successSection) {
+              successSection.style.display = 'none';
+            }
+            log('Session terminated. Please refresh the page to start a new session.', 'warn');
+          } else {
+            throw new Error(`Failed to kill session: ${response.status}`);
+          }
+        } catch (error) {
+          log(`Failed to kill session: ${error.message}`, 'error');
+        }
+      }
+    });
+  }
+  
+  // Refresh Fingerprints Button
+  const refreshFingerprintsBtn = document.getElementById('refreshFingerprintsBtn');
+  if (refreshFingerprintsBtn) {
+    refreshFingerprintsBtn.addEventListener('click', async () => {
+      log('Refreshing fingerprint data...', 'info');
+      await loadFingerprintData();
+      log('Fingerprint data refreshed', 'success');
+    });
+  }
+}

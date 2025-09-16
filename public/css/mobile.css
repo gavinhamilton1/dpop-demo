@@ -366,3 +366,142 @@ body.mobile-page {
   background: #047857;
   transform: translateY(1px);
 }
+
+/* Success Section Styles */
+.success-section {
+  margin-top: var(--spacing-8);
+  padding: var(--spacing-6);
+  background: var(--mobile-surface);
+  border-radius: var(--radius-2xl);
+  border: 2px solid var(--success);
+  box-shadow: var(--shadow-lg);
+}
+
+.success-header {
+  text-align: center;
+  margin-bottom: var(--spacing-6);
+}
+
+.success-icon {
+  font-size: var(--font-size-4xl);
+  margin-bottom: var(--spacing-4);
+}
+
+.success-title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--success);
+  margin-bottom: var(--spacing-2);
+}
+
+.success-subtitle {
+  color: var(--mobile-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+
+/* Success Container */
+.success-container {
+  margin-bottom: var(--spacing-6);
+  padding: var(--spacing-4);
+  background: var(--mobile-background);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+}
+
+.success-container h3 {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--mobile-text);
+  margin-bottom: var(--spacing-3);
+}
+
+/* Fingerprint Summary */
+.fingerprint-summary {
+  font-size: var(--font-size-sm);
+}
+
+.fingerprint-loading {
+  color: var(--mobile-text-muted);
+  font-style: italic;
+  text-align: center;
+  padding: var(--spacing-4);
+}
+
+.fingerprint-category {
+  margin-bottom: var(--spacing-4);
+  padding: var(--spacing-3);
+  background: var(--mobile-surface);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+}
+
+.fingerprint-category-title {
+  font-weight: var(--font-weight-semibold);
+  color: var(--mobile-text);
+  margin-bottom: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  border-bottom: 1px solid var(--border-light);
+  padding-bottom: var(--spacing-1);
+}
+
+.fingerprint-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--spacing-1);
+  padding: var(--spacing-1) 0;
+}
+
+.fingerprint-label {
+  font-weight: var(--font-weight-medium);
+  color: var(--mobile-text-muted);
+  font-size: var(--font-size-xs);
+  flex: 0 0 40%;
+}
+
+.fingerprint-value {
+  font-weight: var(--font-weight-normal);
+  color: var(--mobile-text);
+  font-size: var(--font-size-xs);
+  flex: 1;
+  text-align: right;
+  word-break: break-word;
+}
+
+.fingerprint-explanation {
+  margin-top: var(--spacing-2);
+  padding: var(--spacing-2);
+  background: var(--mobile-background);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--primary);
+}
+
+.fingerprint-explanation p {
+  margin-bottom: var(--spacing-1);
+  font-size: var(--font-size-xs);
+  color: var(--mobile-text-muted);
+}
+
+.fingerprint-explanation ul {
+  margin-left: var(--spacing-3);
+  font-size: var(--font-size-xs);
+  color: var(--mobile-text-muted);
+}
+
+.fingerprint-explanation li {
+  margin-bottom: var(--spacing-1);
+}
+
+/* Success Actions */
+.success-actions {
+  display: flex;
+  gap: var(--spacing-3);
+  justify-content: center;
+  margin-top: var(--spacing-6);
+}
+
+.success-actions button {
+  flex: 1;
+  max-width: 150px;
+}

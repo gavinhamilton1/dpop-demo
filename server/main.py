@@ -755,53 +755,101 @@ async def get_fingerprint_data(req: Request):
     log.info("GET /session/fingerprint-data called with sid=%s", sid)
     
     try:
-        # Get desktop session data
-        desktop_session = await DB.get_session(sid)
-        if not desktop_session:
-            raise HTTPException(404, "desktop session not found")
+        # Get current session data
+        current_session = await DB.get_session(sid)
+        if not current_session:
+            raise HTTPException(404, "current session not found")
         
-        log.info("Desktop session found sid=%s keys=%s", sid, list(desktop_session.keys()))
-        desktop_fingerprint = desktop_session.get("fingerprint", {})
-        desktop_device_type = desktop_session.get("device_type", "unknown")
+        log.info("Current session found sid=%s keys=%s", sid, list(current_session.keys()))
+        current_fingerprint = current_session.get("fingerprint", {})
+        current_device_type = current_session.get("device_type", "unknown")
         
-        # Find mobile session ID from link store
-        mobile_sid = None
-        mobile_fingerprint = {}
-        mobile_device_type = "unknown"
+        log.info("Current session device_type=%s", current_device_type)
         
         # Import linking module to access link store
-        from server.linking import _get_link_by_desktop_sid
+        from server.linking import _get_link_by_desktop_sid, _get_link_by_mobile_sid
         
-        # Find any active links for this desktop session
-        link_data = _get_link_by_desktop_sid(sid)
-        if link_data and link_data.get("mobile_sid"):
-            mobile_sid = link_data["mobile_sid"]
-            log.info("Found linked mobile session mobile_sid=%s for desktop_sid=%s", mobile_sid, sid)
-            
-            # Get mobile session data
-            mobile_session = await DB.get_session(mobile_sid)
-            if mobile_session:
-                log.info("Mobile session found mobile_sid=%s keys=%s", mobile_sid, list(mobile_session.keys()))
-                mobile_fingerprint = mobile_session.get("fingerprint", {})
-                mobile_device_type = mobile_session.get("device_type", "unknown")
-                log.info("Retrieved mobile fingerprint data mobile_sid=%s device_type=%s fingerprint_keys=%s", 
-                        mobile_sid, mobile_device_type, list(mobile_fingerprint.keys()))
+        # Determine if current session is desktop or mobile and find the linked session
+        linked_sid = None
+        linked_fingerprint = {}
+        linked_device_type = "unknown"
+        
+        if current_device_type == "desktop":
+            # Current session is desktop, look for linked mobile session
+            log.info("Current session is desktop, looking for linked mobile session")
+            link_data = _get_link_by_desktop_sid(sid)
+            if link_data and link_data.get("mobile_sid"):
+                linked_sid = link_data["mobile_sid"]
+                log.info("Found linked mobile session mobile_sid=%s for desktop_sid=%s", linked_sid, sid)
+                
+                # Get mobile session data
+                linked_session = await DB.get_session(linked_sid)
+                if linked_session:
+                    log.info("Linked mobile session found mobile_sid=%s keys=%s", linked_sid, list(linked_session.keys()))
+                    linked_fingerprint = linked_session.get("fingerprint", {})
+                    linked_device_type = linked_session.get("device_type", "unknown")
+                    log.info("Retrieved linked mobile fingerprint data mobile_sid=%s device_type=%s fingerprint_keys=%s", 
+                            linked_sid, linked_device_type, list(linked_fingerprint.keys()))
+                else:
+                    log.warning("Linked mobile session not found mobile_sid=%s", linked_sid)
             else:
-                log.warning("Mobile session not found mobile_sid=%s", mobile_sid)
+                log.info("No linked mobile session found for desktop_sid=%s", sid)
+                
+        elif current_device_type == "mobile":
+            # Current session is mobile, look for linked desktop session
+            log.info("Current session is mobile, looking for linked desktop session")
+            link_data = _get_link_by_mobile_sid(sid)
+            if link_data and link_data.get("desktop_sid"):
+                linked_sid = link_data["desktop_sid"]
+                log.info("Found linked desktop session desktop_sid=%s for mobile_sid=%s", linked_sid, sid)
+                
+                # Get desktop session data
+                linked_session = await DB.get_session(linked_sid)
+                if linked_session:
+                    log.info("Linked desktop session found desktop_sid=%s keys=%s", linked_sid, list(linked_session.keys()))
+                    linked_fingerprint = linked_session.get("fingerprint", {})
+                    linked_device_type = linked_session.get("device_type", "unknown")
+                    log.info("Retrieved linked desktop fingerprint data desktop_sid=%s device_type=%s fingerprint_keys=%s", 
+                            linked_sid, linked_device_type, list(linked_fingerprint.keys()))
+                else:
+                    log.warning("Linked desktop session not found desktop_sid=%s", linked_sid)
+            else:
+                log.info("No linked desktop session found for mobile_sid=%s", sid)
         else:
-            log.info("No linked mobile session found for desktop_sid=%s", sid)
+            log.warning("Unknown device type for session sid=%s: %s", sid, current_device_type)
         
-        return JSONResponse({
-            "desktop": {
-                "fingerprint": desktop_fingerprint,
-                "device_type": desktop_device_type
-            },
-            "mobile": {
-                "fingerprint": mobile_fingerprint,
-                "device_type": mobile_device_type,
-                "linked": mobile_sid is not None
+        # Return data with appropriate labels based on current session type
+        if current_device_type == "desktop":
+            response_data = {
+                "desktop": {
+                    "fingerprint": current_fingerprint,
+                    "device_type": current_device_type
+                },
+                "mobile": {
+                    "fingerprint": linked_fingerprint,
+                    "device_type": linked_device_type,
+                    "linked": linked_sid is not None
+                }
             }
-        })
+            log.info("Returning desktop session data - desktop fingerprint keys: %s, mobile fingerprint keys: %s", 
+                    list(current_fingerprint.keys()), list(linked_fingerprint.keys()))
+        else:  # mobile or unknown
+            response_data = {
+                "desktop": {
+                    "fingerprint": linked_fingerprint,
+                    "device_type": linked_device_type,
+                    "linked": linked_sid is not None
+                },
+                "mobile": {
+                    "fingerprint": current_fingerprint,
+                    "device_type": current_device_type
+                }
+            }
+            log.info("Returning mobile session data - mobile fingerprint keys: %s, desktop fingerprint keys: %s", 
+                    list(current_fingerprint.keys()), list(linked_fingerprint.keys()))
+        
+        log.info("Final response data structure: %s", response_data)
+        return JSONResponse(response_data)
         
     except Exception as e:
         log.exception("Failed to get fingerprint data sid=%s", sid)
