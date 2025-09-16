@@ -8,19 +8,26 @@
     <link rel="stylesheet" href="/public/style.css">
     <style>
         body {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
             margin: 0;
             background: var(--bg);
             color: var(--fg);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        .app-container {
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
         
         .success-container {
             text-align: center;
-            max-width: 400px;
-            padding: 2rem;
+            width: 100%;
+            max-width: 500px;
+            margin-bottom: 2rem;
         }
         
         .success-icon {
@@ -45,9 +52,8 @@
         .success-details {
             background: var(--card);
             border: 1px solid var(--border);
-            border-radius: 0.5rem;
-            padding: 1rem;
-            margin-bottom: 2rem;
+            border-radius: 1rem;
+            padding: 1.5rem;
             text-align: left;
         }
         
@@ -74,7 +80,6 @@
         
         .actions {
             display: flex;
-            gap: 1rem;
             justify-content: center;
         }
         
@@ -98,6 +103,18 @@
             background: var(--ok-hover);
         }
         
+        .btn.on {
+            background: #10b981;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            font-size: 0.8rem;
+        }
+        
+        .btn.on:hover {
+            background: #059669;
+        }
+        
         .btn.secondary {
             background: var(--card);
             color: var(--fg);
@@ -110,11 +127,12 @@
         
         /* Scribble Section Styles */
         .scribble-section {
-            margin-top: 2rem;
+            width: 100%;
+            max-width: 500px;
             padding: 1.5rem;
             background: var(--card);
             border: 1px solid var(--border);
-            border-radius: 0.75rem;
+            border-radius: 1rem;
             text-align: center;
         }
         
@@ -135,6 +153,16 @@
             flex-direction: column;
             align-items: center;
             gap: 1rem;
+            width: 100%;
+            overflow: hidden;
+        }
+        
+        #signature-canvas-desktop-canvas {
+            max-width: 100%;
+            height: auto;
+            border: 2px solid var(--border) !important;
+            border-radius: 8px;
+            background: white;
         }
         
         .scribble-status {
@@ -169,32 +197,29 @@
     </style>
 </head>
 <body>
-    <div class="success-container">
-        <div class="success-icon">✅</div>
-        <h1 class="success-title">Device Successfully Linked!</h1>
-        <p class="success-message">
-            Your mobile device has been successfully linked to this desktop session. 
-            You can now use your mobile device for secure authentication.
-        </p>
-        
-        <div class="success-details">
-            <div class="detail-row">
-                <span class="detail-label">Status:</span>
-                <span class="detail-value">Linked & Verified</span>
+    <div class="app-container">
+        <div class="success-container">
+            <div class="success-icon">✅</div>
+            <h1 class="success-title">Device Successfully Linked!</h1>
+            <p class="success-message">
+                Your mobile device has been successfully linked to this desktop session. 
+                You can now use your mobile device for secure authentication.
+            </p>
+            
+            <div class="success-details">
+                <div class="detail-row">
+                    <span class="detail-label">Status:</span>
+                    <span class="detail-value">Linked & Verified</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Linked At:</span>
+                    <span class="detail-value" id="linkedAt">Loading...</span>
+                </div>
+                <div class="detail-row" style="display: flex; justify-content: flex-end;">
+                    <button class="btn on" onclick="window.location.href='/'">Back to Start</button>
+                </div>
             </div>
-            <div class="detail-row">
-                <span class="detail-label">Session ID:</span>
-                <span class="detail-value" id="sessionId">Loading...</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Linked At:</span>
-                <span class="detail-value" id="linkedAt">Loading...</span>
-            </div>
-        </div>
-        
-        <div class="actions">
-            <button class="btn primary" onclick="window.close()">Close Window</button>
-            <a href="/" class="btn secondary">Go to Home</a>
+            
         </div>
         
         <!-- Scribble Section -->
@@ -204,7 +229,7 @@
                 Draw on your mobile device to see it appear here in real-time!
             </p>
             <div id="signature-canvas-desktop" class="signature-container">
-                <canvas id="signature-canvas-desktop-canvas" width="400" height="300" style="border: 2px solid #333; border-radius: 8px; background: white;"></canvas>
+                <canvas id="signature-canvas-desktop-canvas" width="400" height="300"></canvas>
             </div>
             <div class="scribble-status" id="scribbleStatus">
                 <span class="status-indicator">●</span>
@@ -214,13 +239,11 @@
     </div>
 
     <script type="module">
-        // Get session info from URL params or localStorage
+        // Get session info from URL params
         const urlParams = new URLSearchParams(window.location.search);
-        const sessionId = urlParams.get('sid') || 'Unknown';
-        const linkId = urlParams.get('lid') || null;
+        const linkId = urlParams.get('lid') || urlParams.get('linkId') || null;
         const linkedAt = new Date().toLocaleString();
         
-        document.getElementById('sessionId').textContent = sessionId;
         document.getElementById('linkedAt').textContent = linkedAt;
         
         // Initialize signature sharing if linkId is available
