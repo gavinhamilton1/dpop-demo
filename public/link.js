@@ -59,7 +59,7 @@ const updateStep = (stepNumber, status, message = '') => {
 };
 
 // --- BC UI (created on the fly if not present) ---
-let bcCard, bcCodeEl, bcTimerEl, bcRegenerateBtn, bcCancelBtn;
+let bcCard, bcCodeEl, bcTimerEl, bcRegenerateBtn, bcCancelBtn, bcQREl;
 
 function ensureBcCard() {
   bcCard = document.getElementById('bcCard');
@@ -70,14 +70,19 @@ function ensureBcCard() {
     bcCard.className = 'bc-card';
     bcCard.style.display = 'none';
     bcCard.innerHTML = `
-      <div class="bc-url">Enter only at <code>${VERIFY_URL}</code></div>
+      <div class="bc-url">Enter only at <code>https://dpop.fun/verify</code></div>
+      <div class="bc-security">⚠️ Verify the URL is correct on your desktop browser before entering your code</div>
       <div class="bc-code" id="bcCode">----</div>
+      <div class="bc-qr-container">
+        <div class="bc-qr" id="bcQR"></div>
+        <p class="bc-qr-hint">Scan this QR code with your desktop verify page</p>
+      </div>
       <div class="bc-timer"><span id="bcTimer">${BC_TTL_FALLBACK}</span>s left</div>
       <div class="bc-actions" style="display:flex; gap:.5rem; margin-top:.5rem;">
         <button id="bcRegenerate" class="btn-secondary" disabled>Regenerate</button>
         <button id="bcCancel" class="btn-danger">Cancel</button>
       </div>
-      <p class="bc-hint">Open <strong>${new URL(VERIFY_URL).host}</strong> on your computer and type the code exactly.</p>
+      <p class="bc-hint">Open <strong>https://dpop.fun/verify</strong> on your computer and scan the QR code or type the code exactly.</p>
     `;
     container.appendChild(bcCard);
   }
@@ -85,6 +90,7 @@ function ensureBcCard() {
   bcTimerEl = document.getElementById('bcTimer');
   bcRegenerateBtn = document.getElementById('bcRegenerate');
   bcCancelBtn = document.getElementById('bcCancel');
+  bcQREl = document.getElementById('bcQR');
 }
 
 const formatBC = (raw) =>
@@ -93,6 +99,33 @@ const formatBC = (raw) =>
      .replace(/[ILOU]/g,(c)=>({I:'1',L:'1',O:'0',U:'V'}[c]))
      .replace(/(.{4})/g,'$1-')
      .replace(/-$/,'');
+
+function generateBCQR(bc) {
+  if (!bcQREl) return;
+  
+  // Clear any existing QR code
+  bcQREl.innerHTML = '';
+  
+  // Create QR code URL that the desktop verify page can scan
+  const qrUrl = `${window.location.origin}/verify/device?bc=${bc}`;
+  
+  try {
+    // Generate QR code using the qrcode library
+    new QRCode(bcQREl, {
+      text: qrUrl,
+      width: 200,
+      height: 200,
+      colorDark: '#000000',
+      colorLight: '#FFFFFF',
+      correctLevel: QRCode.CorrectLevel.M
+    });
+    
+    console.log('QR code generated successfully for:', qrUrl);
+  } catch (error) {
+    console.error('QR code generation error:', error);
+    bcQREl.innerHTML = '<p style="color: red;">QR code generation error</p>';
+  }
+}
 
 // --- Signature sharing (start only after confirmed) ---
 let signatureShare = new SignatureShare();
@@ -139,7 +172,17 @@ function startBcTimer(ttlSec) {
   bcInterval = setInterval(() => {
     const rem = Math.max(0, Math.ceil((bcExpireAt - Date.now()) / 1000));
     if (bcTimerEl) bcTimerEl.textContent = String(rem);
-    if (bcRegenerateBtn) bcRegenerateBtn.disabled = rem > BC_REGEN_ENABLE_AT;
+    if (bcRegenerateBtn) {
+      bcRegenerateBtn.disabled = rem > BC_REGEN_ENABLE_AT;
+      // Make button green when timer expires
+      if (rem === 0) {
+        bcRegenerateBtn.classList.add('btn-success');
+        bcRegenerateBtn.classList.remove('btn-secondary');
+      } else {
+        bcRegenerateBtn.classList.remove('btn-success');
+        bcRegenerateBtn.classList.add('btn-secondary');
+      }
+    }
     if (rem === 0) {
       clearInterval(bcInterval);
       log('Code expired — you can regenerate a new one.', 'warn');
@@ -148,20 +191,28 @@ function startBcTimer(ttlSec) {
 }
 
 async function issueBC(lid) {
-  // Use strongholdFetch so the request is DPoP-bound (we’ve already bound on this mobile)
-  const r = await Stronghold.strongholdFetch(ISSUE_BC_URL, {
-    method: 'POST',
-    body: { lid }
-  });
-  if (!r.ok) throw new Error(`issue-bc failed: ${r.status}`);
-  const { bc, expires_in } = await r.json();
-  const ttl = Math.max(10, Math.min(60, Number(expires_in) || BC_TTL_FALLBACK));
-  ensureBcCard();
-  bcCard.style.display = '';
-  bcCodeEl.textContent = formatBC(bc);
-  startBcTimer(ttl);
-  updateStep(4, 'active', 'Waiting for desktop to enter the code…');
-  log(`BC issued (TTL ~${ttl}s)`, 'success');
+  try {
+    // Use strongholdFetch so the request is DPoP-bound (we've already bound on this mobile)
+    const data = await Stronghold.strongholdFetch(ISSUE_BC_URL, {
+      method: 'POST',
+      body: { lid }
+    });
+    const { bc, expires_in } = data;
+    const ttl = Math.max(10, Math.min(60, Number(expires_in) || BC_TTL_FALLBACK));
+    ensureBcCard();
+    bcCard.style.display = '';
+    bcCodeEl.textContent = formatBC(bc);
+    
+    // Generate QR code for the BC
+    generateBCQR(bc);
+    
+    startBcTimer(ttl);
+    updateStep(4, 'active', 'Waiting for desktop to scan QR code or enter the code…');
+    log(`BC issued (TTL ~${ttl}s)`, 'success');
+  } catch (error) {
+    log(`issue-bc failed: ${error.message}`, 'error');
+    throw new Error(`issue-bc failed: ${error.message}`);
+  }
 }
 
 async function cancelBC() {
@@ -176,7 +227,7 @@ async function cancelBC() {
     log(`Cancel failed: ${e.message}`, 'error');
   } finally {
     if (bcInterval) clearInterval(bcInterval);
-    bcCard && (bcCard.style.display = 'none');
+    if (bcCard) bcCard.style.display = 'none';
     updateStep(4, 'error', 'Canceled');
   }
 }
@@ -192,6 +243,70 @@ async function regenerateBC() {
 }
 
 function startPollingConfirmation(lid) {
+  // Try SSE first, fallback to polling
+  startSSEConfirmation(lid);
+}
+
+function startSSEConfirmation(lid) {
+  if (pollTimer) clearInterval(pollTimer);
+  
+  try {
+    console.log('Starting SSE for mobile confirmation...');
+    const response = fetch(`/link/events/${lid}`, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        'Accept': 'text/event-stream',
+        'Cache-Control': 'no-cache'
+      }
+    });
+    
+    response.then(async (res) => {
+      if (!res.ok) {
+        console.warn('SSE failed, falling back to polling');
+        startPollingFallback(lid);
+        return;
+      }
+      
+      console.log('SSE connection opened for mobile confirmation');
+      
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        
+        for (const line of lines) {
+          if (line.trim() === '') continue;
+          
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              handleStatusUpdate(data, lid);
+            } catch (error) {
+              console.error('Failed to parse SSE data:', error);
+            }
+          }
+        }
+      }
+    }).catch((error) => {
+      console.warn('SSE error, falling back to polling:', error);
+      startPollingFallback(lid);
+    });
+    
+  } catch (error) {
+    console.warn('Failed to start SSE, falling back to polling:', error);
+    startPollingFallback(lid);
+  }
+}
+
+function startPollingFallback(lid) {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
     try {
@@ -200,19 +315,30 @@ function startPollingConfirmation(lid) {
       const r = await fetch(u, { method: 'GET', cache: 'no-store' });
       if (!r.ok) return;
       const { status } = await r.json();
-      if (status === 'confirmed') {
-        clearInterval(pollTimer);
-        updateStep(4, 'completed', 'Desktop confirmed');
-        log('Desktop session confirmed ✓', 'success');
-        // Optional: start scribble after confirmation
-        initSignatureSharing(lid);
-      } else if (status === 'killed') {
-        clearInterval(pollTimer);
-        updateStep(4, 'error', 'Session terminated');
-        log('Desktop session was killed', 'warn');
-      }
+      handleStatusUpdate({ status }, lid);
     } catch { /* ignore transient errors */ }
   }, 1500);
+}
+
+function handleStatusUpdate(data, lid) {
+  const status = data.status;
+  if (status === 'confirmed') {
+    if (pollTimer) clearInterval(pollTimer);
+    // Cancel the BC countdown timer since linking is complete
+    if (bcInterval) clearInterval(bcInterval);
+    updateStep(4, 'completed', 'Desktop confirmed');
+    log('Desktop session confirmed ✓', 'success');
+    // Hide the BC card since linking is complete
+    if (bcCard) bcCard.style.display = 'none';
+    // Optional: start scribble after confirmation
+    initSignatureSharing(lid);
+  } else if (status === 'killed') {
+    if (pollTimer) clearInterval(pollTimer);
+    // Cancel the BC countdown timer since session was killed
+    if (bcInterval) clearInterval(bcInterval);
+    updateStep(4, 'error', 'Session terminated');
+    log('Desktop session was killed', 'warn');
+  }
 }
 
 // --- Main linking flow (mobile) ---
@@ -253,8 +379,25 @@ async function link(lid) {
     updateStep(3, 'completed', 'Passkey verified');
     log('Passkey authenticated ✓', 'success');
 
-    // Step 4: Issue BC and wait for desktop
+    // Step 4: Complete mobile linking and issue BC
     currentLid = lid;
+    updateStep(4, 'active', 'Completing mobile link…');
+    
+    // Complete the mobile linking process
+    const completeData = await Stronghold.strongholdFetch('/link/mobile/complete', {
+      method: 'POST',
+      body: { link_id: lid }
+    });
+    log('Mobile link completed ✓', 'success');
+    log(`Complete response: ${JSON.stringify(completeData)}`, 'info');
+    
+    // Add a small delay to ensure session is properly established
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Debug: Check if we have a session cookie
+    log(`Document cookies: ${document.cookie}`, 'info');
+    
+    // Now issue BC for desktop to enter
     updateStep(4, 'active', 'Issuing verification code…');
     await issueBC(lid);
     startPollingConfirmation(lid);
@@ -265,7 +408,8 @@ async function link(lid) {
     if (currentStep) {
       currentStep.classList.remove('active');
       currentStep.classList.add('error');
-      currentStep.querySelector('.step-status')?.textContent = 'Failed';
+      const statusEl = currentStep.querySelector('.step-status');
+      if (statusEl) statusEl.textContent = 'Failed';
     }
   }
 }

@@ -442,8 +442,8 @@ export class AppController {
       this.logger.error('Linking status monitoring failed', error);
     };
 
-    // Try WebSocket first, fallback to polling
-    this.linking.monitorStatus(linkId, onStatusUpdate, onError, 'websocket');
+    // Try SSE first, fallback to polling
+    this.linking.monitorStatus(linkId, onStatusUpdate, onError, 'sse');
   }
 
   /**
@@ -460,13 +460,16 @@ export class AppController {
         qrContainer.remove();
       }
       
-      // Initialize signature sharing
-      await this.initializeSignatureSharing(linkId);
-      
       this.state.isLinking = false;
       this.updateState();
       
       this.logger.success('Cross-device linking completed successfully');
+      this.logger.info('Redirecting to verify page to enter BC code...');
+      
+      // Redirect to verify page to enter BC code
+      setTimeout(() => {
+        window.location.href = '/verify';
+      }, 1000);
       
     } catch (error) {
       this.handleError(error, 'Linking completion');
@@ -485,24 +488,6 @@ export class AppController {
     this.logger.error('Cross-device linking failed', error);
   }
 
-  /**
-   * Initialize signature sharing
-   * @param {string} linkId - Link ID
-   */
-  async initializeSignatureSharing(linkId) {
-    try {
-      // Import and initialize signature sharing
-      const { SignatureShare } = await import('../signature-share.js');
-      const signatureShare = new SignatureShare();
-      
-      await signatureShare.initDesktop(linkId);
-      
-      this.logger.success('Signature sharing initialized');
-      
-    } catch (error) {
-      this.logger.error('Failed to initialize signature sharing', error);
-    }
-  }
 
   /**
    * Create QR code element

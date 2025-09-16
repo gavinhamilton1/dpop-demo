@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Linked Successfully • dpop.fun</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; base-uri 'none'">
+    <link rel="stylesheet" href="/public/style.css">
+    <style>
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: var(--bg);
+            color: var(--fg);
+        }
+        
+        .success-container {
+            text-align: center;
+            max-width: 400px;
+            padding: 2rem;
+        }
+        
+        .success-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            color: var(--ok);
+        }
+        
+        .success-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--fg);
+        }
+        
+        .success-message {
+            color: var(--muted);
+            margin-bottom: 2rem;
+            line-height: 1.5;
+        }
+        
+        .success-details {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 2rem;
+            text-align: left;
+        }
+        
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+        }
+        
+        .detail-row:last-child {
+            margin-bottom: 0;
+        }
+        
+        .detail-label {
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+        
+        .detail-value {
+            font-family: ui-monospace, monospace;
+            font-size: 0.9rem;
+            color: var(--fg);
+        }
+        
+        .actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+        }
+        
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.2s;
+            border: none;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        
+        .btn.primary {
+            background: var(--ok);
+            color: white;
+        }
+        
+        .btn.primary:hover {
+            background: var(--ok-hover);
+        }
+        
+        .btn.secondary {
+            background: var(--card);
+            color: var(--fg);
+            border: 1px solid var(--border);
+        }
+        
+        .btn.secondary:hover {
+            background: var(--hover);
+        }
+        
+        /* Scribble Section Styles */
+        .scribble-section {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            text-align: center;
+        }
+        
+        .scribble-section h3 {
+            margin: 0 0 0.5rem 0;
+            color: var(--fg);
+            font-size: 1.25rem;
+        }
+        
+        .scribble-description {
+            color: var(--muted);
+            margin-bottom: 1.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .signature-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        .scribble-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            padding: 0.75rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .status-indicator {
+            font-size: 1rem;
+            color: var(--muted);
+        }
+        
+        .status-indicator.connected {
+            color: var(--ok);
+        }
+        
+        .status-indicator.error {
+            color: var(--error);
+        }
+        
+        .status-text {
+            color: var(--muted);
+        }
+    </style>
+</head>
+<body>
+    <div class="success-container">
+        <div class="success-icon">✅</div>
+        <h1 class="success-title">Device Successfully Linked!</h1>
+        <p class="success-message">
+            Your mobile device has been successfully linked to this desktop session. 
+            You can now use your mobile device for secure authentication.
+        </p>
+        
+        <div class="success-details">
+            <div class="detail-row">
+                <span class="detail-label">Status:</span>
+                <span class="detail-value">Linked & Verified</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Session ID:</span>
+                <span class="detail-value" id="sessionId">Loading...</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Linked At:</span>
+                <span class="detail-value" id="linkedAt">Loading...</span>
+            </div>
+        </div>
+        
+        <div class="actions">
+            <button class="btn primary" onclick="window.close()">Close Window</button>
+            <a href="/" class="btn secondary">Go to Home</a>
+        </div>
+        
+        <!-- Scribble Section -->
+        <div class="scribble-section">
+            <h3>📝 Live Scribble from Mobile</h3>
+            <p class="scribble-description">
+                Draw on your mobile device to see it appear here in real-time!
+            </p>
+            <div id="signature-canvas-desktop" class="signature-container">
+                <canvas id="signature-canvas-desktop-canvas" width="400" height="300" style="border: 2px solid #333; border-radius: 8px; background: white;"></canvas>
+            </div>
+            <div class="scribble-status" id="scribbleStatus">
+                <span class="status-indicator">●</span>
+                <span class="status-text">Waiting for mobile connection...</span>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Get session info from URL params or localStorage
+        const urlParams = new URLSearchParams(window.location.search);
+        const sessionId = urlParams.get('sid') || 'Unknown';
+        const linkId = urlParams.get('lid') || null;
+        const linkedAt = new Date().toLocaleString();
+        
+        document.getElementById('sessionId').textContent = sessionId;
+        document.getElementById('linkedAt').textContent = linkedAt;
+        
+        // Initialize signature sharing if linkId is available
+        if (linkId) {
+            initializeSignatureSharing(linkId);
+        } else {
+            updateScribbleStatus('No link ID provided', 'error');
+        }
+        
+        // Auto-close after 10 seconds if opened in popup
+        if (window.opener) {
+            setTimeout(() => {
+                window.close();
+            }, 10000);
+        }
+        
+        async function initializeSignatureSharing(linkId) {
+            try {
+                updateScribbleStatus('Connecting to mobile device...', 'connecting');
+                
+                // Import and initialize signature sharing
+                const { SignatureShare } = await import('/src/signature-share.js');
+                const signatureShare = new SignatureShare();
+                
+                // Initialize for desktop (viewing)
+                signatureShare.initDesktop(linkId);
+                
+                // Set up WebSocket connection monitoring
+                monitorWebSocketConnection(signatureShare);
+                
+                updateScribbleStatus('Connected! Draw on your mobile device to see it here.', 'connected');
+                
+            } catch (error) {
+                console.error('Failed to initialize signature sharing:', error);
+                updateScribbleStatus('Failed to connect to mobile device', 'error');
+            }
+        }
+        
+        function monitorWebSocketConnection(signatureShare) {
+            // Monitor WebSocket connection status
+            const checkConnection = () => {
+                if (signatureShare.websocket) {
+                    if (signatureShare.websocket.readyState === WebSocket.OPEN) {
+                        updateScribbleStatus('Connected! Draw on your mobile device to see it here.', 'connected');
+                    } else if (signatureShare.websocket.readyState === WebSocket.CONNECTING) {
+                        updateScribbleStatus('Connecting to mobile device...', 'connecting');
+                    } else {
+                        updateScribbleStatus('Connection lost. Mobile device may have disconnected.', 'error');
+                    }
+                }
+            };
+            
+            // Check connection status every 2 seconds
+            setInterval(checkConnection, 2000);
+        }
+        
+        function updateScribbleStatus(message, status) {
+            const statusIndicator = document.querySelector('.status-indicator');
+            const statusText = document.querySelector('.status-text');
+            
+            if (statusIndicator && statusText) {
+                statusText.textContent = message;
+                
+                // Update indicator color based on status
+                statusIndicator.className = 'status-indicator';
+                if (status === 'connected') {
+                    statusIndicator.classList.add('connected');
+                } else if (status === 'error') {
+                    statusIndicator.classList.add('error');
+                }
+            }
+        }
+    </script>
+</body>
+</html>

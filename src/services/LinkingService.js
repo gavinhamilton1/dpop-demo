@@ -122,24 +122,76 @@ export class LinkingService extends ApiService {
    */
   startSSE(linkId, onStatusUpdate, onError) {
     try {
-      const eventSource = new EventSource(`/link/status/${linkId}/stream`);
+      // Use fetch with streaming instead of EventSource to support credentials
+      const controller = new AbortController();
+      this.currentSSEController = controller;
       
-      eventSource.onmessage = (event) => {
+      const startSSEStream = async () => {
         try {
-          const data = JSON.parse(event.data);
-          onStatusUpdate(data);
+          console.log('Starting SSE stream with fetch...');
+          const response = await fetch(`/link/events/${linkId}`, {
+            method: 'GET',
+            credentials: 'include', // This is the key difference from EventSource
+            headers: {
+              'Accept': 'text/event-stream',
+              'Cache-Control': 'no-cache'
+            },
+            signal: controller.signal
+          });
+          
+          if (!response.ok) {
+            throw new Error(`SSE request failed: ${response.status}`);
+          }
+          
+          console.log('SSE connection opened successfully');
+          
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+            
+            for (const line of lines) {
+              if (line.trim() === '') continue;
+              
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  onStatusUpdate(data);
+                } catch (error) {
+                  console.error('Failed to parse SSE data:', error);
+                }
+              } else if (line.startsWith('event: ')) {
+                // Handle event type if needed
+                const eventType = line.slice(7);
+                console.log('SSE event type:', eventType);
+              }
+            }
+          }
         } catch (error) {
-          console.error('Failed to parse SSE message:', error);
+          if (error.name === 'AbortError') {
+            console.log('SSE stream aborted');
+            return;
+          }
+          console.error('SSE stream error:', error);
+          onError(error);
+          
+          // Trigger fallback to polling
+          setTimeout(() => {
+            this.startPolling(linkId, onStatusUpdate, onError);
+          }, 1000);
         }
       };
       
-      eventSource.onerror = (error) => {
-        console.error('SSE error:', error);
-        onError(error);
-        eventSource.close();
-      };
+      startSSEStream();
       
-      return eventSource;
+      return { close: () => controller.abort() };
       
     } catch (error) {
       console.error('Failed to start SSE:', error);
@@ -183,6 +235,16 @@ export class LinkingService extends ApiService {
       this.websocket = null;
     }
     
+    if (this.currentEventSource) {
+      this.currentEventSource.close();
+      this.currentEventSource = null;
+    }
+    
+    if (this.currentSSEController) {
+      this.currentSSEController.abort();
+      this.currentSSEController = null;
+    }
+    
     if (this.statusInterval) {
       clearTimeout(this.statusInterval);
       this.statusInterval = null;
@@ -208,14 +270,33 @@ export class LinkingService extends ApiService {
     // Try preferred method first
     if (methods[preferredMethod]) {
       try {
-        methods[preferredMethod]();
-        return;
+        const result = methods[preferredMethod]();
+        if (result) {
+          console.log(`Using ${preferredMethod} for status monitoring`);
+          return;
+        }
       } catch (error) {
-        console.warn(`${preferredMethod} failed, trying fallback methods`);
+        console.warn(`${preferredMethod} failed:`, error);
       }
     }
     
-    // Fallback to polling if other methods fail
+    // Try fallback methods in order
+    const fallbackOrder = ['websocket', 'sse', 'polling'].filter(method => method !== preferredMethod);
+    
+    for (const method of fallbackOrder) {
+      try {
+        const result = methods[method]();
+        if (result) {
+          console.log(`Using ${method} as fallback for status monitoring`);
+          return;
+        }
+      } catch (error) {
+        console.warn(`${method} fallback failed:`, error);
+      }
+    }
+    
+    // Final fallback to polling
+    console.log('All methods failed, using polling as final fallback');
     this.startPolling(linkId, onStatusUpdate, onError);
   }
 

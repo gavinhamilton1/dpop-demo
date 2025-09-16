@@ -2,83 +2,226 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Verify your sign-in • verify.example.com</title>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'; frame-ancestors 'none'; base-uri 'none'">
-  <meta http-equiv="X-Frame-Options" content="DENY">
+  <title>Verify your sign-in • dpop.fun</title>
   <meta name="color-scheme" content="light dark">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-eval' 'unsafe-inline'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; base-uri 'none'">
+  <link rel="stylesheet" href="/css/design-system.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/public/style.css">
   <style>
-    :root { --fg:#111; --muted:#666; --ok:#0a7; --warn:#e67; --bg:#fff; --card:#f7f7f8; }
-    @media (prefers-color-scheme: dark){ :root{ --fg:#eee; --muted:#aaa; --ok:#29e; --warn:#f66; --bg:#111; --card:#1a1a1d;}}
-    body{margin:0; font:16px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial}
-    .wrap{max-width:720px; margin:40px auto; padding:0 16px; color:var(--fg); background:var(--bg)}
-    .pill{display:inline-flex; align-items:center; gap:.5rem; padding:.35rem .7rem; border-radius:999px; background:var(--card); font-family:ui-monospace,monospace}
-    h1{font-size:1.5rem; margin:12px 0 8px}
-    .muted{color:var(--muted)}
-    .card{background:var(--card); border-radius:14px; padding:16px; margin:16px 0}
-    .grid{display:grid; grid-template-columns:1fr 1fr; gap:16px}
-    @media (max-width:800px){ .grid{grid-template-columns:1fr}}
-    .codeboxes{display:flex; gap:.5rem; justify-content:center; margin:12px 0}
-    .codeboxes input{width:2.6ch; text-align:center; font:700 28px/1 ui-monospace,monospace; padding:.35rem .1rem; border-radius:8px; border:1px solid #ccc; background:#fff}
-    @media (prefers-color-scheme: dark){ .codeboxes input{background:#111; border-color:#333; color:var(--fg)} }
-    .btn{display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.6rem .9rem; border-radius:10px; border:0; background:var(--fg); color:var(--bg); cursor:pointer; font-weight:600}
-    .btn.sec{background:transparent; color:var(--fg); border:1px solid #666}
-    .row{display:flex; gap:.75rem; flex-wrap:wrap; align-items:center}
-    .hint{font-family:ui-monospace,monospace}
-    .status{margin-top:8px}
-    .status.ok{color:var(--ok)} .status.err{color:var(--warn)}
-    video{width:100%; border-radius:12px; background:#000}
-    .hidden{display:none !important}
-    canvas{display:none}
+    /* Verify page specific styles */
+    .verify-container {
+      max-width: 800px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+    
+    .verify-header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    
+    .verify-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 999px;
+      background: var(--card);
+      font-family: ui-monospace, monospace;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    
+    .verify-title {
+      font-size: 1.75rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      color: var(--fg);
+    }
+    
+    .verify-subtitle {
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.5;
+    }
+    
+    .verify-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      margin-top: 2rem;
+    }
+    
+    @media (max-width: 768px) {
+      .verify-grid {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+      }
+    }
+    
+    .verify-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      padding: 1.5rem;
+    }
+    
+    .verify-card-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--fg);
+    }
+    
+    .codeboxes {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+      margin: 1rem 0;
+    }
+    
+    .codeboxes input {
+      width: 3ch;
+      text-align: center;
+      font: 700 1.75rem/1 ui-monospace, monospace;
+      padding: 0.75rem 0.25rem;
+      border-radius: 0.5rem;
+      border: 2px solid var(--border);
+      background: var(--bg);
+      color: var(--fg);
+      transition: border-color 0.2s ease;
+    }
+    
+    .codeboxes input:focus {
+      border-color: var(--primary);
+      outline: none;
+    }
+    
+    .single-input {
+      margin: 1rem 0;
+    }
+    
+    .single-input input {
+      width: 100%;
+      padding: 0.75rem;
+      font-size: 1.1rem;
+      text-align: center;
+      letter-spacing: 0.1em;
+      font-family: ui-monospace, monospace;
+      border: 2px solid var(--border);
+      border-radius: 0.5rem;
+      background: var(--bg);
+      color: var(--fg);
+      transition: border-color 0.2s ease;
+    }
+    
+    .single-input input:focus {
+      border-color: var(--primary);
+      outline: none;
+    }
+    
+    .verify-actions {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 1rem;
+    }
+    
+    .verify-status {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      border-radius: 0.5rem;
+      font-weight: 500;
+    }
+    
+    .verify-status.ok {
+      background: var(--success-light);
+      color: var(--success);
+      border: 1px solid var(--success-border);
+    }
+    
+    .verify-status.err {
+      background: var(--danger-light);
+      color: var(--danger);
+      border: 1px solid var(--danger-border);
+    }
+    
+    .verify-hint {
+      font-family: ui-monospace, monospace;
+      color: var(--muted);
+    }
+    
+    .verify-video {
+      width: 100%;
+      border-radius: 0.75rem;
+      background: #000;
+    }
+    
+    .hidden {
+      display: none !important;
+    }
+    
+    canvas {
+      display: none;
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="pill">🔒 verify.example.com</div>
-    <h1>Verify the code from your phone</h1>
-    <p class="muted">Type the code exactly as shown on your phone <span class="hint">(e.g. 8X2J-Q9K3)</span> — or switch to camera scan.</p>
+  <div class="verify-container">
+    <div class="verify-header">
+      <div class="verify-pill">🔒 dpop.fun</div>
+      <h1 class="verify-title">Verify the code from your phone</h1>
+      <p class="verify-subtitle">Type the code exactly as shown on your phone <span class="verify-hint">(e.g. 8X2J-Q9K3)</span> — or switch to camera scan.</p>
+    </div>
 
-    <div class="grid">
+    <div class="verify-grid">
       <!-- Code entry -->
-      <div class="card" id="codeCard" aria-labelledby="codeTitle">
-        <h2 id="codeTitle">Enter code</h2>
+      <div class="verify-card" id="codeCard" aria-labelledby="codeTitle">
+        <h2 id="codeTitle" class="verify-card-title">Enter code</h2>
         <form id="codeForm" autocomplete="one-time-code">
           <div class="codeboxes" id="codeBoxes"></div>
-          <div class="row">
-            <button class="btn" type="submit">Verify & continue</button>
-            <button class="btn sec" type="button" id="useCamBtn">Use camera instead</button>
+          <div class="single-input hidden" id="singleInputContainer">
+            <input type="text" id="singleInput" placeholder="Enter 8-character code (e.g., 8X2J-Q9K3)" maxlength="10" autocomplete="one-time-code">
           </div>
-          <div class="status muted" id="codeStatus">Code expires ~60s after it appears on your phone.</div>
+          <div class="verify-actions">
+            <button class="btn btn-primary" type="submit">Verify & continue</button>
+            <button class="btn btn-secondary" type="button" id="useCamBtn">Use camera instead</button>
+            <button class="btn btn-secondary" type="button" id="toggleInputBtn">Single field</button>
+          </div>
+          <div class="verify-status" id="codeStatus">Code expires ~60s after it appears on your phone.</div>
         </form>
       </div>
 
       <!-- Camera scan (jsQR) -->
-      <div class="card hidden" id="camCard" aria-labelledby="camTitle">
-        <h2 id="camTitle">Scan QR from your phone</h2>
-        <video id="video" playsinline></video>
+      <div class="verify-card hidden" id="camCard" aria-labelledby="camTitle">
+        <h2 id="camTitle" class="verify-card-title">Scan QR from your phone</h2>
+        <video id="video" class="verify-video" playsinline></video>
         <canvas id="qrCanvas"></canvas>
-        <div class="row" style="margin-top:10px">
-          <button class="btn" id="stopCamBtn" type="button">Use code instead</button>
-          <span class="muted" id="camHint">Point the camera at the QR shown on your phone.</span>
+        <div class="verify-actions" style="margin-top:1rem">
+          <button class="btn btn-secondary" id="stopCamBtn" type="button">Use code instead</button>
+          <span class="verify-subtitle" id="camHint">Point the camera at the QR shown on your phone.</span>
         </div>
-        <div class="status" id="camStatus"></div>
+        <div class="verify-status" id="camStatus"></div>
       </div>
     </div>
 
-    <div class="card">
+    <div class="verify-card">
       <strong>Why this step?</strong>
-      <p class="muted">This page is the only place to enter your code. After verification we cryptographically bind this browser to your session.</p>
+      <p class="verify-subtitle">This page is the only place to enter your code. After verification we cryptographically bind this browser to your session.</p>
     </div>
   </div>
 
   <!-- Include jsQR (use your existing path or a pinned local copy) -->
-  <script src="/public/jsQR.min.js"></script>
+  <script src="/public/jsQR.js"></script>
 <script>
 /** CONFIG **/
 const GROUPS = [4,4];                   // 8 chars as 4-4 (or use [5,5] for 10)
 const REDEEM_URL = "/device/redeem";    // POST { bc } -> { dpop_nonce, exp }
 const FINALIZE_URL = "/link/finalize";  // POST (DPoP) -> 200 session issued
-const EXPECTED_QR_PREFIX = "https://verify.example.com/device?bc="; // phone encodes this
+const EXPECTED_QR_PREFIX = "/verify/device?bc="; // phone encodes this
 
 /** DOM refs **/
 const $ = s => document.querySelector(s);
@@ -90,6 +233,9 @@ const camStatus = $('#camStatus');
 const useCamBtn = $('#useCamBtn'), stopCamBtn = $('#stopCamBtn');
 const videoEl = $('#video');
 const canvasEl = $('#qrCanvas'); const ctx = canvasEl.getContext('2d');
+const toggleInputBtn = $('#toggleInputBtn');
+const singleInputContainer = $('#singleInputContainer');
+const singleInput = $('#singleInput');
 
 /** Build code inputs **/
 (function buildInputs(){
@@ -97,7 +243,28 @@ const canvasEl = $('#qrCanvas'); const ctx = canvasEl.getContext('2d');
     for(let i=0;i<len;i++){
       const inp=document.createElement('input');
       inp.inputMode='latin'; inp.maxLength=1; inp.autocomplete='one-time-code';
-      inp.addEventListener('input',(e)=>{ e.target.value = normalizeCode(e.target.value).slice(0,1); if(e.target.value && e.target.nextElementSibling) e.target.nextElementSibling.focus();});
+      
+      // Handle individual character input
+      inp.addEventListener('input',(e)=>{ 
+        e.target.value = normalizeCode(e.target.value).slice(0,1); 
+        if(e.target.value && e.target.nextElementSibling) e.target.nextElementSibling.focus();
+      });
+      
+      // Handle paste of full code
+      inp.addEventListener('paste',(e)=>{
+        e.preventDefault();
+        const pastedText = normalizeCode(e.clipboardData.getData('text'));
+        if(pastedText.length >= 8) {
+          // Fill all inputs with pasted code
+          const inputs = codeBoxesEl.querySelectorAll('input');
+          for(let j = 0; j < Math.min(pastedText.length, inputs.length); j++) {
+            inputs[j].value = pastedText[j];
+          }
+          // Focus the last input
+          inputs[inputs.length - 1].focus();
+        }
+      });
+      
       inp.addEventListener('keydown',(e)=>{ if(e.key==='Backspace'&&!e.target.value&&e.target.previousElementSibling) e.target.previousElementSibling.focus();});
       codeBoxesEl.appendChild(inp);
     }
@@ -111,13 +278,49 @@ function normalizeCode(raw){
 }
 function joinGroups(inputs){ return [...inputs].map(i=>i.value).join(''); }
 
-/** DPoP key (memory-only example; persist if policy allows) **/
+/** Toggle between individual boxes and single input **/
+let useSingleInput = false;
+toggleInputBtn.addEventListener('click', () => {
+  useSingleInput = !useSingleInput;
+  if (useSingleInput) {
+    codeBoxesEl.classList.add('hidden');
+    singleInputContainer.classList.remove('hidden');
+    toggleInputBtn.textContent = 'Individual boxes';
+    singleInput.focus();
+  } else {
+    codeBoxesEl.classList.remove('hidden');
+    singleInputContainer.classList.add('hidden');
+    toggleInputBtn.textContent = 'Single field';
+    codeBoxesEl.querySelector('input')?.focus();
+  }
+});
+
+/** Handle single input **/
+singleInput.addEventListener('input', (e) => {
+  e.target.value = normalizeCode(e.target.value);
+});
+
+/** Get current code from either input method **/
+function getCurrentCode() {
+  if (useSingleInput) {
+    return normalizeCode(singleInput.value);
+  } else {
+    return joinGroups(codeBoxesEl.querySelectorAll('input'));
+  }
+}
+
+/** DPoP key - generate new key for verify page **/
 let dpopKeyPair;
 async function ensureDpopKey(){
   if(dpopKeyPair) return dpopKeyPair;
+  
+  // Generate new DPoP key for verify page
+  // The server will allow this key to be bound to the session
   dpopKeyPair = await crypto.subtle.generateKey({name:"ECDSA", namedCurve:"P-256"}, false, ["sign","verify"]);
+  console.log('Generated new DPoP key for verify page');
   return dpopKeyPair;
 }
+
 async function exportJwk(pub){ return crypto.subtle.exportKey("jwk", pub); }
 function b64u(buf){ const b = typeof buf==='string'? new TextEncoder().encode(buf): new Uint8Array(buf); return btoa(String.fromCharCode(...b)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
 async function signES256(priv, bytes){ const sig = await crypto.subtle.sign({name:"ECDSA", hash:"SHA-256"}, priv, bytes); return b64u(sig); }
@@ -135,8 +338,7 @@ async function makeDpopProof(url, method, nonce){
 /** Submit code path **/
 $('#codeForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
-  const raw = joinGroups(codeBoxesEl.querySelectorAll('input'));
-  const bc = normalizeCode(raw);
+  const bc = getCurrentCode();
   if (bc.length !== GROUPS.reduce((a,b)=>a+b,0)) {
     codeStatus.textContent = "Please enter the full code."; codeStatus.className = "status err"; return;
   }
@@ -144,7 +346,7 @@ $('#codeForm').addEventListener('submit', async (e)=>{
     codeStatus.textContent = "Verifying code…"; codeStatus.className = "status";
     const redeem = await fetch(REDEEM_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ bc }) });
     if(!redeem.ok){ throw new Error(await redeem.text() || "Code rejected"); }
-    const { dpop_nonce } = await redeem.json();
+    const { dpop_nonce, link_id } = await redeem.json();
 
     const finalizeUrl = new URL(FINALIZE_URL, location.origin).toString();
     const proof = await makeDpopProof(finalizeUrl, "POST", dpop_nonce);
@@ -152,7 +354,7 @@ $('#codeForm').addEventListener('submit', async (e)=>{
     if(!fin.ok){ throw new Error(await fin.text() || "Finalize failed"); }
 
     codeStatus.textContent = "Success. Securing your session…"; codeStatus.className = "status ok";
-    setTimeout(()=>location.assign("/app"), 300);
+    setTimeout(()=>location.assign(`/app?lid=${link_id}`), 300);
   }catch(err){
     codeStatus.textContent = `Error: ${String(err.message||err)}`; codeStatus.className = "status err";
   }

@@ -52,20 +52,26 @@
 
     <!-- BC card (hidden until issued) -->
 <section class="bc-card" id="bcCard" style="display:none;">
-  <div class="bc-url">Enter only at <code>https://verify.dpop.fun/device</code></div>
+  <div class="bc-url">Enter only at <code>https://dpop.fun/verify</code></div>
+  <div class="bc-security">⚠️ Verify the URL is correct before entering your code</div>
   <div class="bc-code" id="bcCode">----</div>
+  <div class="bc-qr-container">
+    <div class="bc-qr" id="bcQR"></div>
+    <p class="bc-qr-hint">Scan this QR code with your desktop verify page</p>
+  </div>
   <div class="bc-timer"><span id="bcTimer">60</span>s left</div>
   <div class="bc-actions">
     <button id="bcRegenerate" class="btn-secondary" disabled>Regenerate</button>
     <button id="bcCancel" class="btn-danger">Cancel</button>
   </div>
-  <p class="bc-hint">Open <strong>verify.dpop.fun/device</strong> on your computer and type the code exactly.</p>
+  <p class="bc-hint">Open <strong>https://dpop.fun/verify</strong> on your computer and scan the QR code or type the code exactly.</p>
 </section>
 
 
     <div class="log-container" id="out" aria-label="Activity log"></div>
   </main>
 
+  <script src="/public/qrcode.min.js"></script>
   <script type="module" src="/public/link.js"></script>
 </body>
 </html>

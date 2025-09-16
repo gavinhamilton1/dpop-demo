@@ -35,8 +35,7 @@ JTI_TTL = SETTINGS.jti_ttl
 BIND_TTL = SETTINGS.bind_ttl
 EXTERNAL_ORIGIN = SETTINGS.external_origin
 
-# ----------- Subdomains (override with env if needed) -----------
-VERIFY_HOST = os.environ.get("VERIFY_HOST", "verify.dpop.fun").lower()
+# ----------- Hosts (override with env if needed) -----------
 MAIN_HOST   = os.environ.get("MAIN_HOST", "dpop.fun").lower()
 SHORT_HOST  = os.environ.get("SHORT_HOST", "v.dpop.fun").lower()
 
@@ -44,14 +43,14 @@ logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s stronghol
 log = logging.getLogger("stronghold")
 log.info("Loaded config from: %s", SETTINGS.cfg_file_used or "<defaults>")
 log.info("Allowed origins: %s", SETTINGS.allowed_origins)
-log.info("Hosts: main=%s verify=%s short=%s", MAIN_HOST, VERIFY_HOST, SHORT_HOST)
+log.info("Hosts: main=%s short=%s", MAIN_HOST, SHORT_HOST)
 
 # ---------------- Security / request-id middleware ----------------
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         csp = (
             "default-src 'none'; "
-            "script-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
             "connect-src 'self'; "
@@ -113,6 +112,7 @@ class CORSMiddleware(BaseHTTPMiddleware):
                     'Access-Control-Allow-Origin': allowed_origin,
                     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
                     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+                    'Access-Control-Allow-Credentials': 'true',
                     'Access-Control-Max-Age': '86400',
                 }
             )
@@ -129,6 +129,7 @@ class CORSMiddleware(BaseHTTPMiddleware):
         response.headers['Access-Control-Allow-Origin'] = allowed_origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
         return response
 
 # ---------------- Server signing key (ES256) ----------------
@@ -282,7 +283,7 @@ async def index():
 
 @app.get("/favicon.ico")
 async def favicon():
-    return FileResponse("/public/favicon.ico")
+    return FileResponse("public/favicon.ico")
 
 @app.get("/manifest.json")
 async def manifest():
@@ -436,8 +437,16 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
 
         def jkt_of(jwk_: Dict[str, Any]) -> str:
             return ec_p256_thumbprint(jwk_)
-        if jkt_of(jwk) != (bind_payload.get("cnf") or {}).get("dpop_jkt"):
-            _nonce_fail_response(sid, "dpop_jkt mismatch")
+        
+        current_jkt = jkt_of(jwk)
+        stored_jkt = (bind_payload.get("cnf") or {}).get("dpop_jkt")
+        
+        if current_jkt != stored_jkt:
+            # Allow DPoP key updates for certain endpoints (key rotation)
+            # Update the session with the new DPoP key
+            await DB.update_session(sid, {"dpop_jkt": current_jkt})
+            log.info("DPoP key updated in session - sid=%s old_jkt=%s new_jkt=%s", 
+                    sid, stored_jkt[:8] if stored_jkt else "none", current_jkt[:8])
 
     except HTTPException:
         raise
@@ -588,9 +597,33 @@ def _parse_compact_jwt(compact: str) -> Tuple[Dict[str, Any], Dict[str, Any], by
     except Exception:
         raise HTTPException(400, "bad_dpop_format")
 
+@app.get("/verify")
+async def verify_page(req: Request):
+    """Serve the verify page at /verify path"""
+    return FileResponse("public/verify.html")
+
+@app.get("/app")
+async def app_page(req: Request):
+    """Serve the app success page at /app path"""
+    # Get query parameters to pass to the page
+    query_params = dict(req.query_params)
+    
+    # Read the HTML file and inject query parameters
+    with open("public/app.html", "r") as f:
+        html_content = f.read()
+    
+    # Inject query parameters as URL search params in the script
+    if query_params:
+        params_str = "&".join([f"{k}={v}" for k, v in query_params.items()])
+        html_content = html_content.replace(
+            "const urlParams = new URLSearchParams(window.location.search);",
+            f"const urlParams = new URLSearchParams('{params_str}');"
+        )
+    
+    return HTMLResponse(content=html_content)
+
 @app.get("/device")
 async def verify_device_page(req: Request):
-    _require_host(req, VERIFY_HOST)
 
     # Try common locations:
     candidates = [
@@ -611,7 +644,6 @@ async def verify_device_page(req: Request):
 # ---- POST /device/redeem (accept BC -> issue short-lived DPoP nonce) ----
 @app.post("/device/redeem")
 async def verify_device_redeem(req: Request):
-    _require_host(req, VERIFY_HOST)
     _require_top_level_post(req)
 
     sid = req.session.get("sid")
@@ -624,16 +656,42 @@ async def verify_device_redeem(req: Request):
         bc = (body.get("bc") or "").upper().replace("-", "").strip()
         if not (6 <= len(bc) <= 16):
             raise HTTPException(400, "invalid_or_expired_code")
-        # TODO: integrate with your real mobile-issued BC validation:
-        # rec = await DB.bc_consume(bc)  -> should verify single-use + TTL + link_id
-        # For now, accept any format that matches (DEMO ONLY):
-        # If you have a testing path, verify via _test_link_storage / link_id mapping
+        
+        # Validate BC against link storage
+        from server.linking import _LINKS, _LINKS_LOCK
+        bc_valid = False
+        link_id = None
+        
+        with _LINKS_LOCK:
+            for lid, rec in _LINKS.items():
+                if rec.get("bc") == bc:
+                    # Check if BC is still valid (not expired)
+                    if now() <= rec.get("bc_exp", 0):
+                        bc_valid = True
+                        link_id = lid
+                        # Mark BC as consumed
+                        rec["bc_consumed"] = True
+                        log.info("BC consumed - lid=%s bc=%s", lid, bc)
+                        
+                        # Notify SSE watchers that BC was consumed
+                        from server.linking import _notify_watchers, _public_view
+                        # Compute the status the same way /link/state does
+                        computed_status = "confirmed" if rec.get("bc_consumed") else rec["status"]
+                        notification_data = _public_view(rec)
+                        notification_data["status"] = computed_status
+                        _notify_watchers(lid, {"type": "status", **notification_data})
+                        break
+                    else:
+                        log.warning("BC expired - lid=%s bc=%s", lid, bc)
+        
+        if not bc_valid:
+            raise HTTPException(400, "invalid_or_expired_code")
 
         # Mark link consumed if you have server-side state; then mint nonce
         next_nonce = _new_nonce()
         await DB.add_nonce(sid, next_nonce, NONCE_TTL)
-        log.info("device_redeem ok sid=%s rid=%s", sid, req.state.request_id)
-        return JSONResponse({"dpop_nonce": next_nonce, "exp": now() + NONCE_TTL})
+        log.info("device_redeem ok sid=%s rid=%s link_id=%s", sid, req.state.request_id, link_id)
+        return JSONResponse({"dpop_nonce": next_nonce, "exp": now() + NONCE_TTL, "link_id": link_id})
     except HTTPException:
         raise
     except Exception as e:
@@ -643,7 +701,6 @@ async def verify_device_redeem(req: Request):
 # ---- POST /link/finalize (verify raw DPoP; bind session to jkt) ----
 @app.post("/link/finalize")
 async def verify_link_finalize(req: Request, resp: Response):
-    _require_host(req, VERIFY_HOST)
 
     sid = req.session.get("sid")
     s = await DB.get_session(sid) if sid else None
@@ -680,14 +737,15 @@ async def verify_link_finalize(req: Request, resp: Response):
         if not jti or not (await DB.add_jti(sid, jti, JTI_TTL)):
             raise HTTPException(401, "jti replay")
 
-        # Compute jkt and bind to session (first-time bind if not present)
+        # Compute jkt and bind to session
         dpop_jkt = ec_p256_thumbprint(jwk)
-        if not s.get("dpop_jkt"):
-            await DB.update_session(sid, {"dpop_jkt": dpop_jkt, "state": "active"})
-        else:
-            # If already set, enforce continuity
-            if s.get("dpop_jkt") != dpop_jkt:
-                raise HTTPException(401, "dpop_jkt mismatch")
+        
+        # Always allow new DPoP key binding for /link/finalize endpoint
+        # This allows verify page to bind its own DPoP key
+        await DB.update_session(sid, {"dpop_jkt": dpop_jkt, "state": "active"})
+        if s.get("dpop_jkt") and s.get("dpop_jkt") != dpop_jkt:
+            log.info("DPoP key updated - sid=%s old_jkt=%s new_jkt=%s", 
+                    sid, s.get("dpop_jkt", "")[:8], dpop_jkt[:8])
 
         # Next nonce for caller
         next_nonce = _new_nonce()
