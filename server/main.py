@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from server.config import load_settings
 from server.db import DB  # singleton DB instance
+from server.geolocation import GeolocationService
 from server.passkeys import get_router as get_passkeys_router
 from server.linking import get_router as get_linking_router
 from server.utils import ec_p256_thumbprint, now, b64u
@@ -592,6 +593,26 @@ async def collect_fingerprint(req: Request):
         
         # Add IP to fingerprint data
         fingerprint_data["ip_address"] = client_ip
+        
+        # Perform geolocation lookup
+        log.info("Performing geolocation lookup for IP: %s", client_ip)
+        geolocation_data = GeolocationService.get_ip_geolocation(client_ip)
+        
+        # Try fallback service if primary fails
+        if not geolocation_data:
+            log.info("Primary geolocation failed, trying fallback for IP: %s", client_ip)
+            geolocation_data = GeolocationService.get_ip_geolocation_fallback(client_ip)
+        
+        # Add geolocation data to fingerprint if available
+        if geolocation_data:
+            fingerprint_data["geolocation"] = geolocation_data
+            log.info("Geolocation data added to fingerprint: %s, %s, %s", 
+                    geolocation_data.get('city', 'Unknown'), 
+                    geolocation_data.get('region', 'Unknown'), 
+                    geolocation_data.get('country', 'Unknown'))
+        else:
+            log.warning("No geolocation data available for IP: %s", client_ip)
+            fingerprint_data["geolocation"] = None
         
         # Store fingerprint data and device type in session
         device_type = fingerprint_data.get("deviceType", "unknown")

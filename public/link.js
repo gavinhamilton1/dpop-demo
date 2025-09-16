@@ -35,51 +35,11 @@ async function collectMobileFingerprint() {
   try {
     log('Collecting mobile device fingerprint...', 'info');
     
-    // Collect the same fingerprint data as desktop
-    const fingerprint = {
-      userAgent: navigator.userAgent,
-      screenResolution: `${screen.width}x${screen.height}`,
-      colorDepth: screen.colorDepth,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      language: navigator.language,
-      platform: navigator.platform,
-      hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
-      deviceMemory: navigator.deviceMemory || 'unknown',
-      cookieEnabled: navigator.cookieEnabled,
-      doNotTrack: navigator.doNotTrack || 'unknown',
-      webglVendor: getWebGLVendor(),
-      webglRenderer: getWebGLRenderer(),
-      timestamp: new Date().toISOString(),
-      deviceType: 'mobile' // Add device type to distinguish from desktop
-    };
+    // Use the centralized FingerprintService
+    const result = await FingerprintService.collectAndSendFingerprint('mobile');
     
-    log(`Mobile fingerprint collected: ${Object.keys(fingerprint).length} signals`, 'info');
-    log(`Mobile fingerprint data: ${JSON.stringify(fingerprint, null, 2)}`, 'info');
-    
-    // Send fingerprint data to server
-    log('Sending mobile fingerprint to server...', 'info');
-    log(`Mobile fingerprint request body: ${JSON.stringify(fingerprint, null, 2)}`, 'info');
-    const response = await fetch('/session/fingerprint', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      credentials: 'include',
-      body: JSON.stringify(fingerprint)
-    });
-    
-    log(`Mobile fingerprint response status: ${response.status}`, 'info');
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      log(`Mobile fingerprint storage failed: ${response.status} ${errorText}`, 'error');
-      throw new Error(`Failed to store mobile fingerprint: ${response.status} ${errorText}`);
-    }
-    
-    const result = await response.json();
-    log(`Mobile fingerprint server response: ${JSON.stringify(result, null, 2)}`, 'info');
-    log('Mobile fingerprint stored successfully ✓', 'success');
-    console.log('✅ MOBILE FINGERPRINT COLLECTION COMPLETED SUCCESSFULLY');
+    log('Mobile fingerprint collection completed successfully', 'success');
+    console.log('✅ Mobile fingerprint collection completed successfully');
     return result;
     
   } catch (error) {
@@ -91,36 +51,6 @@ async function collectMobileFingerprint() {
   }
 }
 
-// Helper functions for fingerprint collection
-function getWebGLVendor() {
-  try {
-    const canvas = document.createElement('canvas');
-    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-    if (!gl) return 'unknown';
-    
-    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-    if (!debugInfo) return 'unknown';
-    
-    return gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
-  } catch (e) {
-    return 'unknown';
-  }
-}
-
-function getWebGLRenderer() {
-  try {
-    const canvas = document.createElement('canvas');
-    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-    if (!gl) return 'unknown';
-    
-    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-    if (!debugInfo) return 'unknown';
-    
-    return gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
-  } catch (e) {
-    return 'unknown';
-  }
-}
 
 
 // --- Progress UI (uses your existing .progress-step blocks) ---

@@ -6,6 +6,7 @@ import { Logger } from '../components/Logger.js';
 import { StrongholdService } from '../services/StrongholdService.js';
 import { PasskeyService } from '../services/PasskeyService.js';
 import { LinkingService } from '../services/LinkingService.js';
+import { FingerprintService } from '../services/FingerprintService.js';
 import { ErrorHandler } from '../utils/ErrorHandler.js';
 
 export class AppController {
@@ -278,47 +279,13 @@ export class AppController {
    */
   async collectFingerprint() {
     try {
-      console.log('🔍 FINGERPRINT COLLECTION STARTED');
       this.logger.info('Starting fingerprint collection...');
       
-      // Collect browser/device signals
-      const fingerprint = {
-        userAgent: navigator.userAgent,
-        screenResolution: `${screen.width}x${screen.height}`,
-        colorDepth: screen.colorDepth,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        language: navigator.language,
-        platform: navigator.platform,
-        hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
-        deviceMemory: navigator.deviceMemory || 'unknown',
-        cookieEnabled: navigator.cookieEnabled,
-        doNotTrack: navigator.doNotTrack || 'unknown',
-        webglVendor: this.getWebGLVendor(),
-        webglRenderer: this.getWebGLRenderer(),
-        timestamp: new Date().toISOString(),
-        deviceType: 'desktop' // Add device type to distinguish from mobile
-      };
-
-      this.logger.info('Fingerprint data collected:', fingerprint);
+      // Use the centralized FingerprintService
+      const result = await FingerprintService.collectAndSendFingerprint('desktop');
       
-      // Send fingerprint data to server
-      const response = await fetch('/session/fingerprint', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        credentials: 'include',
-        body: JSON.stringify(fingerprint)
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to collect fingerprint: ${response.status} ${errorText}`);
-      }
-
-      const result = await response.json();
-      console.log('✅ FINGERPRINT COLLECTION SUCCESS:', result);
-      this.logger.info('Device fingerprint collected successfully:', result);
+      this.logger.info('Fingerprint collection completed successfully');
+      return result;
     } catch (error) {
       console.log('❌ FINGERPRINT COLLECTION FAILED:', error);
       this.logger.error('Failed to collect fingerprint:', error);
@@ -326,41 +293,6 @@ export class AppController {
     }
   }
 
-  /**
-   * Get WebGL vendor information
-   */
-  getWebGLVendor() {
-    try {
-      const canvas = document.createElement('canvas');
-      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-      if (!gl) return 'unknown';
-      
-      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-      if (!debugInfo) return 'unknown';
-      
-      return gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
-    } catch (e) {
-      return 'unknown';
-    }
-  }
-
-  /**
-   * Get WebGL renderer information
-   */
-  getWebGLRenderer() {
-    try {
-      const canvas = document.createElement('canvas');
-      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-      if (!gl) return 'unknown';
-      
-      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-      if (!debugInfo) return 'unknown';
-      
-      return gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
-    } catch (e) {
-      return 'unknown';
-    }
-  }
 
   /**
    * Get canvas fingerprint

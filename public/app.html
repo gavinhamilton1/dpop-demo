@@ -563,9 +563,49 @@
                 'WebGL Renderer': fingerprint.webglRenderer || 'Unknown'
             };
             
+            const uaChInfo = fingerprint.ua_ch ? {
+                'Mobile Device': fingerprint.ua_ch.mobile ? 'Yes' : 'No',
+                'Platform': fingerprint.ua_ch.platform || 'Unknown',
+                'Platform Version': fingerprint.ua_ch.platformVersion || 'Unknown',
+                'Architecture': fingerprint.ua_ch.architecture || 'Unknown',
+                'Model': fingerprint.ua_ch.model || 'Unknown',
+                'Browser Version': fingerprint.ua_ch.uaFullVersion || 'Unknown',
+                'Bitness': fingerprint.ua_ch.bitness || 'Unknown',
+                'Full Version List': fingerprint.ua_ch.fullVersionList ? fingerprint.ua_ch.fullVersionList.map(v => `${v.brand}:${v.version}`).join(', ') : 'Unknown'
+            } : {
+                'User Agent Client Hints': 'Not Available'
+            };
+            
+            const automationInfo = fingerprint.automation ? {
+                'WebDriver Present': fingerprint.automation.webdriver ? 'Yes' : 'No',
+                'Headless Chrome': fingerprint.automation.headlessUA ? 'Yes' : 'No',
+                'Plugins Count': fingerprint.automation.pluginsLength || 'Unknown',
+                'MIME Types Count': fingerprint.automation.mimeTypesLength || 'Unknown',
+                'Visibility State': fingerprint.automation.visibilityState || 'Unknown',
+                'Has Focus': fingerprint.automation.hasFocus ? 'Yes' : 'No',
+                'Permissions': fingerprint.automation.permissionsAnomalies ? 
+                    Object.entries(fingerprint.automation.permissionsAnomalies).map(([k,v]) => `${k}: ${v}`).join(', ') : 'Unknown'
+            } : {
+                'Automation Detection': 'Not Available'
+            };
+            
             const networkInfo = {
                 'IP Address': fingerprint.ip_address || 'Unknown',
                 'Collection Time': fingerprint.timestamp ? new Date(fingerprint.timestamp).toLocaleString() : 'Unknown'
+            };
+            
+            const geolocationInfo = fingerprint.geolocation ? {
+                'City': fingerprint.geolocation.city || 'Unknown',
+                'Region': fingerprint.geolocation.region || 'Unknown',
+                'Country': fingerprint.geolocation.country || 'Unknown',
+                'Country Code': fingerprint.geolocation.country_code || 'Unknown',
+                'Postal Code': fingerprint.geolocation.postal || 'Unknown',
+                'Coordinates': `${fingerprint.geolocation.latitude}, ${fingerprint.geolocation.longitude}`,
+                'Timezone': fingerprint.geolocation.timezone || 'Unknown',
+                'Organization': fingerprint.geolocation.org || 'Unknown',
+                'ASN': fingerprint.geolocation.asn || 'Unknown'
+            } : {
+                'Geolocation': 'Not Available'
             };
             
             let html = '';
@@ -592,9 +632,31 @@
             }
             html += '</div>';
             
+            // User Agent Client Hints Information
+            html += '<div class="fingerprint-category">';
+            html += '<div class="fingerprint-category-title">User Agent Client Hints</div>';
+            for (const [label, value] of Object.entries(uaChInfo)) {
+                html += `<div class="fingerprint-item">
+                    <span class="fingerprint-label">${label}:</span>
+                    <span class="fingerprint-value">${value}</span>
+                </div>`;
+            }
+            html += '</div>';
+            
+            // Automation Detection Information
+            html += '<div class="fingerprint-category">';
+            html += '<div class="fingerprint-category-title">Automation Detection</div>';
+            for (const [label, value] of Object.entries(automationInfo)) {
+                html += `<div class="fingerprint-item">
+                    <span class="fingerprint-label">${label}:</span>
+                    <span class="fingerprint-value">${value}</span>
+                </div>`;
+            }
+            html += '</div>';
+            
             // Network Information
             html += '<div class="fingerprint-category">';
-            html += '<div class="fingerprint-category-title">Network & Location</div>';
+            html += '<div class="fingerprint-category-title">Network Information</div>';
             for (const [label, value] of Object.entries(networkInfo)) {
                 html += `<div class="fingerprint-item">
                     <span class="fingerprint-label">${label}:</span>
@@ -603,6 +665,16 @@
             }
             html += '</div>';
             
+            // Geolocation Information
+            html += '<div class="fingerprint-category">';
+            html += '<div class="fingerprint-category-title">Geolocation</div>';
+            for (const [label, value] of Object.entries(geolocationInfo)) {
+                html += `<div class="fingerprint-item">
+                    <span class="fingerprint-label">${label}:</span>
+                    <span class="fingerprint-value">${value}</span>
+                </div>`;
+            }
+            html += '</div>';
             
             console.log('Generated HTML:', html);
             summaryEl.innerHTML = html;
