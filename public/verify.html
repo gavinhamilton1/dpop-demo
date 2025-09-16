@@ -214,8 +214,8 @@
       height: 160px;
       transform: translate(-50%, -50%);
       border-radius: 50%;
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
       background: rgba(255, 255, 255, 0.1);
       pointer-events: none;
     }
@@ -308,7 +308,28 @@
     
     .verify-status {
       text-align: center;
-      margin-top: 0.5rem;
+      margin: 1rem auto 0 auto;
+      padding: 0.75rem 1.5rem;
+      background: rgba(0, 0, 0, 0.05);
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 0.5rem;
+      font-weight: 500;
+      color: var(--text);
+      display: block;
+      min-width: 120px;
+      max-width: fit-content;
+    }
+    
+    .verify-status.status {
+      background: rgba(16, 185, 129, 0.1);
+      border-color: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+    }
+    
+    .verify-status.status.err {
+      background: rgba(239, 68, 68, 0.1);
+      border-color: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
     }
     
     canvas {
@@ -366,7 +387,7 @@
           <button class="btn btn-secondary" id="stopCamBtn" type="button">Use code instead</button>
           <span class="verify-subtitle" id="camHint">Position the QR code within the scanning area.</span>
         </div>
-        <div class="verify-status" id="camStatus"></div>
+        <div class="verify-status status" id="camStatus">Scanning…</div>
       </div>
     </div>
 
@@ -534,11 +555,11 @@ async function startCam(){
       } 
     });
   }catch(e){
-    camStatus.textContent = "Camera permission denied or unavailable."; camStatus.className = "status err"; return;
+    camStatus.textContent = "Camera permission denied or unavailable."; camStatus.className = "verify-status status err"; return;
   }
   videoEl.srcObject = stream; 
   await videoEl.play();
-  camStatus.textContent = "Scanning…"; camStatus.className = "status";
+  camStatus.textContent = "Scanning…"; camStatus.className = "verify-status status";
 
   const loop = async () => {
     if (stopLoop) return;
