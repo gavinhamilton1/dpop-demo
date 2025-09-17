@@ -1,4 +1,4 @@
-# server/stronghold.dev.yaml
+# server/stronghold.yaml - Main config file
 server:
   external_origin: null                # e.g. https://dpop.fun in prod; null in dev to infer from Host
   allowed_origins:                     # List of allowed origins for multi-domain support
@@ -9,7 +9,7 @@ server:
   ec_private_key_pem: null             # optional: inline PEM (dev only)
 
 db:
-  path: /tmp/stronghold.db            # <-- safe temp path for dev
+  path: /tmp/stronghold.db            # <-- safe temp path (will be overridden by env var)
 
 session:
   cookie_name: stronghold_session
