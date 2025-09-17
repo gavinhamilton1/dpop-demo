@@ -22,10 +22,50 @@ from server.geolocation import GeolocationService
 from server.passkeys import get_router as get_passkeys_router
 from server.linking import get_router as get_linking_router
 from server.utils import ec_p256_thumbprint, now, b64u
+from typing import Tuple, Optional, Dict
 from server.face_service import face_service
 
 # ---------------- Config ----------------
 SETTINGS = load_settings()
+
+# ---------------- Session Validation ----------------
+async def validate_session_with_user(req: Request) -> Tuple[bool, Optional[str], Optional[Dict]]:
+    """
+    Validate that session has both a username and DPoP binding.
+    Returns: (is_valid, username, session_data)
+    """
+    sid = req.session.get("sid")
+    if not sid:
+        return False, None, None
+    
+    # Get session data
+    session_data = await DB.get_session(sid)
+    if not session_data:
+        return False, None, None
+    
+    # Check if DPoP is bound
+    if not session_data.get("dpop_jkt"):
+        return False, None, session_data
+    
+    # Check if username is bound
+    user = await DB.get_user_by_session(sid)
+    if not user:
+        return False, None, session_data
+    
+    return True, user["username"], session_data
+
+async def require_valid_session(req: Request):
+    """Raise HTTPException if session is not valid with username and DPoP binding"""
+    is_valid, username, session_data = await validate_session_with_user(req)
+    if not is_valid:
+        if not session_data:
+            raise HTTPException(status_code=401, detail="No valid session")
+        elif not session_data.get("dpop_jkt"):
+            raise HTTPException(status_code=401, detail="DPoP not bound to session")
+        elif not username:
+            raise HTTPException(status_code=401, detail="No username bound to session")
+    
+    return username, session_data
 
 LOG_LEVEL = SETTINGS.log_level
 SESSION_SAMESITE = SETTINGS.session_samesite
@@ -463,13 +503,11 @@ async def signin_user(req: Request):
 @app.get("/onboarding/current-user")
 async def get_current_user(req: Request):
     """Get current user's username from session"""
-    sid = req.session.get("sid")
-    if not sid:
-        raise HTTPException(status_code=401, detail="No session")
+    # Require valid session with username and DPoP binding
+    username, session_data = await require_valid_session(req)
     
-    user = await DB.get_user_by_session(sid)
-    if not user:
-        raise HTTPException(status_code=404, detail="No user found for this session")
+    # Get user data from database
+    user = await DB.get_user_by_session(req.session.get("sid"))
     
     return JSONResponse({
         "username": user["username"],
@@ -909,51 +947,36 @@ async def debug_usernames():
 @app.get("/session/fingerprint")
 async def get_fingerprint(req: Request):
     """Get stored fingerprint data for current session"""
-    sid = req.session.get("sid")
-    log.info("GET /session/fingerprint - session cookie: %s", req.cookies.get("stronghold_session"))
-    log.info("GET /session/fingerprint - session data: %s", dict(req.session))
-    if not sid:
-        raise HTTPException(401, "no session")
+    # Require valid session with username and DPoP binding
+    username, session_data = await require_valid_session(req)
     
-    log.info("GET /session/fingerprint called with sid=%s", sid)
-    log.info("GET /session/fingerprint - checking database for session_id=%s", sid)
+    log.info("GET /session/fingerprint called with sid=%s username=%s", req.session.get("sid"), username)
     
     try:
-        session_data = await DB.get_session(sid)
-        if not session_data:
-            raise HTTPException(404, "session not found")
-        
-        log.info("Full session data sid=%s keys=%s", sid, list(session_data.keys()))
-        log.info("Full session data sid=%s data=%s", sid, session_data)
+        log.info("Full session data sid=%s keys=%s", req.session.get("sid"), list(session_data.keys()))
         fingerprint_data = session_data.get("fingerprint", {})
         device_type = session_data.get("device_type", "unknown")
-        log.info("Retrieved fingerprint data sid=%s device_type=%s data=%s", sid, device_type, fingerprint_data)
+        log.info("Retrieved fingerprint data sid=%s username=%s device_type=%s", req.session.get("sid"), username, device_type)
         return JSONResponse({
             "fingerprint": fingerprint_data,
             "device_type": device_type
         })
     except Exception as e:
-        log.exception("Failed to get fingerprint sid=%s", sid)
+        log.exception("Failed to get fingerprint sid=%s username=%s", req.session.get("sid"), username)
         raise HTTPException(500, f"Failed to get fingerprint: {e}")
 
 @app.get("/session/fingerprint-data")
 async def get_fingerprint_data(req: Request):
     """Get both desktop and mobile fingerprint data for the current session"""
-    sid = req.session.get("sid")
-    log.info("GET /session/fingerprint-data - session cookie: %s", req.cookies.get("stronghold_session"))
-    log.info("GET /session/fingerprint-data - session data: %s", dict(req.session))
-    if not sid:
-        raise HTTPException(401, "no session")
+    # Require valid session with username and DPoP binding
+    username, session_data = await require_valid_session(req)
     
-    log.info("GET /session/fingerprint-data called with sid=%s", sid)
+    log.info("GET /session/fingerprint-data called with sid=%s username=%s", req.session.get("sid"), username)
     
     try:
         # Get current session data
-        current_session = await DB.get_session(sid)
-        if not current_session:
-            raise HTTPException(404, "current session not found")
-        
-        log.info("Current session found sid=%s keys=%s", sid, list(current_session.keys()))
+        current_session = session_data  # Already validated by require_valid_session
+        log.info("Current session found sid=%s keys=%s", req.session.get("sid"), list(current_session.keys()))
         current_fingerprint = current_session.get("fingerprint", {})
         current_device_type = current_session.get("device_type", "unknown")
         
@@ -970,10 +993,10 @@ async def get_fingerprint_data(req: Request):
         if current_device_type == "desktop":
             # Current session is desktop, look for linked mobile session
             log.info("Current session is desktop, looking for linked mobile session")
-            link_data = _get_link_by_desktop_sid(sid)
+            link_data = _get_link_by_desktop_sid(req.session.get("sid"))
             if link_data and link_data.get("mobile_sid"):
                 linked_sid = link_data["mobile_sid"]
-                log.info("Found linked mobile session mobile_sid=%s for desktop_sid=%s", linked_sid, sid)
+                log.info("Found linked mobile session mobile_sid=%s for desktop_sid=%s", linked_sid, req.session.get("sid"))
                 
                 # Get mobile session data
                 linked_session = await DB.get_session(linked_sid)
@@ -986,15 +1009,15 @@ async def get_fingerprint_data(req: Request):
                 else:
                     log.warning("Linked mobile session not found mobile_sid=%s", linked_sid)
             else:
-                log.info("No linked mobile session found for desktop_sid=%s", sid)
+                log.info("No linked mobile session found for desktop_sid=%s", req.session.get("sid"))
                 
         elif current_device_type == "mobile":
             # Current session is mobile, look for linked desktop session
             log.info("Current session is mobile, looking for linked desktop session")
-            link_data = _get_link_by_mobile_sid(sid)
+            link_data = _get_link_by_mobile_sid(req.session.get("sid"))
             if link_data and link_data.get("desktop_sid"):
                 linked_sid = link_data["desktop_sid"]
-                log.info("Found linked desktop session desktop_sid=%s for mobile_sid=%s", linked_sid, sid)
+                log.info("Found linked desktop session desktop_sid=%s for mobile_sid=%s", linked_sid, req.session.get("sid"))
                 
                 # Get desktop session data
                 linked_session = await DB.get_session(linked_sid)
@@ -1007,9 +1030,9 @@ async def get_fingerprint_data(req: Request):
                 else:
                     log.warning("Linked desktop session not found desktop_sid=%s", linked_sid)
             else:
-                log.info("No linked desktop session found for mobile_sid=%s", sid)
+                log.info("No linked desktop session found for mobile_sid=%s", req.session.get("sid"))
         else:
-            log.warning("Unknown device type for session sid=%s: %s", sid, current_device_type)
+            log.warning("Unknown device type for session sid=%s: %s", req.session.get("sid"), current_device_type)
         
         # Return data with appropriate labels based on current session type
         if current_device_type == "desktop":
@@ -1045,15 +1068,18 @@ async def get_fingerprint_data(req: Request):
         return JSONResponse(response_data)
         
     except Exception as e:
-        log.exception("Failed to get fingerprint data sid=%s", sid)
+        log.exception("Failed to get fingerprint data sid=%s username=%s", req.session.get("sid"), username)
         raise HTTPException(500, f"Failed to get fingerprint data: {e}")
 
 # ---------------- Demo API ----------------
 @app.post("/api/echo")
 async def api_echo(req: Request, ctx=Depends(require_dpop)):
+    # Require valid session with username and DPoP binding
+    username, session_data = await require_valid_session(req)
+    
     body = await req.json()
     headers = {"DPoP-Nonce": ctx["next_nonce"]}
-    log.info("api_echo ok sid=%s rid=%s", ctx["sid"], req.state.request_id)
+    log.info("api_echo ok sid=%s username=%s rid=%s", ctx["sid"], username, req.state.request_id)
     return JSONResponse({"ok": True, "echo": body, "ts": now()}, headers=headers)
 
 # ---------------- Testing (kept) ----------------
