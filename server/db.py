@@ -9,9 +9,9 @@ from server.config import load_settings
 
 # Load config once at import
 _SETTINGS = load_settings()
-# Force use /tmp for Render compatibility
-_DEFAULT_DB_PATH = Path("/tmp/stronghold.db")
-print(f"DEBUG: Forced database path to: {_DEFAULT_DB_PATH}")
+# Use config-provided path (fallback to /tmp for Render compatibility)
+_DEFAULT_DB_PATH = Path(_SETTINGS.db_path if _SETTINGS.db_path else "/tmp/stronghold.db")
+print(f"DEBUG: Using database path: {_DEFAULT_DB_PATH}")
 
 class Database:
     def __init__(self, path: Optional[str] = None):
@@ -48,6 +48,14 @@ class Database:
           sid TEXT PRIMARY KEY,
           data TEXT NOT NULL,           -- JSON blob
           updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          session_id TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (session_id) REFERENCES sessions(sid)
         );
 
         CREATE TABLE IF NOT EXISTS nonces (
@@ -164,6 +172,69 @@ class Database:
     async def delete_session(self, sid: str):
         """Delete a session from the database"""
         await self.exec("DELETE FROM sessions WHERE sid=?", (sid,))
+
+    async def get_session_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Get session by username - used for duplicate username validation"""
+        rows = await self.fetchall("SELECT sid, data FROM sessions")
+        for row in rows:
+            try:
+                data = json.loads(row["data"])
+                if data.get("username") == username:
+                    return data
+            except Exception:
+                continue
+        return None
+
+    # --- User management methods ---
+    
+    async def create_user(self, username: str, session_id: str) -> bool:
+        """Create a new user record"""
+        try:
+            await self.exec(
+                "INSERT INTO users(username, session_id, created_at) VALUES(?, ?, strftime('%s','now'))",
+                (username, session_id)
+            )
+            return True
+        except Exception:
+            return False
+
+    async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Get user by username"""
+        row = await self.fetchone(
+            "SELECT id, username, session_id, created_at FROM users WHERE username = ?",
+            (username,)
+        )
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "session_id": row["session_id"],
+            "created_at": row["created_at"]
+        }
+
+    async def get_user_by_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get user by session ID"""
+        row = await self.fetchone(
+            "SELECT id, username, session_id, created_at FROM users WHERE session_id = ?",
+            (session_id,)
+        )
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "session_id": row["session_id"],
+            "created_at": row["created_at"]
+        }
+
+    async def delete_user(self, username: str) -> bool:
+        """Delete a user record"""
+        try:
+            await self.exec("DELETE FROM users WHERE username = ?", (username,))
+            return True
+        except Exception:
+            return False
 
     async def add_nonce(self, sid: str, nonce: str, ttl_sec: int):
         exp = await self.fetchone("SELECT strftime('%s','now') + ? AS e", (ttl_sec,))

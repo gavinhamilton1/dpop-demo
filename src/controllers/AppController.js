@@ -24,6 +24,7 @@ export class AppController {
     // Application state
     this.state = {
       isInitialized: false,
+      username: null,
       hasSession: false,
       hasBIK: false,
       hasDPoP: false,
@@ -47,7 +48,7 @@ export class AppController {
       
             // Initialize button manager
       this.buttonManager.initialize([
-        'registerBrowserBtn', 'initBtn', 'bikBtn', 'dpopBtn', 'apiBtn',
+        'registerModeBtn', 'signinModeBtn', 'submitUsernameBtn', 'submitSigninBtn', 'registerBrowserBtn', 'initBtn', 'bikBtn', 'dpopBtn', 'apiBtn',
         'regBtn', 'authBtn', 'linkBtn', 'flushBtn', 'clientFlushBtn',
         'swRegBtn', 'swUnregBtn', 'echoSWBtn', 'testSWBtn'
       ]);
@@ -205,9 +206,330 @@ export class AppController {
   }
 
   /**
+   * Submit username during onboarding
+   */
+  async submitUsername() {
+    await this.errorHandler.handleAsync(async () => {
+      const usernameInput = document.getElementById('usernameInput');
+      const submitBtn = document.getElementById('submitUsernameBtn');
+      const errorDiv = document.getElementById('usernameError');
+      
+      if (!usernameInput || !submitBtn || !errorDiv) {
+        throw new Error('Username form elements not found');
+      }
+      
+      const username = usernameInput.value.trim();
+      
+      // Clear previous errors
+      errorDiv.style.display = 'none';
+      errorDiv.textContent = '';
+      
+      // Basic validation
+      if (!username) {
+        this.showUsernameError('Username is required');
+        return;
+      }
+      
+      if (username.length < 3) {
+        this.showUsernameError('Username must be at least 3 characters');
+        return;
+      }
+      
+      if (username.length > 50) {
+        this.showUsernameError('Username must be less than 50 characters');
+        return;
+      }
+      
+      // Check for valid characters
+      if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+        this.showUsernameError('Username can only contain letters, numbers, underscores, and hyphens');
+        return;
+      }
+      
+      // Disable form during submission
+      submitBtn.disabled = true;
+      submitBtn.textContent = '⏳ Submitting...';
+      usernameInput.disabled = true;
+      
+      try {
+        const response = await fetch('/onboarding/username', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ username })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          const errorMessage = errorData.detail || `HTTP ${response.status}`;
+          this.showUsernameError(errorMessage);
+          return; // Don't throw error for validation failures
+        }
+        
+        const data = await response.json();
+        
+        // Success - show success message
+        this.showUsernameSuccess(username);
+        this.logger.success(`Username '${username}' submitted successfully!`);
+        
+        // Store username in state
+        this.state.username = username;
+        
+      } catch (error) {
+        // Only show error for unexpected network/server errors
+        this.showUsernameError('Network error. Please try again.');
+        this.logger.error('Unexpected error during username submission:', error);
+      } finally {
+        // Re-enable form
+        submitBtn.disabled = false;
+        submitBtn.textContent = '📝 Register Username';
+        usernameInput.disabled = false;
+      }
+      
+    }, 'Username submission', this.handleError);
+  }
+
+  /**
+   * Show username error message
+   */
+  showUsernameError(message) {
+    const errorDiv = document.getElementById('usernameError');
+    if (errorDiv) {
+      errorDiv.textContent = message;
+      errorDiv.style.display = 'block';
+    }
+  }
+
+  /**
+   * Show success message after username submission
+   */
+  showUsernameSuccess(username, type = 'register') {
+    // Find the User Binding section (the demo-section that contains the onboarding forms)
+    const onboardingSections = document.querySelectorAll('.demo-section');
+    let onboardingSection = null;
+    
+    for (const section of onboardingSections) {
+      if (section.querySelector('#usernameInput') || section.querySelector('#signinUsernameInput') || section.querySelector('.onboarding-toggle')) {
+        onboardingSection = section;
+        break;
+      }
+    }
+    
+    if (onboardingSection) {
+      // Hide the toggle buttons
+      const toggleDiv = onboardingSection.querySelector('.onboarding-toggle');
+      if (toggleDiv) {
+        toggleDiv.style.display = 'none';
+      }
+      
+      // Hide both forms
+      const registerForm = onboardingSection.querySelector('#registerForm');
+      const signinForm = onboardingSection.querySelector('#signinForm');
+      if (registerForm) registerForm.style.display = 'none';
+      if (signinForm) signinForm.style.display = 'none';
+      
+      // Show success message
+      const successDiv = document.createElement('div');
+      successDiv.className = 'onboarding-success';
+      
+      const message = type === 'signin' 
+        ? `Welcome back, ${username}! Your session has been restored successfully. You can now proceed with the demo below.`
+        : `Welcome, ${username}! Your user binding has been completed successfully. You can now proceed with the demo below.`;
+      
+      successDiv.innerHTML = `
+        <div class="success-icon">✅</div>
+        <h3>Welcome, ${username}!</h3>
+        <p>${message}</p>
+      `;
+      
+      onboardingSection.appendChild(successDiv);
+    }
+  }
+
+  /**
+   * Hide the entire onboarding section after user continues
+   */
+  hideOnboardingSection() {
+    const onboardingSection = document.querySelector('.demo-section');
+    if (onboardingSection && onboardingSection.querySelector('#usernameInput')) {
+      onboardingSection.style.display = 'none';
+    }
+  }
+
+  /**
+   * Switch to register mode
+   */
+  switchToRegisterMode() {
+    const registerBtn = document.getElementById('registerModeBtn');
+    const signinBtn = document.getElementById('signinModeBtn');
+    const registerForm = document.getElementById('registerForm');
+    const signinForm = document.getElementById('signinForm');
+
+    if (registerBtn) registerBtn.classList.add('active');
+    if (signinBtn) signinBtn.classList.remove('active');
+    if (registerForm) registerForm.style.display = 'block';
+    if (signinForm) signinForm.style.display = 'none';
+
+    // Clear any errors
+    this.clearAllErrors();
+  }
+
+  /**
+   * Switch to sign-in mode
+   */
+  switchToSigninMode() {
+    const registerBtn = document.getElementById('registerModeBtn');
+    const signinBtn = document.getElementById('signinModeBtn');
+    const registerForm = document.getElementById('registerForm');
+    const signinForm = document.getElementById('signinForm');
+
+    if (registerBtn) registerBtn.classList.remove('active');
+    if (signinBtn) signinBtn.classList.add('active');
+    if (registerForm) registerForm.style.display = 'none';
+    if (signinForm) signinForm.style.display = 'block';
+
+    // Clear any errors
+    this.clearAllErrors();
+  }
+
+  /**
+   * Submit sign-in
+   */
+  async submitSignin() {
+    await this.errorHandler.handleAsync(async () => {
+      const usernameInput = document.getElementById('signinUsernameInput');
+      const submitBtn = document.getElementById('submitSigninBtn');
+      const errorDiv = document.getElementById('signinError');
+      
+      if (!usernameInput || !submitBtn || !errorDiv) {
+        throw new Error('Sign-in form elements not found');
+      }
+      
+      const username = usernameInput.value.trim();
+      
+      // Clear previous errors
+      errorDiv.style.display = 'none';
+      errorDiv.textContent = '';
+      
+      // Basic validation
+      if (!username) {
+        this.showSigninError('Username is required');
+        return;
+      }
+      
+      // Disable form during submission
+      submitBtn.disabled = true;
+      submitBtn.textContent = '⏳ Signing in...';
+      usernameInput.disabled = true;
+      
+      try {
+        const response = await fetch('/onboarding/signin', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ username })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          const errorMessage = errorData.detail || `HTTP ${response.status}`;
+          this.showSigninError(errorMessage);
+          return; // Don't throw error for validation failures
+        }
+        
+        const data = await response.json();
+        
+        // Success - show success message
+        this.showUsernameSuccess(username, 'signin');
+        this.logger.success(`Welcome back, ${username}!`);
+        
+        // Store username in state
+        this.state.username = username;
+        
+      } catch (error) {
+        // Only show error for unexpected network/server errors
+        this.showSigninError('Network error. Please try again.');
+        this.logger.error('Unexpected error during sign-in:', error);
+      } finally {
+        // Re-enable form
+        submitBtn.disabled = false;
+        submitBtn.textContent = '🔐 Sign In';
+        usernameInput.disabled = false;
+      }
+      
+    }, 'Sign-in', this.handleError);
+  }
+
+  /**
+   * Show sign-in error message
+   */
+  showSigninError(message) {
+    const errorDiv = document.getElementById('signinError');
+    if (errorDiv) {
+      errorDiv.textContent = message;
+      errorDiv.style.display = 'block';
+    }
+  }
+
+  /**
+   * Clear all error messages
+   */
+  clearAllErrors() {
+    const usernameError = document.getElementById('usernameError');
+    const signinError = document.getElementById('signinError');
+    
+    if (usernameError) {
+      usernameError.style.display = 'none';
+      usernameError.textContent = '';
+    }
+    
+    if (signinError) {
+      signinError.style.display = 'none';
+      signinError.textContent = '';
+    }
+  }
+
+  /**
    * Set up event listeners
    */
   setupEventListeners() {
+    // Mode toggle buttons
+    document.getElementById('registerModeBtn')?.addEventListener('click', () => {
+      this.switchToRegisterMode();
+    });
+
+    document.getElementById('signinModeBtn')?.addEventListener('click', () => {
+      this.switchToSigninMode();
+    });
+
+    // Username submission (register)
+    document.getElementById('submitUsernameBtn')?.addEventListener('click', () => {
+      this.submitUsername();
+    });
+
+    // Username input - handle Enter key (register)
+    document.getElementById('usernameInput')?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        this.submitUsername();
+      }
+    });
+
+    // Sign in submission
+    document.getElementById('submitSigninBtn')?.addEventListener('click', () => {
+      this.submitSignin();
+    });
+
+    // Sign in input - handle Enter key
+    document.getElementById('signinUsernameInput')?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        this.submitSignin();
+      }
+    });
+
     // Register browser and bind DPoP (merged function)
     document.getElementById('registerBrowserBtn')?.addEventListener('click', () => {
       this.registerBrowserAndBindDPoP();

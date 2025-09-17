@@ -21,6 +21,55 @@
                     <p>A comprehensive reference implementation demonstrating browser identity management using non-exportable WebCrypto keys and DPoP (Demonstration of Proof-of-Possession) tokens for advanced cryptographic security.</p>
         </div>
 
+        <div class="demo-section fade-in">
+            <h2>🔧 Session Creation</h2>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
+                Initialize your secure browser session and bind cryptographic keys:
+            </p>
+            
+            <div class="session-creation-form">
+                <button id="registerBrowserBtn" class="btn btn-primary">
+                    🔐 Register Browser & Bind DPoP
+                </button>
+            </div>
+        </div>
+
+        <div class="demo-section fade-in">
+            <h2>👤 User Binding</h2>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
+                Get started with your secure session:
+            </p>
+            
+            <!-- Mode Toggle -->
+            <div class="onboarding-toggle">
+                <button id="registerModeBtn" class="toggle-btn active">📝 Register</button>
+                <button id="signinModeBtn" class="toggle-btn">🔐 Sign In</button>
+            </div>
+            
+            <!-- Register Form -->
+            <div id="registerForm" class="onboarding-form">
+                <div class="form-group">
+                    <label for="usernameInput" class="form-label">Username</label>
+                    <input type="text" id="usernameInput" class="form-control" placeholder="Choose a username" maxlength="50">
+                    <div id="usernameError" class="form-error" style="display: none;"></div>
+                </div>
+                <button id="submitUsernameBtn" class="btn btn-primary">
+                    📝 Register Username
+                </button>
+            </div>
+            
+            <!-- Sign In Form -->
+            <div id="signinForm" class="onboarding-form" style="display: none;">
+                <div class="form-group">
+                    <label for="signinUsernameInput" class="form-label">Username</label>
+                    <input type="text" id="signinUsernameInput" class="form-control" placeholder="Enter your username" maxlength="50">
+                    <div id="signinError" class="form-error" style="display: none;"></div>
+                </div>
+                <button id="submitSigninBtn" class="btn btn-primary">
+                    🔐 Sign In
+                </button>
+            </div>
+        </div>
 
         <div class="demo-section fade-in">
             <h2>🎮 Interactive Demo</h2>
@@ -31,34 +80,27 @@
             <div class="demo-sequence">
                 <div class="sequence-step">
                     <div class="step-number">1</div>
-                    <button id="registerBrowserBtn" class="btn btn-primary">
-                        🔐 Register Browser & Bind DPoP
-                    </button>
-                    <button class="info-btn" data-tooltip="Initializes session, generates browser identity key pair, and binds DPoP token. This establishes secure cryptographic communication with the server.">💬</button>
-                </div>
-                <div class="sequence-step">
-                    <div class="step-number">2</div>
                     <button id="apiBtn" class="btn btn-primary" disabled>
                         🌐 Test API Access
                     </button>
                     <button class="info-btn" data-tooltip="Tests the DPoP-protected API endpoint. Each request is cryptographically signed with the browser's private key, proving possession of the registered identity.">💬</button>
                 </div>
                 <div class="sequence-step">
-                    <div class="step-number">3</div>
+                    <div class="step-number">2</div>
                     <button id="regBtn" class="btn btn-secondary" disabled>
                         📝 Register Passkey
                     </button>
                     <button class="info-btn" data-tooltip="Creates a WebAuthn passkey for this domain using the device's biometric authenticator or security key. This enables passwordless authentication.">💬</button>
                 </div>
                 <div class="sequence-step">
-                    <div class="step-number">4</div>
+                    <div class="step-number">3</div>
                     <button id="authBtn" class="btn btn-secondary" disabled>
                         🔐 Authenticate Passkey
                     </button>
                     <button class="info-btn" data-tooltip="Authenticates using the registered passkey. This demonstrates biometric or security key verification for step-up authentication.">💬</button>
                 </div>
                 <div class="sequence-step">
-                    <div class="step-number">5</div>
+                    <div class="step-number">4</div>
                     <button id="linkBtn" class="btn btn-accent" disabled>
                         📱 Start Device Linking (VDI/Step-up)
                     </button>

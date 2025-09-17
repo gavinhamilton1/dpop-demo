@@ -112,9 +112,9 @@ def load_settings(path: Optional[str] = None) -> Settings:
     Priority:
       1) explicit `path` arg (absolute or relative)
       2) env STRONGHOLD_CONFIG (absolute or relative; robustly resolved)
-      3) search order inside server/: stronghold.yaml|yml|stronghold.dev.yaml
+      3) search order in project root: stronghold.yaml|yml|stronghold.dev.yaml
     """
-    base_dir = Path(__file__).resolve().parent
+    base_dir = Path(__file__).resolve().parent.parent  # Go up to project root
     cfg_file_used: Optional[Path] = None
 
     if path:

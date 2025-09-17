@@ -367,6 +367,116 @@ async def session_init(req: Request):
         log.error("session_init - session NOT found in DB sid=%s", sid)
     return JSONResponse({"csrf": csrf, "reg_nonce": reg_nonce, "state": "pending-bind"})
 
+@app.post("/onboarding/username")
+async def submit_username(req: Request):
+    """Submit username during user binding - validates uniqueness and stores in session"""
+    body = await req.json()
+    username = body.get("username", "").strip()
+    
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+    
+    if len(username) > 50:
+        raise HTTPException(status_code=400, detail="Username must be less than 50 characters")
+    
+    # Check for valid characters (alphanumeric, underscore, hyphen)
+    if not username.replace("_", "").replace("-", "").isalnum():
+        raise HTTPException(status_code=400, detail="Username can only contain letters, numbers, underscores, and hyphens")
+    
+    # Check if username already exists in users table
+    existing_user = await DB.get_user_by_username(username)
+    if existing_user:
+        raise HTTPException(status_code=409, detail="Username already taken")
+    
+    # Get or create session
+    sid = req.session.get("sid")
+    if not sid:
+        # Create new session if none exists
+        sid = secrets.token_urlsafe(18)
+        csrf = secrets.token_urlsafe(18)
+        reg_nonce = _new_nonce()
+        req.session.update({"sid": sid})
+        await DB.set_session(sid, {
+            "state": "user-binding", 
+            "csrf": csrf, 
+            "reg_nonce": reg_nonce
+        })
+    else:
+        # Verify existing session
+        session_data = await DB.get_session(sid)
+        if not session_data:
+            raise HTTPException(status_code=401, detail="Invalid session")
+    
+    # Create user record in users table
+    user_created = await DB.create_user(username, sid)
+    if not user_created:
+        raise HTTPException(status_code=500, detail="Failed to create user record")
+    
+    log.info("Username submitted - sid=%s username=%s rid=%s", sid, username, req.state.request_id)
+    return JSONResponse({"username": username, "status": "success"})
+
+@app.post("/onboarding/signin")
+async def signin_user(req: Request):
+    """Sign in with existing username"""
+    body = await req.json()
+    username = body.get("username", "").strip()
+    
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    
+    # Check if username exists
+    existing_user = await DB.get_user_by_username(username)
+    if not existing_user:
+        raise HTTPException(status_code=404, detail="Username not found")
+    
+    # Get or create session
+    sid = req.session.get("sid")
+    if not sid:
+        # Create new session if none exists
+        sid = secrets.token_urlsafe(18)
+        csrf = secrets.token_urlsafe(18)
+        reg_nonce = _new_nonce()
+        req.session.update({"sid": sid})
+        await DB.set_session(sid, {
+            "state": "user-binding", 
+            "csrf": csrf, 
+            "reg_nonce": reg_nonce
+        })
+    else:
+        # Verify existing session
+        session_data = await DB.get_session(sid)
+        if not session_data:
+            raise HTTPException(status_code=401, detail="Invalid session")
+    
+    # Update user's session_id to link to current session
+    await DB.exec(
+        "UPDATE users SET session_id = ? WHERE username = ?",
+        (sid, username)
+    )
+    
+    log.info("User signed in - sid=%s username=%s rid=%s", sid, username, req.state.request_id)
+    return JSONResponse({"username": username, "status": "success"})
+
+@app.get("/onboarding/current-user")
+async def get_current_user(req: Request):
+    """Get current user's username from session"""
+    sid = req.session.get("sid")
+    if not sid:
+        raise HTTPException(status_code=401, detail="No session")
+    
+    user = await DB.get_user_by_session(sid)
+    if not user:
+        raise HTTPException(status_code=404, detail="No user found for this session")
+    
+    return JSONResponse({
+        "username": user["username"],
+        "user_id": user["id"],
+        "created_at": user["created_at"]
+    })
+
 @app.post("/browser/register")
 async def browser_register(req: Request):
     sid = req.session.get("sid")
@@ -766,6 +876,35 @@ async def debug_sessions():
     except Exception as e:
         log.exception("Failed to get debug sessions")
         raise HTTPException(500, f"Failed to get debug sessions: {e}")
+
+@app.get("/debug/usernames")
+async def debug_usernames():
+    """Debug endpoint to list all usernames from users table"""
+    try:
+        # Get all users from users table
+        rows = await DB.fetchall("SELECT id, username, session_id, created_at FROM users ORDER BY created_at DESC")
+        
+        usernames = []
+        for row in rows:
+            # Get session data for additional context
+            session_data = await DB.get_session(row["session_id"])
+            state = session_data.get("state", "Unknown") if session_data else "Session not found"
+            
+            usernames.append({
+                "id": row["id"],
+                "username": row["username"],
+                "session_id": row["session_id"],
+                "state": state,
+                "created_at": row["created_at"]
+            })
+        
+        return JSONResponse({
+            "total_usernames": len(usernames),
+            "usernames": usernames
+        })
+    except Exception as e:
+        log.exception("Failed to get debug usernames")
+        raise HTTPException(500, f"Failed to get debug usernames: {e}")
 
 @app.get("/session/fingerprint")
 async def get_fingerprint(req: Request):
