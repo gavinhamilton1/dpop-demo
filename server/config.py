@@ -51,7 +51,7 @@ _DEFAULTS: Dict[str, Any] = {
         "ec_private_key_pem": None,
         "ec_private_key_pem_file": None,
     },
-    "db": {"path": "/data/stronghold.db"},
+    "db": {"path": "/tmp/stronghold.db"},
     "session": {
         "cookie_name": "stronghold_session",
         "same_site": "lax",
