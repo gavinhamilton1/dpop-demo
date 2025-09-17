@@ -47,7 +47,7 @@ export class AppController {
       
             // Initialize button manager
       this.buttonManager.initialize([
-        'initBtn', 'bikBtn', 'dpopBtn', 'apiBtn',
+        'registerBrowserBtn', 'initBtn', 'bikBtn', 'dpopBtn', 'apiBtn',
         'regBtn', 'authBtn', 'linkBtn', 'flushBtn', 'clientFlushBtn',
         'swRegBtn', 'swUnregBtn', 'echoSWBtn', 'testSWBtn'
       ]);
@@ -150,10 +150,11 @@ export class AppController {
           // Update passkey authentication state
           this.passkeys.setAuthenticated(true);
           
-          // Set success states for completed steps
-          this.buttonManager.setSuccess('initBtn', 'Session restored!');
-          this.buttonManager.setSuccess('bikBtn', 'BIK restored!');
-          this.buttonManager.setSuccess('dpopBtn', 'DPoP restored!');
+          // Set success states for completed steps (no auto-reset for restored sessions)
+          this.buttonManager.setSuccess('registerBrowserBtn', 'Browser registered & DPoP bound!', 0);
+          this.buttonManager.setSuccess('initBtn', 'Session restored!', 0);
+          this.buttonManager.setSuccess('bikBtn', 'BIK restored!', 0);
+          this.buttonManager.setSuccess('dpopBtn', 'DPoP restored!', 0);
           
           this.logger.success('Session resume completed - ready for secure operations');
           
@@ -161,14 +162,16 @@ export class AppController {
           this.logger.info('BIK registered but DPoP not bound');
           this.state.hasBIK = true;
           
-          // Set success state for session and BIK
-          this.buttonManager.setSuccess('initBtn', 'Session restored!');
-          this.buttonManager.setSuccess('bikBtn', 'BIK restored!');
+          // Set success state for session and BIK (no auto-reset for restored sessions)
+          this.buttonManager.setSuccess('registerBrowserBtn', 'Browser registered (DPoP pending)', 0);
+          this.buttonManager.setSuccess('initBtn', 'Session restored!', 0);
+          this.buttonManager.setSuccess('bikBtn', 'BIK restored!', 0);
         } else {
           this.logger.info('Session exists but BIK not registered');
           
-          // Set success state for session only
-          this.buttonManager.setSuccess('initBtn', 'Session restored!');
+          // Set success state for session only (no auto-reset for restored sessions)
+          this.buttonManager.setSuccess('registerBrowserBtn', 'Session restored (registration pending)', 0);
+          this.buttonManager.setSuccess('initBtn', 'Session restored!', 0);
         }
         
       } else {
@@ -903,6 +906,14 @@ export class AppController {
    */
   updateState() {
     this.logger.debug('Updating application state:', this.state);
+    
+    // Register Browser & Bind DPoP button - enabled by default (first step)
+    if (!this.state.hasDPoP) {
+      this.buttonManager.enableIfNotSuccess('registerBrowserBtn');
+    } else {
+      // Keep enabled even after completion to allow re-running
+      this.buttonManager.enableIfNotSuccess('registerBrowserBtn');
+    }
     
     // Update button states based on dependencies, preserving success states
     if (this.state.hasSession) {

@@ -120,8 +120,30 @@ export class ButtonManager {
     
     btn.innerHTML = `✓ ${successText}`;
 
-    // Reset after delay
-    setTimeout(() => {
+    // Reset after delay (skip if resetDelay is 0)
+    if (resetDelay > 0) {
+      setTimeout(() => {
+        if (!isAccentButton) {
+          btn.classList.remove('success');
+        }
+        
+        let originalText;
+        
+        if (id === 'linkBtn') {
+          // For link button, always use the correct original text
+          originalText = '📱 Start Device Linking (VDI/Step-up)';
+        } else if (id === 'registerBrowserBtn') {
+          // For register browser button, always use the correct original text
+          originalText = '🔐 Register Browser & Bind DPoP';
+        } else {
+          originalText = this.originalTexts.get(id) || btn.getAttribute('data-original-text') || btn.innerHTML.replace(/^✓ [^!]*! /, '');
+        }
+        
+        btn.innerHTML = `${originalText} <span class="btn-status-icon success">✓</span>`;
+      }, resetDelay);
+    } else {
+      // For permanent success state (resetDelay = 0), set the final state immediately
+      // Remove success class to get normal button color
       if (!isAccentButton) {
         btn.classList.remove('success');
       }
@@ -129,14 +151,15 @@ export class ButtonManager {
       let originalText;
       
       if (id === 'linkBtn') {
-        // For link button, always use the correct original text
         originalText = '📱 Start Device Linking (VDI/Step-up)';
+      } else if (id === 'registerBrowserBtn') {
+        originalText = '🔐 Register Browser & Bind DPoP';
       } else {
         originalText = this.originalTexts.get(id) || btn.getAttribute('data-original-text') || btn.innerHTML.replace(/^✓ [^!]*! /, '');
       }
       
       btn.innerHTML = `${originalText} <span class="btn-status-icon success">✓</span>`;
-    }, resetDelay);
+    }
   }
 
   /**
