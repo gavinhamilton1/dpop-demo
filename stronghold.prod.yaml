@@ -10,7 +10,7 @@ session:
   secret_key: "${SESSION_SECRET}"  # Will be set by Render
 
 db:
-  path: "/app/data/stronghold.db"  # Use mounted volume
+  path: "app/data/stronghold.db"  # Use mounted volume
 
 passkeys:
   policy: "compat"
