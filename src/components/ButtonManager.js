@@ -39,11 +39,18 @@ export class ButtonManager {
   /**
    * Disable a button
    * @param {string} id - Button ID
+   * @param {string} reason - Optional reason text to display
    */
-  disable(id) {
+  disable(id, reason = null) {
     const btn = document.getElementById(id);
     if (btn) {
       btn.disabled = true;
+      
+      // Handle special cases for passkey buttons
+      if ((id === 'regBtn' || id === 'authBtn') && reason) {
+        btn.innerHTML = reason;
+        btn.title = reason;
+      }
     }
   }
 

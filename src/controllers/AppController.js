@@ -91,12 +91,12 @@ export class AppController {
         this.buttonManager.enable('regBtn');
         this.buttonManager.enable('authBtn');
       } else {
-        this.buttonManager.disable('regBtn');
-        this.buttonManager.disable('authBtn');
-        
         const reason = !this.state.passkeySupported ? 
-          'WebAuthn not supported' : 
-          'User-verifying platform authenticator not available';
+          '❌ Passkeys not supported by this browser' : 
+          '❌ Passkeys not supported by this browser';
+        
+        this.buttonManager.disable('regBtn', reason);
+        this.buttonManager.disable('authBtn', reason);
         
         this.logger.warn(`Passkey buttons disabled: ${reason}`);
       }
@@ -106,8 +106,10 @@ export class AppController {
       this.logger.warn('Passkey support check failed, continuing without passkeys', error);
       this.state.passkeySupported = false;
       this.state.passkeyEnabled = false;
-      this.buttonManager.disable('regBtn');
-      this.buttonManager.disable('authBtn');
+      
+      const reason = '❌ Passkeys not supported by this browser';
+      this.buttonManager.disable('regBtn', reason);
+      this.buttonManager.disable('authBtn', reason);
     }
   }
 
@@ -203,19 +205,9 @@ export class AppController {
    * Set up event listeners
    */
   setupEventListeners() {
-    // Session initialization
-    document.getElementById('initBtn')?.addEventListener('click', () => {
-      this.initializeSession();
-    });
-
-    // BIK registration
-    document.getElementById('bikBtn')?.addEventListener('click', () => {
-      this.registerBIK();
-    });
-
-    // DPoP binding
-    document.getElementById('dpopBtn')?.addEventListener('click', () => {
-      this.bindDPoP();
+    // Register browser and bind DPoP (merged function)
+    document.getElementById('registerBrowserBtn')?.addEventListener('click', () => {
+      this.registerBrowserAndBindDPoP();
     });
 
     // API testing
@@ -404,6 +396,55 @@ export class AppController {
       this.logger.success('DPoP bound successfully', dpop);
       
     }, 'DPoP binding', this.handleError);
+  }
+
+  /**
+   * Register browser and bind DPoP (merged function)
+   */
+  async registerBrowserAndBindDPoP() {
+    await this.errorHandler.handleAsync(async () => {
+      this.buttonManager.setLoading('registerBrowserBtn', 'Setting up browser...');
+      
+      // Step 1: Initialize session
+      this.logger.info('Step 1: Initializing session...');
+      const session = await this.stronghold.initSession();
+      this.state.hasSession = true;
+      this.logger.success('Session initialized successfully', session);
+      
+      // Collect device fingerprinting data after session is confirmed working
+      console.log('About to collect fingerprint...');
+      await this.collectFingerprint();
+      console.log('Fingerprint collection completed');
+      
+      // Step 2: Register BIK
+      this.logger.info('Step 2: Registering browser identity...');
+      const bik = await this.stronghold.registerBIK();
+      this.state.hasBIK = true;
+      this.logger.success('Browser identity registered successfully', bik);
+      
+      // Step 3: Bind DPoP
+      this.logger.info('Step 3: Binding DPoP token...');
+      this.logger.debug('Current state before binding:', {
+        hasSession: this.state.hasSession,
+        hasBIK: this.state.hasBIK,
+        hasDPoP: this.state.hasDPoP
+      });
+      
+      const dpop = await this.stronghold.bindDPoP();
+      this.state.hasDPoP = true;
+      
+      // Enable passkey service authentication after DPoP binding
+      this.passkeys.setAuthenticated(true);
+      
+      // Check for existing passkeys now that we're authenticated
+      await this.checkExistingPasskeys();
+      
+      this.updateState();
+      
+      this.buttonManager.setSuccess('registerBrowserBtn', 'Browser registered & DPoP bound!');
+      this.logger.success('Browser registration and DPoP binding completed successfully', { session, bik, dpop });
+      
+    }, 'Browser registration and DPoP binding', this.handleError);
   }
 
   /**
