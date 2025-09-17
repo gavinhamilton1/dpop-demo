@@ -1,9 +1,9 @@
 # server/stronghold.prod.yaml
 server:
-  external_origin: https://dpop.fun                # e.g. https://dpop.fun in prod; null in dev to infer from Host
+  external_origin: https://dpop-demo.onrender.com  # Update with your actual Render URL
   allowed_origins:                                 # List of allowed origins for multi-domain support
+    - https://dpop-demo.onrender.com
     - https://dpop.fun
-    - https://stronghold.onrender.com
   ec_private_key_pem_file: /etc/secrets/STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM 
   ec_private_key_pem: null             # optional: inline PEM (dev only)
 
@@ -13,8 +13,8 @@ db:
 session:
   cookie_name: stronghold_session
   same_site: lax
-  secret_key: null                     # dev-only default (auto-generated if null)
-  dev_allow_insecure_cookie: false      # false in prod
+  secret_key: ${SESSION_SECRET}        # Will be set by Render
+  dev_allow_insecure_cookie: false     # false in prod
 
 passkeys:
   policy: compat                       # compat | strict
@@ -22,8 +22,8 @@ passkeys:
   mds_roots_path: server/mds_roots.json
 
 security:
-  skew_sec: 120
-  nonce_ttl: 60
+  skew_sec: 300
+  nonce_ttl: 300
   jti_ttl: 60
   bind_ttl: 3600
 
