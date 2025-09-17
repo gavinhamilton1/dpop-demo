@@ -169,11 +169,17 @@ def load_settings(path: Optional[str] = None) -> Settings:
 
     # Normalize db path
     db_path = (cfg.get("db") or {}).get("path") or "/tmp/stronghold.db"
+    print(f"DEBUG: Original db_path: {db_path}")
     dbp = Path(db_path)
+    print(f"DEBUG: Path object: {dbp}")
+    print(f"DEBUG: Is absolute: {dbp.is_absolute()}")
+    print(f"DEBUG: base_dir: {base_dir}")
     if not dbp.is_absolute():
         # relative to server/ to ease local dev (e.g., data/stronghold.db)
         dbp = base_dir / dbp
+        print(f"DEBUG: Resolved relative path: {dbp}")
     db_path = str(dbp)
+    print(f"DEBUG: Final db_path: {db_path}")
 
     s = Settings(
         external_origin=(cfg.get("server") or {}).get("external_origin"),
