@@ -150,6 +150,8 @@ def load_settings(path: Optional[str] = None) -> Settings:
     if cfg_file_used:
         with open(cfg_file_used, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
+        print(f"DEBUG: Loaded config from: {str(cfg_file_used)}")
+        print(f"DEBUG: Config data: {data}")
         log.info("Loaded config from: %s", str(cfg_file_used))
 
     cfg = _merge(_DEFAULTS, data)
