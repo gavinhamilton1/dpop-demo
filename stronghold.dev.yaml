@@ -9,7 +9,7 @@ server:
   ec_private_key_pem: null             # optional: inline PEM (dev only)
 
 db:
-  path: /tmp/stronghold.db            # <-- safe temp path for dev
+  path: app/data/stronghold.db            # <-- safe temp path for dev
 
 session:
   cookie_name: stronghold_session
