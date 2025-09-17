@@ -1,0 +1,25 @@
+# Production configuration for Render deployment
+external_origin: "https://dpop-demo.onrender.com"  # Update with your actual Render URL
+allowed_origins:
+  - "https://dpop-demo.onrender.com"
+  - "https://dpop.fun"  # Your production domain
+
+session:
+  cookie_name: "stronghold_session"
+  samesite: "lax"
+  secret_key: "${SESSION_SECRET}"  # Will be set by Render
+
+db:
+  path: "/app/data/stronghold.db"  # Use mounted volume
+
+passkeys:
+  policy: "compat"
+  aaguid_allow_path: null
+  mds_roots_path: null
+
+security:
+  skew_sec: 300
+  nonce_ttl: 300
+
+logging:
+  level: "INFO"

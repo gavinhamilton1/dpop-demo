@@ -1,29 +1,21 @@
 services:
   - type: web
-    name: stronghold
+    name: dpop-demo
     env: python
-    buildCommand: pip install -r server/requirements.txt
-    startCommand: >
-      uvicorn server.main:app
-      --host 0.0.0.0 --port $PORT
-      --proxy-headers --forwarded-allow-ips="*"
-      --timeout-keep-alive 75 --workers 1
+    plan: standard  # Use your paid tier
+    buildCommand: docker build -t dpop-demo .
+    startCommand: docker run -p $PORT:10000 dpop-demo
     envVars:
-      - key: STRONGHOLD_CONFIG
-        value: /server/stronghold.prod.yaml      
-      - key: EXTERNAL_ORIGIN
-        value: https://dpop.fun
-      - key: STRONGHOLD_DB_PATH
-        value: /data/stronghold.db
-      - key: STRONGHOLD_LOG_LEVEL
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        value: sqlite:///data/stronghold.db
+      - key: LOG_LEVEL
         value: INFO
-      - key: SESSION_COOKIE_NAME
-        value: stronghold_session
-      - key: PASSKEYS_POLICY
-        value: compat
-      - key: STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM_FILE
-        value: /etc/secrets/STRONGHOLD_SERVER_EC_PRIVATE_KEY_PEM
+      - key: SESSION_SECRET
+        generateValue: true
+    healthCheckPath: /
     disk:
-      name: data
-      mountPath: /data
+      name: dpop-data
+      mountPath: /app/data
       sizeGB: 1

@@ -22,6 +22,7 @@ from server.geolocation import GeolocationService
 from server.passkeys import get_router as get_passkeys_router
 from server.linking import get_router as get_linking_router
 from server.utils import ec_p256_thumbprint, now, b64u
+from server.face_service import face_service
 
 # ---------------- Config ----------------
 SETTINGS = load_settings()
@@ -48,22 +49,61 @@ log.info("Hosts: main=%s short=%s", MAIN_HOST, SHORT_HOST)
 
 # ---------------- Security / request-id middleware ----------------
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    # Default site-wide CSP (tight)
+    CSP_DEFAULT = (
+        "default-src 'none'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "base-uri 'none'; "
+        "form-action 'self'"
+    )
+
+    # Face capture page CSP (local-only WASM, MediaRecorder, blobs, workers)
+    CSP_FACE_CAPTURE = (
+        "default-src 'none'; "
+        "script-src 'self' 'wasm-unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "media-src 'self' blob:; "
+        "worker-src 'self' blob:; "
+        "base-uri 'none'; "
+        "form-action 'self'"
+    )
+
     async def dispatch(self, request: Request, call_next):
-        csp = (
-            "default-src 'none'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-            "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; "
-            "connect-src 'self'; "
-            "base-uri 'none'; "
-            "form-action 'self'"
-        )
         resp = await call_next(request)
-        resp.headers["Content-Security-Policy"] = csp
-        resp.headers["Referrer-Policy"] = "no-referrer"
-        resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=(self)"
-        resp.headers["X-Content-Type-Options"] = "nosniff"
-        # HSTS hint (terminate TLS at proxy ideally)
+
+        path = request.url.path or "/"
+
+        # If a route already set CSP, do not overwrite
+        if "Content-Security-Policy" in resp.headers:
+            # still set the other security headers
+            resp.headers.setdefault("Referrer-Policy", "no-referrer")
+            resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+            resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+            
+            # Set permissions policy based on path
+            if path == "/onboarding" or path == "/face-verify" or path.startswith("/public/vendor/tasks-vision"):
+                resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(self), camera=(self)")
+            else:
+                resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=(self)")
+            return resp
+
+        # Path-based CSP: face capture pages (onboarding and verification)
+        if path == "/onboarding" or path == "/face-verify" or path.startswith("/public/vendor/tasks-vision"):
+            csp = self.CSP_FACE_CAPTURE
+            permissions_policy = "geolocation=(), microphone=(self), camera=(self)"
+        else:
+            csp = self.CSP_DEFAULT
+            permissions_policy = "geolocation=(), microphone=(), camera=(self)"
+
+        resp.headers.setdefault("Content-Security-Policy", csp)
+        resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        resp.headers.setdefault("Permissions-Policy", permissions_policy)
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
         return resp
 
@@ -246,7 +286,8 @@ BASE_DIR = os.path.dirname(__file__)
 # Static file mounting
 app.mount("/public", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public")), name="public")
 app.mount("/src", StaticFiles(directory=os.path.join(BASE_DIR, "..", "src")), name="src")
-app.mount("/css", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public/css")), name="css")
+app.mount("/vendor", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public", "vendor")), name="public")
+app.mount("/models", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public", "models")), name="public")
 
 def _new_nonce() -> str: return b64u(secrets.token_bytes(18))
 
@@ -282,6 +323,12 @@ async def index():
     with open(os.path.join(BASE_DIR, "..", "public", "index.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
+@app.get("/face-verify", response_class=HTMLResponse)
+async def face_verify():
+    # Serve the onboarding page with verify mode
+    with open(os.path.join(BASE_DIR, "..", "public", "onboarding.html"), "r", encoding="utf-8") as f:
+        return HTMLResponse(f.read())
+
 @app.get("/favicon.ico")
 async def favicon():
     return FileResponse("public/favicon.ico")
@@ -292,6 +339,13 @@ async def manifest():
 
 @app.get("/.well-known/stronghold-jwks.json")
 async def jwks(): return {"keys": [SERVER_PUBLIC_JWK]}
+
+
+# ---------------- Face Verification Endpoints ----------------
+@app.get("/onboarding", response_class=HTMLResponse)
+async def index():
+    with open(os.path.join(BASE_DIR, "..", "public", "onboarding.html"), "r", encoding="utf-8") as f:
+        return HTMLResponse(f.read())
 
 # ---------------- Session + Bind endpoints (existing) ----------------
 @app.post("/session/init")
@@ -1089,3 +1143,231 @@ async def verify_link_finalize(req: Request, resp: Response):
     except Exception as e:
         log.exception("link_finalize failed sid=%s rid=%s", sid, req.state.request_id)
         raise HTTPException(400, f"finalize failed: {e}")
+
+
+# Face processing endpoints
+@app.post("/face/register")
+async def register_face(req: Request):
+    """Register a face by uploading a video and extracting embeddings"""
+    try:
+        # Get session ID
+        sid = req.session.get("sid")
+        if not sid:
+            raise HTTPException(401, "No active session")
+        
+        # Get uploaded file
+        form = await req.form()
+        video_file = form.get("video")
+        if not video_file:
+            raise HTTPException(400, "No video file provided")
+        
+        # Save video temporarily
+        import tempfile
+        import os
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_file:
+            content = await video_file.read()
+            tmp_file.write(content)
+            tmp_path = tmp_file.name
+        
+        try:
+            # Process video and extract embeddings
+            log.info(f"Processing video file: {tmp_path}, size: {len(content)} bytes")
+            
+            embeddings = face_service.process_video_file(tmp_path)
+            log.info(f"Extracted {len(embeddings)} embeddings")
+            
+            if not embeddings:
+                raise HTTPException(400, "No faces detected in video")
+            
+            # Store embeddings in database
+            embedding_ids = []
+            for i, embedding in enumerate(embeddings):
+                embedding_bytes = embedding.tobytes()
+                metadata = {
+                    "embedding_index": i,
+                    "video_size": len(content),
+                    "embedding_shape": embedding.shape
+                }
+                embedding_id = await DB.store_face_embedding(
+                    user_id=sid,
+                    embedding=embedding_bytes,
+                    video_path=tmp_path,
+                    frame_count=len(embeddings),
+                    metadata=metadata
+                )
+                embedding_ids.append(embedding_id)
+            
+            log.info(f"Registered {len(embeddings)} face embeddings for user {sid}")
+            return JSONResponse({
+                "success": True,
+                "embeddings_count": len(embeddings),
+                "embedding_ids": embedding_ids
+            })
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+                
+    except HTTPException as he:
+        log.error(f"HTTP Exception in face registration: {he.detail}")
+        raise
+    except Exception as e:
+        log.exception("face registration failed")
+        log.error(f"Exception type: {type(e).__name__}")
+        log.error(f"Exception message: {str(e)}")
+        raise HTTPException(500, f"Face registration failed: {e}")
+
+
+@app.post("/face/verify")
+async def verify_face(req: Request):
+    """Verify a face against stored embeddings"""
+    try:
+        # Get session ID
+        sid = req.session.get("sid")
+        if not sid:
+            raise HTTPException(401, "No active session")
+        
+        # Get uploaded file
+        form = await req.form()
+        video_file = form.get("video")
+        if not video_file:
+            raise HTTPException(400, "No video file provided")
+        
+        # Save video temporarily
+        import tempfile
+        import os
+        import numpy as np
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_file:
+            content = await video_file.read()
+            tmp_file.write(content)
+            tmp_path = tmp_file.name
+        
+        try:
+            # Process video and extract embeddings
+            query_embeddings = face_service.process_video_file(tmp_path)
+            
+            if not query_embeddings:
+                raise HTTPException(400, "No faces detected in video")
+            
+            # Get all stored embeddings
+            stored_embeddings = await DB.get_all_face_embeddings()
+            
+            if not stored_embeddings:
+                return JSONResponse({
+                    "verified": False,
+                    "message": "No registered faces found"
+                })
+            
+            # Convert stored embeddings back to numpy arrays
+            stored_np_embeddings = []
+            for stored in stored_embeddings:
+                embedding_array = np.frombuffer(stored["embedding"], dtype=np.float32)
+                stored_np_embeddings.append(embedding_array)
+            
+            # Find best match
+            best_match = None
+            best_similarity = 0.0
+            threshold = 0.6  # Adjust this threshold as needed
+            
+            for query_embedding in query_embeddings:
+                match_idx, similarity = face_service.find_best_match(
+                    query_embedding, stored_np_embeddings, threshold
+                )
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = stored_embeddings[match_idx] if match_idx is not None else None
+            
+            verified = best_match is not None and best_similarity >= threshold
+            
+            log.info(f"Face verification for user {sid}: verified={verified}, similarity={best_similarity:.3f}")
+            
+            return JSONResponse({
+                "verified": verified,
+                "similarity": best_similarity,
+                "threshold": threshold,
+                "matched_user": best_match["user_id"] if best_match else None,
+                "message": "Face verified successfully" if verified else "Face verification failed"
+            })
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("face verification failed")
+        raise HTTPException(500, f"Face verification failed: {e}")
+
+
+@app.get("/face/health")
+async def face_health_check():
+    """Health check for face processing service"""
+    try:
+        # Try to initialize the face service
+        face_service._ensure_initialized()
+        return JSONResponse({
+            "status": "healthy",
+            "initialized": face_service._initialized,
+            "message": "Face processing service is ready"
+        })
+    except Exception as e:
+        return JSONResponse({
+            "status": "unhealthy",
+            "initialized": face_service._initialized,
+            "error": str(e),
+            "message": "Face processing service is not ready"
+        }, status_code=503)
+
+@app.get("/face/status")
+async def get_face_status(req: Request):
+    """Get face registration status for current user"""
+    try:
+        sid = req.session.get("sid")
+        if not sid:
+            raise HTTPException(401, "No active session")
+        
+        embeddings = await DB.get_face_embeddings_for_user(sid)
+        
+        return JSONResponse({
+            "registered": len(embeddings) > 0,
+            "embeddings_count": len(embeddings),
+            "embeddings": [
+                {
+                    "id": emb["id"],
+                    "created_at": emb["created_at"],
+                    "frame_count": emb["frame_count"],
+                    "metadata": emb["metadata"]
+                }
+                for emb in embeddings
+            ]
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("face status check failed")
+        raise HTTPException(500, f"Face status check failed: {e}")
+
+
+@app.delete("/face/delete")
+async def delete_face_data(req: Request):
+    """Delete all face data for current user"""
+    try:
+        sid = req.session.get("sid")
+        if not sid:
+            raise HTTPException(401, "No active session")
+        
+        await DB.delete_face_embeddings_for_user(sid)
+        
+        log.info(f"Deleted all face data for user {sid}")
+        return JSONResponse({"success": True, "message": "Face data deleted successfully"})
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("face deletion failed")
+        raise HTTPException(500, f"Face deletion failed: {e}")

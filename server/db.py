@@ -72,6 +72,16 @@ class Database:
           created_at INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS face_embeddings (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT NOT NULL,        -- User identifier (could be session_id or username)
+          embedding BLOB NOT NULL,     -- Face embedding as binary data
+          video_path TEXT,              -- Path to original video file
+          frame_count INTEGER,          -- Number of frames processed
+          created_at INTEGER NOT NULL,
+          metadata TEXT                 -- JSON metadata (bbox, confidence, etc.)
+        );
+
         -- Optional index for frequent lookups
         CREATE INDEX IF NOT EXISTS idx_passkeys_principal ON passkeys(principal);
 
@@ -257,7 +267,65 @@ class Database:
 
     async def pk_remove(self, principal: str, cred_id: str) -> bool:
         await self.exec("DELETE FROM passkeys WHERE principal=? AND cred_id=?", (principal, cred_id))
-        # We can’t easily tell rows affected with aiosqlite here without extra work; return True for simplicity
+        # We can't easily tell rows affected with aiosqlite here without extra work; return True for simplicity
+        return True
+
+    # Face embeddings methods
+    async def store_face_embedding(self, user_id: str, embedding: bytes, video_path: str = None, 
+                                   frame_count: int = 0, metadata: Dict[str, Any] = None) -> int:
+        """Store a face embedding in the database"""
+        import time
+        await self.exec(
+            """INSERT INTO face_embeddings(user_id, embedding, video_path, frame_count, created_at, metadata)
+               VALUES(?,?,?,?,?,?)""",
+            (
+                user_id,
+                embedding,
+                video_path,
+                frame_count,
+                int(time.time()),
+                json.dumps(metadata or {}, separators=(",", ":"))
+            )
+        )
+        # Get the inserted ID
+        row = await self.fetchone("SELECT last_insert_rowid() as id")
+        return row["id"]
+
+    async def get_face_embeddings_for_user(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all face embeddings for a user"""
+        rows = await self.fetchall("SELECT * FROM face_embeddings WHERE user_id=?", (user_id,))
+        embeddings = []
+        for r in rows:
+            embeddings.append({
+                "id": r["id"],
+                "user_id": r["user_id"],
+                "embedding": r["embedding"],  # Keep as bytes for numpy conversion
+                "video_path": r["video_path"],
+                "frame_count": r["frame_count"],
+                "created_at": r["created_at"],
+                "metadata": json.loads(r["metadata"]) if r["metadata"] else {}
+            })
+        return embeddings
+
+    async def get_all_face_embeddings(self) -> List[Dict[str, Any]]:
+        """Get all face embeddings (for verification against all users)"""
+        rows = await self.fetchall("SELECT * FROM face_embeddings ORDER BY created_at DESC")
+        embeddings = []
+        for r in rows:
+            embeddings.append({
+                "id": r["id"],
+                "user_id": r["user_id"],
+                "embedding": r["embedding"],  # Keep as bytes for numpy conversion
+                "video_path": r["video_path"],
+                "frame_count": r["frame_count"],
+                "created_at": r["created_at"],
+                "metadata": json.loads(r["metadata"]) if r["metadata"] else {}
+            })
+        return embeddings
+
+    async def delete_face_embeddings_for_user(self, user_id: str) -> bool:
+        """Delete all face embeddings for a user"""
+        await self.exec("DELETE FROM face_embeddings WHERE user_id=?", (user_id,))
         return True
 
 

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title id="pageTitle">Face Onboarding (Local)</title>
+  <style>
+    :root { --bg:#0b1020; --fg:#e9eef7; --muted:#8ea2c2; --accent:#49f6c8; --ok:#38d39f; --danger:#ff6b6b; }
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;
+           background:radial-gradient(1200px 700px at 20% -10%, #131a33 0, #0b1020 50%, #070a16 100%);
+           color:var(--fg); min-height:100vh; display:grid; place-items:center; padding:24px; }
+    .card { width:min(980px,100%); background:#0d1326; border:1px solid #1b2140; border-radius:16px; box-shadow:0 10px 40px rgba(0,0,0,.4); padding:16px 16px 20px; }
+    .row { display:grid; grid-template-columns:1.1fr .9fr; gap:16px; }
+    .col { background:#0a1022; border:1px solid #1a2144; border-radius:12px; padding:12px; position:relative; }
+    .controls { display:flex; gap:12px; align-items:center; margin-bottom:12px; }
+    button { background:#111a37; color:var(--fg); border:1px solid #23305b; border-radius:10px; padding:10px 14px; font-weight:600; cursor:pointer; }
+    button.primary{ background:#16224a; border-color:#2b3c77; } button:disabled{ opacity:.6; cursor:not-allowed; }
+    .status{ font-size:14px; color:var(--muted); }
+    .prompt{ font-size:18px; font-weight:700; letter-spacing:.2px; margin:8px 0 4px; }
+    .chips{ display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 10px; }
+    .chip{ font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #24305e; color:#a9b7d6; }
+    .chip.done{ border-color:#2b6f5a; color:#b6f3dc; } .chip.fail{ border-color:#743240; color:#ffc4d0; }
+    .preview-wrap{ position:relative; aspect-ratio:3/4; background:#03060f; border-radius:10px; overflow:hidden; }
+    video,canvas{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+    video{ transform:scaleX(-1); } /* Flip video horizontally for selfie mode */
+    canvas{ transform:scaleX(-1); } /* Flip canvas to match flipped video */
+    .overlay{ position:absolute; inset:0; pointer-events:none; box-shadow:inset 0 0 0 2px rgba(255,255,255,.06); }
+    .prompt-banner{ position:absolute; left:50%; transform:translateX(-50%); bottom:10px; background:rgba(14,20,45,.75);
+                    border:1px solid #273368; padding:8px 12px; border-radius:8px; font-weight:600; backdrop-filter:blur(8px); }
+    .ok{ color:var(--ok);} .warn{ color:#ffd166;} .danger-txt{ color:var(--danger);}
+    .result{ display:none; margin-top:8px; padding:10px; border-radius:10px; border:1px solid #24305e; background:#0f1633; }
+    .result.show{ display:block;} .result .actions{ margin-top:10px; display:flex; gap:10px;}
+    .pill{ display:inline-block; padding:4px 8px; border-radius:999px; background:#122052; border:1px solid #25356a; font-size:12px; color:#9fb3d3; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="controls">
+      <button id="btnStart" class="primary">Start onboarding</button>
+      <button id="btnRedo" disabled>Redo</button>
+      <button id="btnSend" disabled>Register Face</button>
+      <span class="status" id="status">Idle</span>
+    </div>
+
+    <div class="row">
+      <div class="col">
+        <div class="preview-wrap">
+          <video id="video" playsinline muted></video>
+          <canvas id="canvas"></canvas>
+          <div class="overlay"></div>
+          <div id="banner" class="prompt-banner">Press "Start onboarding" to register your face</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="prompt" id="prompt">Ready.</div>
+        <div class="chips">
+          <div class="chip" id="chipFace">Face detected</div>
+          <div class="chip" id="chipLeft">Turn LEFT</div>
+          <div class="chip" id="chipRight">Turn RIGHT</div>
+          <div class="chip" id="chipRecording">Recording</div>
+        </div>
+        <div class="result" id="resultBox">
+          <div><strong>Capture complete.</strong> Review and register?</div>
+          <div class="actions">
+            <button id="btnRedo2">Redo capture</button>
+            <button id="btnSend2" class="primary">Register Face</button>
+          </div>
+          <div style="margin-top:6px;">
+            <span class="pill" id="pillDuration">-- s</span>
+            <span class="pill" id="pillSize">-- KB</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/public/js/face-capture.js"></script>
+</body>
+</html>
