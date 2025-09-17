@@ -168,7 +168,7 @@ def load_settings(path: Optional[str] = None) -> Settings:
             pem = p.read_text(encoding="utf-8")
 
     # Normalize db path
-    db_path = (cfg.get("db") or {}).get("path") or "/data/stronghold.db"
+    db_path = (cfg.get("db") or {}).get("path") or "/tmp/stronghold.db"
     dbp = Path(db_path)
     if not dbp.is_absolute():
         # relative to server/ to ease local dev (e.g., data/stronghold.db)
