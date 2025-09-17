@@ -9,7 +9,9 @@ from server.config import load_settings
 
 # Load config once at import
 _SETTINGS = load_settings()
-_DEFAULT_DB_PATH = Path(_SETTINGS.db_path)
+# Force use /tmp for Render compatibility
+_DEFAULT_DB_PATH = Path("/tmp/stronghold.db")
+print(f"DEBUG: Forced database path to: {_DEFAULT_DB_PATH}")
 
 class Database:
     def __init__(self, path: Optional[str] = None):
