@@ -3,13 +3,13 @@ services:
     name: dpop-demo
     env: python
     plan: standard  # Use your paid tier
-    buildCommand: docker build -t dpop-demo .
-    startCommand: docker run -p $PORT:10000 dpop-demo
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
       - key: DATABASE_URL
-        value: sqlite:///app/data/stronghold.db
+        value: sqlite:///tmp/stronghold.db
       - key: LOG_LEVEL
         value: INFO
       - key: SESSION_SECRET
@@ -17,7 +17,3 @@ services:
       - key: STRONGHOLD_CONFIG_FILE
         value: /opt/render/project/src/server/stronghold.prod.yaml
     healthCheckPath: /
-    disk:
-      name: dpop-data
-      mountPath: /app/data
-      sizeGB: 1
