@@ -1,6 +1,6 @@
 # Production configuration for Render deployment
-external_origin: "https://dpop-demo.onrender.com"  # Update with your actual Render URL
-allowed_origins:
+server:
+  external_origin: "https://dpop.fun"  # Update with your actual Render URL
   allowed_origins:                                 # List of allowed origins for multi-domain support
     - https://dpop.fun
 
