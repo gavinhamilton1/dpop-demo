@@ -156,11 +156,16 @@ def load_settings(path: Optional[str] = None) -> Settings:
 
     cfg = _merge(_DEFAULTS, data)
 
-    # Resolve private key material: prefer inline, else file
+    # Resolve private key material: prefer environment variable, then inline, then file
+    pem_env = os.getenv("DPOP_FUN_SERVER_EC_PRIVATE_KEY_PEM")
     pem_inline = (cfg.get("server") or {}).get("ec_private_key_pem")
     pem_file   = (cfg.get("server") or {}).get("ec_private_key_pem_file")
     pem: Optional[str] = None
-    if pem_inline:
+    
+    if pem_env:
+        pem = pem_env
+        log.info("Loaded ES256 private key from environment variable DPOP_FUN_SERVER_EC_PRIVATE_KEY_PEM")
+    elif pem_inline:
         pem = pem_inline
     elif pem_file:
         p = Path(pem_file)

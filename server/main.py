@@ -340,11 +340,15 @@ def issue_binding_token(*, sid: str, bik_jkt: str, dpop_jkt: str, aud: str, ttl:
     return tok
 
 def verify_binding_token(token: str) -> Dict[str, Any]:
-    payload = jose_jws.verify(token, SERVER_PUBLIC_JWK, algorithms=["ES256"])
-    data = payload if isinstance(payload, dict) else json.loads(payload)
-    if data.get("exp", 0) < now():
-        raise HTTPException(status_code=401, detail="bind token expired")
-    return data
+    try:
+        payload = jose_jws.verify(token, SERVER_PUBLIC_JWK, algorithms=["ES256"])
+        data = payload if isinstance(payload, dict) else json.loads(payload)
+        if data.get("exp", 0) < now():
+            raise HTTPException(status_code=401, detail="bind token expired")
+        return data
+    except Exception as e:
+        log.warning(f"Binding token verification failed: {e}")
+        raise HTTPException(status_code=401, detail="bind token invalid - please refresh session")
 
 # ---- DB startup ----
 @app.on_event("startup")

@@ -323,6 +323,28 @@ export async function dpopFunFetch(url, { method = 'GET', body = null } = {}) {
 
     if (!res.ok) {
       const t = await res.text().catch(() => String(res.status));
+      
+      // Handle binding token failures specifically
+      if (res.status === 401 && t.includes('bind token invalid')) {
+        coreLogger.warn('Binding token invalid, clearing stored token and retrying');
+        // Clear the stored binding token
+        await set(CONFIG.STORAGE.KEYS.BIND, null);
+        // Try to get a fresh binding token
+        const freshBind = await ensureBinding();
+        if (freshBind) {
+          // Retry the request with fresh binding token
+          headers = { ...headers, 'DPoP-Bind': freshBind };
+          const retryRes = await fetch(fullUrl, { ...init, headers });
+          if (retryRes.ok) {
+            const n2 = retryRes.headers.get('DPoP-Nonce');
+            if (n2) await set(CONFIG.STORAGE.KEYS.DPOP_NONCE, n2);
+            const result = await retryRes.json();
+            coreLogger.debug('Request succeeded after binding token refresh');
+            return result;
+          }
+        }
+      }
+      
       throw new NetworkError(`request failed: ${res.status} ${t}`, res.status, { url: fullUrl });
     }
     
