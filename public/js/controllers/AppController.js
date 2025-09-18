@@ -123,24 +123,21 @@ export class AppController {
    */
   async checkExistingUsername() {
     try {
-      const response = await fetch('/onboarding/current-user', {
-        credentials: 'include'
-      });
+      // Use dpopFunFetch to include DPoP proof headers
+      const data = await this.dpopFun.secureRequest('/onboarding/current-user');
       
-      if (response.ok) {
-        const data = await response.json();
-        this.state.username = data.username;
-        this.logger.info('Existing username found:', data.username);
-        
-        // Show success message for existing username
-        this.showUsernameSuccess(data.username, 'signin');
-      } else {
-        this.logger.info('No existing username found for this session');
-      }
+      this.state.username = data.username;
+      this.logger.info('Existing username found:', data.username);
+      
+      // Show success message for existing username
+      this.showUsernameSuccess(data.username, 'signin');
+      return true;
     } catch (error) {
       this.logger.debug('Could not check for existing username:', error);
+      return false;
     }
   }
+
 
   /**
    * Update session status indicator

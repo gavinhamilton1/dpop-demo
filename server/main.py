@@ -1284,24 +1284,86 @@ async def clear_test_links():
         raise HTTPException(500, f"clear-test-links failed: {e}")
 
 @app.post("/_admin/flush")
-async def admin_flush():
-    # Clear database
-    await DB.flush()
+async def admin_flush(req: Request):
+    # Get current session ID
+    sid = req.session.get("sid")
+    log.info(f"admin_flush: request session sid={sid}")
     
-    # Clear in-memory link storage
+    if not sid:
+        raise HTTPException(401, "No active session to flush")
+    
+    # Get session data to identify user
+    session_data = await DB.get_session(sid)
+    log.info(f"admin_flush: session_data found={bool(session_data)}, keys={list(session_data.keys()) if session_data else 'None'}")
+    
+    if not session_data:
+        raise HTTPException(404, "Session not found")
+    
+    username = None
+    bik_jkt = session_data.get("bik_jkt")
+    
+    # Try to get username from session or users table
+    try:
+        user_row = await DB.fetchone("SELECT username FROM users WHERE session_id = ?", (sid,))
+        log.info(f"admin_flush: user_row query result={user_row}")
+        if user_row:
+            username = user_row["username"]
+    except Exception as e:
+        log.error(f"admin_flush: error getting username: {e}")
+    
+    log.info(f"admin_flush: clearing data for sid={sid}, username={username}, bik_jkt={bik_jkt[:8] if bik_jkt else 'None'}")
+    
+    # Clear user record FIRST (before session) to respect foreign key constraints
+    if username:
+        log.info(f"admin_flush: deleting user record for username={username}")
+        result = await DB.exec("DELETE FROM users WHERE username = ?", (username,))
+        log.info(f"admin_flush: user deletion result={result}")
+        
+        # Clear face embeddings for this user
+        log.info(f"admin_flush: deleting face embeddings for username={username}")
+        face_result = await DB.delete_face_embeddings_for_user(username)
+        log.info(f"admin_flush: face embeddings deletion result={face_result}")
+        
+        log.info(f"admin_flush: cleared user data for username={username}")
+    else:
+        log.warning(f"admin_flush: no username found for sid={sid}, skipping user deletion")
+    
+    # Clear nonces and JTIs for this session
+    await DB.exec("DELETE FROM nonces WHERE sid = ?", (sid,))
+    await DB.exec("DELETE FROM jtis WHERE sid = ?", (sid,))
+    
+    # Clear current session data LAST (after user record is deleted)
+    await DB.delete_session(sid)
+    
+    # Clear passkeys for this BIK if exists
+    if bik_jkt:
+        await DB.exec("DELETE FROM passkeys WHERE principal = ?", (bik_jkt,))
+        log.info(f"admin_flush: cleared passkeys for bik_jkt={bik_jkt[:8]}")
+    
+    # Clear links owned by this session
+    await DB.exec("DELETE FROM links WHERE owner_sid = ?", (sid,))
+    
+    # Clear in-memory link storage for this session
     from server.linking import _LINKS, _LINKS_LOCK, _WATCHERS
     with _LINKS_LOCK:
-        _LINKS.clear()
-        _WATCHERS.clear()
+        # Remove links owned by this session
+        links_to_remove = [link_id for link_id, link_data in _LINKS.items() if link_data.get("owner_sid") == sid]
+        for link_id in links_to_remove:
+            _LINKS.pop(link_id, None)
+            _WATCHERS.pop(link_id, None)
+        log.info(f"admin_flush: cleared {len(links_to_remove)} in-memory links")
     
-    # Clear test link storage
+    # Clear test link storage for this session
     global _test_link_storage
-    _test_link_storage.clear()
+    test_links_to_remove = [link_id for link_id, link_data in _test_link_storage.items() if link_data.get("owner_sid") == sid]
+    for link_id in test_links_to_remove:
+        _test_link_storage.pop(link_id, None)
+    log.info(f"admin_flush: cleared {len(test_links_to_remove)} test links")
     
-    log.warning("admin_flush: cleared demo stores, links, watchers, and test data")
+    log.warning(f"admin_flush: cleared data for current user (sid={sid}, username={username})")
     
     # Return response that tells client to clear session cookie
-    response = JSONResponse({"ok": True, "message": "Server data cleared. Please reload page for new session."})
+    response = JSONResponse({"ok": True, "message": f"User data cleared for {username or 'current session'}. Please reload page for new session."})
     
     # Clear the session cookie on the server side
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
