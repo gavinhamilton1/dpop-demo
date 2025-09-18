@@ -5,12 +5,12 @@ server:
     - https://dpop.fun
 
 session:
-  cookie_name: "stronghold_session"
+  cookie_name: "dpop-fun_session"
   samesite: "lax"
   secret_key: "${SESSION_SECRET}"  # Will be set by Render
 
 db:
-  path: "app/data/stronghold.db"  # Use mounted volume
+  path: "app/data/dpop-fun.db"  # Use mounted volume
 
 passkeys:
   policy: "compat"

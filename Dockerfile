@@ -40,7 +40,7 @@ EXPOSE 10000
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PORT=10000
-ENV STRONGHOLD_CONFIG_FILE=/app/stronghold.prod.yaml
+ENV DPOP_FUN_CONFIG_FILE=/app/dpop-fun.prod.yaml
 
 # Start command
 CMD ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "10000"]

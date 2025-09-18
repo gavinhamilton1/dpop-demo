@@ -6,9 +6,10 @@ import numpy as np
 import insightface
 from insightface.app import FaceAnalysis
 import logging
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 import tempfile
 import os
+from .pad_service import PADService
 
 log = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ class FaceService:
         self.app = None
         self._initialized = False
         self._initialization_error = None
+        self.pad_service = PADService()
     
     def _initialize_model(self):
         """Initialize the InsightFace model"""
@@ -165,7 +167,7 @@ class FaceService:
                 faces = self.app.get(frame)
                 log.info(f"Found {len(faces)} faces in frame {i}")
                 
-                if faces:
+                if len(faces) > 0:
                     # Use the largest face (most likely to be the main subject)
                     largest_face = max(faces, key=lambda f: f.bbox[2] * f.bbox[3])
                     embedding = largest_face.embedding
@@ -177,7 +179,7 @@ class FaceService:
                     try:
                         log.info(f"Trying smaller detection size for frame {i}")
                         faces_small = self.app.get(frame, det_size=(320, 320))
-                        if faces_small:
+                        if len(faces_small) > 0:
                             largest_face = max(faces_small, key=lambda f: f.bbox[2] * f.bbox[3])
                             embedding = largest_face.embedding
                             embeddings.append(embedding)
@@ -197,6 +199,100 @@ class FaceService:
         log.info(f"Extracted {len(embeddings)} face embeddings")
         return embeddings
     
+    async def extract_face_embeddings_with_pad(self, frames: List[np.ndarray]) -> Dict[str, Any]:
+        """Extract face embeddings with PAD analysis"""
+        log.info("Ensuring face service is initialized...")
+        self._ensure_initialized()
+        log.info("Face service initialized successfully")
+        
+        embeddings = []
+        face_frames = []  # Store frames with detected faces for PAD analysis
+        landmarks_sequence = []  # Store landmarks for pose analysis
+        
+        for i, frame in enumerate(frames):
+            try:
+                log.info(f"Processing frame {i}, shape: {frame.shape}")
+                # Detect faces and extract embeddings
+                faces = self.app.get(frame)
+                log.info(f"Found {len(faces)} faces in frame {i}")
+                
+                if len(faces) > 0:
+                    # Use the largest face (most likely to be the main subject)
+                    largest_face = max(faces, key=lambda f: f.bbox[2] * f.bbox[3])
+                    embedding = largest_face.embedding
+                    embeddings.append(embedding)
+                    
+                    # Extract face region for PAD analysis
+                    bbox = largest_face.bbox.astype(int)
+                    x1, y1, x2, y2 = bbox
+                    log.info(f"Face bbox: x1={x1}, y1={y1}, x2={x2}, y2={y2}, frame shape: {frame.shape}")
+                    
+                    # Validate bbox bounds
+                    if x1 >= 0 and y1 >= 0 and x2 <= frame.shape[1] and y2 <= frame.shape[0] and x2 > x1 and y2 > y1:
+                        face_region = frame[y1:y2, x1:x2]
+                        log.info(f"Extracted face region shape: {face_region.shape}")
+                        face_frames.append(face_region)
+                    else:
+                        log.warning(f"Invalid bbox bounds, skipping face region extraction")
+                    
+                    # Extract landmarks for pose analysis
+                    if hasattr(largest_face, 'kps') and largest_face.kps is not None:
+                        landmarks_sequence.append(largest_face.kps)
+                    
+                    log.info(f"Extracted embedding from frame {i}, face bbox: {largest_face.bbox}")
+                else:
+                    log.warning(f"No faces detected in frame {i}")
+                    # Try with different detection size for this frame
+                    try:
+                        log.info(f"Trying smaller detection size for frame {i}")
+                        faces_small = self.app.get(frame, det_size=(320, 320))
+                        if len(faces_small) > 0:
+                            largest_face = max(faces_small, key=lambda f: f.bbox[2] * f.bbox[3])
+                            embedding = largest_face.embedding
+                            embeddings.append(embedding)
+                            
+                            # Extract face region for PAD analysis
+                            bbox = largest_face.bbox.astype(int)
+                            x1, y1, x2, y2 = bbox
+                            log.info(f"Face bbox (small): x1={x1}, y1={y1}, x2={x2}, y2={y2}, frame shape: {frame.shape}")
+                            
+                            # Validate bbox bounds
+                            if x1 >= 0 and y1 >= 0 and x2 <= frame.shape[1] and y2 <= frame.shape[0] and x2 > x1 and y2 > y1:
+                                face_region = frame[y1:y2, x1:x2]
+                                log.info(f"Extracted face region shape (small): {face_region.shape}")
+                                face_frames.append(face_region)
+                            else:
+                                log.warning(f"Invalid bbox bounds (small), skipping face region extraction")
+                            
+                            # Extract landmarks for pose analysis
+                            if hasattr(largest_face, 'kps') and largest_face.kps is not None:
+                                landmarks_sequence.append(largest_face.kps)
+                            
+                            log.info(f"Extracted embedding from frame {i} with smaller detection, face bbox: {largest_face.bbox}")
+                        else:
+                            log.warning(f"Still no faces detected in frame {i} with smaller detection")
+                    except Exception as e2:
+                        log.error(f"Error with smaller detection for frame {i}: {e2}")
+                    
+            except Exception as e:
+                log.error(f"Error processing frame {i}: {e}")
+                log.error(f"Error type: {type(e).__name__}")
+                import traceback
+                log.error(f"Traceback: {traceback.format_exc()}")
+                continue
+        
+        log.info(f"Extracted {len(embeddings)} face embeddings")
+        
+        # Perform PAD analysis
+        pad_results = await self.pad_service.analyze_pad(face_frames, landmarks_sequence)
+        
+        return {
+            "embeddings": embeddings,
+            "pad_results": pad_results,
+            "face_frames_count": len(face_frames),
+            "landmarks_count": len(landmarks_sequence)
+        }
+    
     def calculate_embedding_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
         """Calculate cosine similarity between two embeddings"""
         # Normalize embeddings
@@ -210,7 +306,7 @@ class FaceService:
         similarity = np.dot(embedding1, embedding2) / (norm1 * norm2)
         return float(similarity)
     
-    def find_best_match(self, query_embedding: np.ndarray, stored_embeddings: List[np.ndarray], threshold: float = 0.6) -> Tuple[Optional[int], float]:
+    def find_best_match(self, query_embedding: np.ndarray, stored_embeddings: List[np.ndarray], threshold: float = 0.5) -> Tuple[Optional[int], float]:
         """Find the best matching embedding from stored embeddings"""
         best_match_idx = None
         best_similarity = 0.0

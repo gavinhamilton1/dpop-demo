@@ -1,11 +1,11 @@
 // test/passkeys.test.js
 import { jest } from '@jest/globals'; 
 
-// ESM + Jest. Mock /src/stronghold.js BEFORE importing the SUT.
-const strongholdMock = { strongholdFetch: jest.fn() };
-await jest.unstable_mockModule('/src/stronghold.js', () => strongholdMock);
+// ESM + Jest. Mock /src/dpop-fun.js BEFORE importing the SUT.
+const dpopFunMock = { dpopFunFetch: jest.fn() };
+await jest.unstable_mockModule('/src/dpop-fun.js', () => dpopFunMock);
 
-const Stronghold = await import('/src/stronghold.js');
+const DpopFun = await import('/src/dpop-fun.js');
 const {
   checkSupport,
   registerPasskey,
@@ -75,7 +75,7 @@ describe('registerPasskey', () => {
       attestation: 'none',
       authenticatorSelection: { userVerification: 'preferred' },
     };
-    Stronghold.strongholdFetch
+    DpopFun.dpopFunFetch
       .mockResolvedValueOnce(opts) // /registration/options
       .mockResolvedValueOnce({ ok: true, cred_id: 'cid123' }); // /registration/verify
 
@@ -107,7 +107,7 @@ describe('registerPasskey', () => {
     const res = await registerPasskey();
     expect(res).toEqual({ ok: true, cred_id: 'cid123' });
 
-    const body = Stronghold.strongholdFetch.mock.calls[1][1].body;
+    const body = DpopFun.dpopFunFetch.mock.calls[1][1].body;
     expect(body).toEqual({
       id: 'cred-123',
       rawId: b64u(rawId),
@@ -121,7 +121,7 @@ describe('registerPasskey', () => {
   });
 
   test('throws on user cancellation', async () => {
-    Stronghold.strongholdFetch.mockResolvedValueOnce({
+    DpopFun.dpopFunFetch.mockResolvedValueOnce({
       rp: { id: 'localhost', name: 'RP' },
       user: { id: b64u(abFrom([1, 2, 3])) },
       pubKeyCredParams: [],
@@ -135,10 +135,10 @@ describe('registerPasskey', () => {
 describe('getAuthOptions', () => {
   test('POSTs to /webauthn/authentication/options and returns JSON', async () => {
     const opts = { rpId: 'localhost', challenge: b64u(abFrom([9])) };
-    Stronghold.strongholdFetch.mockResolvedValueOnce(opts);
+    DpopFun.dpopFunFetch.mockResolvedValueOnce(opts);
     const out = await getAuthOptions();
     expect(out).toEqual(opts);
-    expect(Stronghold.strongholdFetch).toHaveBeenCalledWith(
+    expect(DpopFun.dpopFunFetch).toHaveBeenCalledWith(
       '/webauthn/authentication/options',
       expect.objectContaining({ method: 'POST' }),
     );
@@ -172,7 +172,7 @@ describe('authenticatePasskey', () => {
         response: { clientDataJSON, authenticatorData, signature, userHandle: null },
       };
     });
-    Stronghold.strongholdFetch.mockResolvedValueOnce({ ok: true, principal: 'p1' });
+    DpopFun.dpopFunFetch.mockResolvedValueOnce({ ok: true, principal: 'p1' });
 
     const out = await authenticatePasskey(preOpts);
     expect(out).toEqual({ ok: true, principal: 'p1' });
@@ -184,7 +184,7 @@ describe('authenticatePasskey', () => {
     expect(pk.allowCredentials).toHaveLength(1);
     expect(abEq(pk.allowCredentials[0].id, abFrom([9, 9, 9]))).toBe(true);
 
-    expect(Stronghold.strongholdFetch).toHaveBeenCalledWith(
+    expect(DpopFun.dpopFunFetch).toHaveBeenCalledWith(
       '/webauthn/authentication/verify',
       expect.objectContaining({
         method: 'POST',
@@ -210,7 +210,7 @@ describe('authenticatePasskey', () => {
       userVerification: 'preferred',
       allowCredentials: [],
     };
-    Stronghold.strongholdFetch
+    DpopFun.dpopFunFetch
       .mockResolvedValueOnce(opts)    // getAuthOptions
       .mockResolvedValueOnce({ ok: true }); // verify
 
@@ -228,12 +228,12 @@ describe('authenticatePasskey', () => {
 
     const res = await authenticatePasskey();
     expect(res).toEqual({ ok: true });
-    expect(Stronghold.strongholdFetch).toHaveBeenNthCalledWith(
+    expect(DpopFun.dpopFunFetch).toHaveBeenNthCalledWith(
       1,
       '/webauthn/authentication/options',
       expect.objectContaining({ method: 'POST' }),
     );
-    expect(Stronghold.strongholdFetch).toHaveBeenNthCalledWith(
+    expect(DpopFun.dpopFunFetch).toHaveBeenNthCalledWith(
       2,
       '/webauthn/authentication/verify',
       expect.any(Object),
@@ -246,7 +246,7 @@ describe('authenticatePasskey', () => {
       challenge: b64u(abFrom([1])),
       allowCredentials: [],
     };
-    Stronghold.strongholdFetch.mockResolvedValueOnce(opts);
+    DpopFun.dpopFunFetch.mockResolvedValueOnce(opts);
     navigator.credentials.get.mockResolvedValue(null);
     await expect(authenticatePasskey()).rejects.toThrow('authentication cancelled');
   });

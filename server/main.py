@@ -81,8 +81,8 @@ EXTERNAL_ORIGIN = SETTINGS.external_origin
 MAIN_HOST   = os.environ.get("MAIN_HOST", "dpop.fun").lower()
 SHORT_HOST  = os.environ.get("SHORT_HOST", "v.dpop.fun").lower()
 
-logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s stronghold %(message)s")
-log = logging.getLogger("stronghold")
+logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s dpop-fun %(message)s")
+log = logging.getLogger("dpop-fun")
 log.info("Loaded config from: %s", SETTINGS.cfg_file_used or "<defaults>")
 log.info("Allowed origins: %s", SETTINGS.allowed_origins)
 log.info("Hosts: main=%s short=%s", MAIN_HOST, SHORT_HOST)
@@ -133,7 +133,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             return resp
 
         # Path-based CSP: face capture pages (onboarding, verification, and main page with inline face capture)
-        if path == "/onboarding" or path == "/face-verify" or path == "/" or path.startswith("/public/vendor/tasks-vision"):
+        if path == "/onboarding" or path == "/face-verify" or path == "/" or path.startswith("/public/vendor/tasks-vision") or path == "/pad-test.html":
             csp = self.CSP_FACE_CAPTURE
             permissions_policy = "geolocation=(), microphone=(self), camera=(self)"
         else:
@@ -184,7 +184,7 @@ class CORSMiddleware(BaseHTTPMiddleware):
                     origin.endswith('.jpmchase.net') or origin == 'https://jpmchase.net' or
                     origin.startswith('http://localhost') or origin.startswith('https://localhost') or
                     origin.endswith('.dpop.fun') or origin == 'https://dpop.fun' or
-                    origin in ('https://stronghold.onrender.com', 'https://stronghold-test.onrender.com')
+                    origin in ('https://dpop-fun.onrender.com', 'https://dpop-fun-test.onrender.com')
                 ) else 'https://dpop.fun'
             )
             return JSONResponse(
@@ -203,7 +203,7 @@ class CORSMiddleware(BaseHTTPMiddleware):
             origin if (
                 origin.endswith('.jpmchase.net') or origin == 'https://jpmchase.net' or
                 origin.startswith('http://localhost') or origin.startswith('https://localhost') or
-                origin in ('https://stronghold.onrender.com', 'https://stronghold-test.onrender.com') or
+                origin in ('https://dpop-fun.onrender.com', 'https://dpop-fun-test.onrender.com') or
                 origin.endswith('.dpop.fun') or origin == 'https://dpop.fun'
             ) else 'https://dpop.fun'
         )
@@ -369,6 +369,149 @@ async def face_verify():
     with open(os.path.join(BASE_DIR, "..", "public", "onboarding.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
+@app.post("/face/debug-pad")
+async def debug_pad(req: Request):
+    """Debug endpoint to test PAD analysis without registration/verification"""
+    try:
+        # Require valid session with username and DPoP binding
+        username, session_data = await require_valid_session(req)
+        
+        # Get uploaded file
+        form = await req.form()
+        video_file = form.get("video")
+        if not video_file:
+            raise HTTPException(400, "No video file provided")
+        
+        # Save video temporarily
+        import tempfile
+        import os
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_file:
+            content = await video_file.read()
+            tmp_file.write(content)
+            tmp_path = tmp_file.name
+        
+        try:
+            # Extract frames
+            frames = face_service.extract_frames_from_video(tmp_path)
+            log.info(f"Extracted {len(frames)} frames for PAD debugging")
+            
+            if not frames:
+                raise HTTPException(400, "No frames extracted from video")
+            
+            # Process with PAD analysis
+            result = await face_service.extract_face_embeddings_with_pad(frames)
+            pad_results = result["pad_results"]
+            
+            return JSONResponse({
+                "message": "PAD analysis completed",
+                "frame_count": len(frames),
+                "face_frames_count": result["face_frames_count"],
+                "landmarks_count": result["landmarks_count"],
+                "pad_results": pad_results
+            })
+            
+        finally:
+            # Clean up temp file
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"PAD debug failed: {e}")
+        raise HTTPException(500, f"PAD debug failed: {str(e)}")
+
+@app.post("/face/test-pad")
+async def test_pad(req: Request):
+    """Test PAD by comparing real frames vs synthetic attack frames"""
+    try:
+        # Require valid session with username and DPoP binding
+        username, session_data = await require_valid_session(req)
+        
+        # Get uploaded file
+        form = await req.form()
+        video_file = form.get("video")
+        if not video_file:
+            raise HTTPException(400, "No video file provided")
+        
+        # Save video temporarily
+        import tempfile
+        import os
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_file:
+            content = await video_file.read()
+            tmp_file.write(content)
+            tmp_path = tmp_file.name
+        
+        try:
+            # Extract frames
+            frames = face_service.extract_frames_from_video(tmp_path)
+            log.info(f"Extracted {len(frames)} frames for PAD testing")
+            
+            if not frames:
+                raise HTTPException(400, "No frames extracted from video")
+            
+            # Extract face regions from real frames
+            face_frames = []
+            landmarks_sequence = []
+            
+            for frame in frames:
+                faces = face_service.app.get(frame)
+                if faces:
+                    largest_face = max(faces, key=lambda f: f.bbox[2] * f.bbox[3])
+                    bbox = largest_face.bbox.astype(int)
+                    x1, y1, x2, y2 = bbox
+                    face_region = frame[y1:y2, x1:x2]
+                    face_frames.append(face_region)
+                    
+                    if hasattr(largest_face, 'kps') and largest_face.kps is not None:
+                        landmarks_sequence.append(largest_face.kps)
+            
+            if not face_frames:
+                raise HTTPException(400, "No faces detected in video")
+            
+            # Test real frames
+            real_result = await face_service.pad_service.analyze_pad(face_frames, landmarks_sequence)
+            
+            # Create synthetic attack frames
+            attack_frames = face_service.pad_service.create_synthetic_attack_frames(face_frames)
+            
+            # Test attack frames
+            attack_result = await face_service.pad_service.analyze_pad(attack_frames, landmarks_sequence)
+            
+            return JSONResponse({
+                "message": "PAD test completed",
+                "real_frames_analysis": {
+                    "frame_count": len(frames),
+                    "face_frames_count": len(face_frames),
+                    "landmarks_count": len(landmarks_sequence),
+                    "pad_results": real_result
+                },
+                "attack_frames_analysis": {
+                    "attack_frames_count": len(attack_frames),
+                    "pad_results": attack_result
+                },
+                "test_summary": {
+                    "real_attack_detected": real_result["attack_detected"],
+                    "synthetic_attack_detected": attack_result["attack_detected"],
+                    "real_confidence": real_result["confidence"],
+                    "attack_confidence": attack_result["confidence"],
+                    "difference": real_result["confidence"] - attack_result["confidence"]
+                }
+            })
+            
+        finally:
+            # Clean up temp file
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"PAD test failed: {e}")
+        raise HTTPException(500, f"PAD test failed: {str(e)}")
+
 @app.get("/favicon.ico")
 async def favicon():
     return FileResponse("public/favicon.ico")
@@ -377,7 +520,7 @@ async def favicon():
 async def manifest():
     return FileResponse("app/static/manifest.json")
 
-@app.get("/.well-known/stronghold-jwks.json")
+@app.get("/.well-known/dpop-fun-jwks.json")
 async def jwks(): return {"keys": [SERVER_PUBLIC_JWK]}
 
 
@@ -397,7 +540,7 @@ async def session_init(req: Request):
     req.session.update({"sid": sid})
     await DB.set_session(sid, {"state":"pending-bind","csrf":csrf,"reg_nonce":reg_nonce,"browser_uuid":body.get("browser_uuid")})
     log.info("session_init sid=%s rid=%s", sid, req.state.request_id)
-    log.info("session_init - session cookie set: %s", req.cookies.get("stronghold_session"))
+    log.info("session_init - session cookie set: %s", req.cookies.get("dpop-fun_session"))
     
     # Verify session was created in database
     stored_session = await DB.get_session(sid)
@@ -576,9 +719,29 @@ async def session_status(req: Request):
     sid = req.session.get("sid")
     s = await DB.get_session(sid) if sid else None
     if not sid or not s:
-        return {"valid": False, "state": None, "bik_registered": False, "dpop_bound": False}
-    state = s.get("state"); bik_registered = bool(s.get("bik_jkt")); dpop_bound = bool(s.get("dpop_jkt"))
-    return {"valid": True, "state": state, "bik_registered": bik_registered, "dpop_bound": dpop_bound}
+        return {"valid": False, "state": None, "bik_registered": False, "dpop_bound": False, "ttl_seconds": 0}
+    
+    state = s.get("state")
+    bik_registered = bool(s.get("bik_jkt"))
+    dpop_bound = bool(s.get("dpop_jkt"))
+    
+    # Calculate TTL based on DPoP binding expiration
+    ttl_seconds = 0
+    if dpop_bound and s.get("dpop_jkt"):
+        # DPoP binding expires after bind_ttl seconds
+        # We'll use the session's updated_at timestamp + bind_ttl as expiration
+        session_updated = s.get("updated_at", 0)
+        current_time = int(time.time())
+        bind_expires_at = session_updated + BIND_TTL
+        ttl_seconds = max(0, bind_expires_at - current_time)
+    
+    return {
+        "valid": True, 
+        "state": state, 
+        "bik_registered": bik_registered, 
+        "dpop_bound": dpop_bound,
+        "ttl_seconds": ttl_seconds
+    }
 
 # ---------------- DPoP gate for protected APIs (existing) ----------------
 def _nonce_fail_response(sid: str, detail: str) -> None:
@@ -770,7 +933,7 @@ async def collect_fingerprint(req: Request):
     
     log.info("POST /session/fingerprint called with sid=%s", sid)
     log.info("POST /session/fingerprint - storing fingerprint data for session_id=%s", sid)
-    log.info("POST /session/fingerprint - session cookie: %s", req.cookies.get("stronghold_session"))
+    log.info("POST /session/fingerprint - session cookie: %s", req.cookies.get("dpop-fun_session"))
     
     try:
         # Verify session exists before updating
@@ -947,36 +1110,47 @@ async def debug_usernames():
 @app.get("/session/fingerprint")
 async def get_fingerprint(req: Request):
     """Get stored fingerprint data for current session"""
-    # Require valid session with username and DPoP binding
-    username, session_data = await require_valid_session(req)
+    sid = req.session.get("sid")
+    if not sid:
+        raise HTTPException(404, "No session found")
     
-    log.info("GET /session/fingerprint called with sid=%s username=%s", req.session.get("sid"), username)
+    log.info("GET /session/fingerprint called with sid=%s", sid)
     
     try:
-        log.info("Full session data sid=%s keys=%s", req.session.get("sid"), list(session_data.keys()))
+        session_data = await DB.get_session(sid)
+        if not session_data:
+            raise HTTPException(404, "Session not found")
+            
+        log.info("Full session data sid=%s keys=%s", sid, list(session_data.keys()))
         fingerprint_data = session_data.get("fingerprint", {})
         device_type = session_data.get("device_type", "unknown")
-        log.info("Retrieved fingerprint data sid=%s username=%s device_type=%s", req.session.get("sid"), username, device_type)
+        log.info("Retrieved fingerprint data sid=%s device_type=%s", sid, device_type)
         return JSONResponse({
             "fingerprint": fingerprint_data,
             "device_type": device_type
         })
+    except HTTPException:
+        raise
     except Exception as e:
-        log.exception("Failed to get fingerprint sid=%s username=%s", req.session.get("sid"), username)
+        log.exception("Failed to get fingerprint sid=%s", sid)
         raise HTTPException(500, f"Failed to get fingerprint: {e}")
 
 @app.get("/session/fingerprint-data")
 async def get_fingerprint_data(req: Request):
     """Get both desktop and mobile fingerprint data for the current session"""
-    # Require valid session with username and DPoP binding
-    username, session_data = await require_valid_session(req)
+    sid = req.session.get("sid")
+    if not sid:
+        raise HTTPException(401, "No session found")
     
-    log.info("GET /session/fingerprint-data called with sid=%s username=%s", req.session.get("sid"), username)
+    log.info("GET /session/fingerprint-data called with sid=%s", sid)
     
     try:
         # Get current session data
-        current_session = session_data  # Already validated by require_valid_session
-        log.info("Current session found sid=%s keys=%s", req.session.get("sid"), list(current_session.keys()))
+        current_session = await DB.get_session(sid)
+        if not current_session:
+            raise HTTPException(404, "Session not found")
+        
+        log.info("Current session found sid=%s keys=%s", sid, list(current_session.keys()))
         current_fingerprint = current_session.get("fingerprint", {})
         current_device_type = current_session.get("device_type", "unknown")
         
@@ -1333,11 +1507,20 @@ async def register_face(req: Request):
             tmp_path = tmp_file.name
         
         try:
-            # Process video and extract embeddings
+            # Process video and extract embeddings with PAD analysis
             log.info(f"Processing video file: {tmp_path}, size: {len(content)} bytes")
             
-            embeddings = face_service.process_video_file(tmp_path)
-            log.info(f"Extracted {len(embeddings)} embeddings")
+            # Extract frames first
+            frames = face_service.extract_frames_from_video(tmp_path)
+            log.info(f"Extracted {len(frames)} frames from video")
+            
+            if not frames:
+                raise HTTPException(400, "No frames extracted from video")
+            
+            # Extract embeddings without PAD analysis (registration only)
+            embeddings = face_service.extract_face_embeddings(frames)
+            
+            log.info(f"Extracted {len(embeddings)} embeddings for registration")
             
             if not embeddings:
                 raise HTTPException(400, "No faces detected in video")
@@ -1406,11 +1589,39 @@ async def verify_face(req: Request):
             tmp_path = tmp_file.name
         
         try:
-            # Process video and extract embeddings
-            query_embeddings = face_service.process_video_file(tmp_path)
+            # Process video and extract embeddings with PAD analysis
+            frames = face_service.extract_frames_from_video(tmp_path)
+            log.info(f"Extracted {len(frames)} frames from verification video")
+            
+            if not frames:
+                raise HTTPException(400, "No frames extracted from video")
+            
+            # Process with PAD analysis (conservative settings)
+            result = await face_service.extract_face_embeddings_with_pad(frames)
+            query_embeddings = result["embeddings"]
+            pad_results = result["pad_results"]
+            
+            log.info(f"Extracted {len(query_embeddings)} embeddings for verification")
+            log.info(f"PAD analysis: attack_detected={pad_results['attack_detected']}, confidence={pad_results['confidence']:.3f}")
             
             if not query_embeddings:
                 raise HTTPException(400, "No faces detected in video")
+            
+            # Check PAD results using advanced techniques
+            if not pad_results.get("live_final", True):
+                log.warning(f"PAD attack detected during verification for user {username}: {pad_results}")
+                return JSONResponse({
+                    "verified": False,
+                    "message": "Security check failed: Potential spoof attack detected. Please ensure you are using a live face, not a photo or video.",
+                    "pad_results": {
+                        "rppg_hr_bpm": pad_results.get("rppg_hr_bpm"),
+                        "rppg_snr_db": pad_results.get("rppg_snr_db"),
+                        "rppg_live_prob": pad_results.get("rppg_live_prob"),
+                        "display_flicker_score": pad_results.get("display_flicker_score"),
+                        "planarity_score": pad_results.get("planarity_score"),
+                        "live_final": pad_results.get("live_final")
+                    }
+                })
             
             # Get stored embeddings for this user
             stored_embeddings = await DB.get_face_embeddings_for_user(username)
@@ -1430,26 +1641,40 @@ async def verify_face(req: Request):
             # Find best match
             best_match = None
             best_similarity = 0.0
-            threshold = 0.6  # Adjust this threshold as needed
+            threshold = 0.5  # Reduced threshold to reduce false negatives on real attempts
             
-            for query_embedding in query_embeddings:
+            log.info(f"Comparing {len(query_embeddings)} query embeddings against {len(stored_np_embeddings)} stored embeddings")
+            
+            for i, query_embedding in enumerate(query_embeddings):
                 match_idx, similarity = face_service.find_best_match(
                     query_embedding, stored_np_embeddings, threshold
                 )
+                log.info(f"Query embedding {i}: match_idx={match_idx}, similarity={similarity:.3f}")
+                log.info(f"Debug: similarity={similarity:.3f}, best_similarity={best_similarity:.3f}, condition={similarity > best_similarity}")
                 if similarity > best_similarity:
                     best_similarity = similarity
                     best_match = stored_embeddings[match_idx] if match_idx is not None else None
+                    log.info(f"Debug: Updated best_match={best_match is not None}, best_similarity={best_similarity:.3f}")
             
             verified = best_match is not None and best_similarity >= threshold
             
-            log.info(f"Face verification for user {username}: verified={verified}, similarity={best_similarity:.3f}")
+            log.info(f"Face verification for user {username}: verified={verified}, similarity={best_similarity:.3f}, threshold={threshold}")
+            log.info(f"Debug: best_match={best_match is not None}, best_similarity={best_similarity:.3f}, threshold={threshold}")
             
             return JSONResponse({
-                "verified": verified,
-                "similarity": best_similarity,
-                "threshold": threshold,
+                "verified": bool(verified),
+                "similarity": float(best_similarity),
+                "threshold": float(threshold),
                 "matched_user": best_match["user_id"] if best_match else None,
-                "message": "Face verified successfully" if verified else "Face verification failed"
+                "message": "Face verified successfully" if verified else "Face verification failed",
+                "pad_results": {
+                    "rppg_hr_bpm": pad_results.get("rppg_hr_bpm"),
+                    "rppg_snr_db": pad_results.get("rppg_snr_db"),
+                    "rppg_live_prob": pad_results.get("rppg_live_prob"),
+                    "display_flicker_score": pad_results.get("display_flicker_score"),
+                    "planarity_score": pad_results.get("planarity_score"),
+                    "live_final": pad_results.get("live_final")
+                }
             })
             
         finally:

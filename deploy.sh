@@ -28,7 +28,7 @@ echo "🎯 Next steps for Render deployment:"
 echo "1. Push this code to your Git repository"
 echo "2. Connect your repo to Render"
 echo "3. Render will automatically build and deploy using the Dockerfile"
-echo "4. Update the external_origin in stronghold.prod.yaml with your actual Render URL"
+echo "4. Update the external_origin in dpop-fun.prod.yaml with your actual Render URL"
 
 echo ""
 echo "🔧 Render service configuration:"

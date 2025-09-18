@@ -26,7 +26,7 @@ UV_MODE = 'preferred' if POLICY == 'compat' else 'required'
 RESIDENT_MODE = 'preferred' if POLICY == 'compat' else 'required'
 ATTESTATION_MODE = 'none' if POLICY == 'compat' else 'direct'
 
-_DEF_RP_NAME = "Stronghold Demo"
+_DEF_RP_NAME = "DPoP-Fun"
 
 # ---------------- utils ----------------
 def _nonce_headers(ctx: Any) -> Dict[str, str]:

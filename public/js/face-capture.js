@@ -170,10 +170,10 @@ import {
   }
 
   function isFaceGoodSize(faceSize) {
-    // Good face size: face width should be between 0.25 and 0.55 of frame width
-    // This ensures the face is close enough for good quality but not too close
-    const minFaceWidth = 0.25;
-    const maxFaceWidth = 0.55;
+    // Good face size: face width should be between 0.45 and 0.75 of frame width
+    // This ensures the face is very close for maximum detection quality and signal-to-noise ratio
+    const minFaceWidth = 0.50;  // Increased from 0.35 to require much closer face
+    const maxFaceWidth = 0.80;  // Increased from 0.65 to allow closer maximum
     
     console.log(`Size check: faceWidth=${faceSize.width.toFixed(3)}, min=${minFaceWidth}, max=${maxFaceWidth}`);
     
@@ -324,7 +324,15 @@ import {
           setPrompt(`Face verification successful! (Similarity: ${(data.similarity * 100).toFixed(1)}%)`, "ok");
         } else {
           setStatus("Verification failed"); 
-          setPrompt(`Face verification failed (Similarity: ${(data.similarity * 100).toFixed(1)}%)`, "danger-txt");
+          // Check if this is a PAD attack detection
+          if (data.pad_results && !data.pad_results.live_final) {
+            setPrompt(data.message || "Presentation attack detected", "danger-txt");
+            setBanner("Security check failed - potential spoof detected");
+          } else if (data.similarity !== undefined) {
+            setPrompt(`Face verification failed (Similarity: ${(data.similarity * 100).toFixed(1)}%)`, "danger-txt");
+          } else {
+            setPrompt(data.message || "Face verification failed", "danger-txt");
+          }
         }
       } else {
         setStatus("Face registered ✓"); 
@@ -362,8 +370,9 @@ import {
           z: landmark.z
         }));
                 
-        drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color:"#3b4b82", lineWidth:0.5 });
-        drawer.drawLandmarks(lm, { color:"#78f7d7", lineWidth:0.5, radius:0.5 });
+        // Mesh overlay disabled for now
+        // drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color:"#3b4b82", lineWidth:0.5 });
+        // drawer.drawLandmarks(lm, { color:"#78f7d7", lineWidth:0.5, radius:0.5 });
   
         if (!faced) {
           faced = true; mark(chipFace, true);
@@ -395,7 +404,7 @@ import {
             if (!isCentered) {
               setBanner(`Move face to center (x:${faceCenter.x.toFixed(2)}, y:${faceCenter.y.toFixed(2)}, target: 0.5±0.15)`);
             } else if (!isGoodSize) {
-              setBanner(`Move closer (size:${faceSize.width.toFixed(3)}, target: 0.25-0.55)`);
+              setBanner(`Move closer (size:${faceSize.width.toFixed(3)}, target: 0.55-0.85)`);
             }
           }
         }

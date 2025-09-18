@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
 import yaml
 
-log = logging.getLogger("stronghold")
+log = logging.getLogger("dpop-fun")
 
 @dataclass
 class Settings:
@@ -51,9 +51,9 @@ _DEFAULTS: Dict[str, Any] = {
         "ec_private_key_pem": None,
         "ec_private_key_pem_file": None,
     },
-    "db": {"path": "/tmp/stronghold.db"},
+    "db": {"path": "/tmp/dpop-fun.db"},
     "session": {
-        "cookie_name": "stronghold_session",
+        "cookie_name": "dpop-fun_session",
         "same_site": "lax",
         "secret_key": None,  # if None, app will generate an ephemeral key on startup (dev only)
         "dev_allow_insecure_cookie": True,
@@ -69,9 +69,9 @@ _DEFAULTS: Dict[str, Any] = {
 }
 
 _SEARCH_ORDER = (
-    "stronghold.yaml",
-    "stronghold.yml",
-    "stronghold.dev.yaml",
+    "dpop-fun.yaml",
+    "dpop-fun.yml",
+    "dpop-fun.dev.yaml",
 )
 
 def _merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
@@ -111,8 +111,8 @@ def load_settings(path: Optional[str] = None) -> Settings:
 
     Priority:
       1) explicit `path` arg (absolute or relative)
-      2) env STRONGHOLD_CONFIG (absolute or relative; robustly resolved)
-      3) search order in project root: stronghold.yaml|yml|stronghold.dev.yaml
+      2) env DPOP_FUN_CONFIG (absolute or relative; robustly resolved)
+      3) search order in project root: dpop-fun.yaml|yml|dpop-fun.dev.yaml
     """
     base_dir = Path(__file__).resolve().parent.parent  # Go up to project root
     cfg_file_used: Optional[Path] = None
@@ -125,7 +125,7 @@ def load_settings(path: Optional[str] = None) -> Settings:
             raise FileNotFoundError(f"Config file not found: {candidate}")
         cfg_file_used = candidate
     else:
-        env_cfg = os.getenv("STRONGHOLD_CONFIG")
+        env_cfg = os.getenv("DPOP_FUN_CONFIG")
         if env_cfg:
             candidate = _resolve_path(env_cfg, base_dir)
             if not candidate:
@@ -136,7 +136,7 @@ def load_settings(path: Optional[str] = None) -> Settings:
                     str(Path.cwd() / env_cfg),
                 ]
                 raise FileNotFoundError(
-                    "STRONGHOLD_CONFIG not found. Tried: " + ", ".join(tried)
+                    "DPOP_FUN_CONFIG not found. Tried: " + ", ".join(tried)
                 )
             cfg_file_used = candidate
         else:
@@ -170,14 +170,14 @@ def load_settings(path: Optional[str] = None) -> Settings:
             pem = p.read_text(encoding="utf-8")
 
     # Normalize db path
-    db_path = (cfg.get("db") or {}).get("path") or "/tmp/stronghold.db"
+    db_path = (cfg.get("db") or {}).get("path") or "/tmp/dpop-fun.db"
     print(f"DEBUG: Original db_path: {db_path}")
     dbp = Path(db_path)
     print(f"DEBUG: Path object: {dbp}")
     print(f"DEBUG: Is absolute: {dbp.is_absolute()}")
     print(f"DEBUG: base_dir: {base_dir}")
     if not dbp.is_absolute():
-        # relative to server/ to ease local dev (e.g., data/stronghold.db)
+        # relative to server/ to ease local dev (e.g., data/dpop-fun.db)
         dbp = base_dir / dbp
         print(f"DEBUG: Resolved relative path: {dbp}")
     db_path = str(dbp)
@@ -186,7 +186,7 @@ def load_settings(path: Optional[str] = None) -> Settings:
     s = Settings(
         external_origin=(cfg.get("server") or {}).get("external_origin"),
         allowed_origins=(cfg.get("server") or {}).get("allowed_origins", []),
-        session_cookie_name=(cfg.get("session") or {}).get("cookie_name") or "stronghold_session",
+        session_cookie_name=(cfg.get("session") or {}).get("cookie_name") or "dpop-fun_session",
         session_samesite=((cfg.get("session") or {}).get("same_site") or "lax").lower(),  # type: ignore
         session_secret_key=(cfg.get("session") or {}).get("secret_key"),
         dev_allow_insecure_cookie=bool((cfg.get("session") or {}).get("dev_allow_insecure_cookie", False)),

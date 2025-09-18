@@ -1,11 +1,11 @@
-// src/services/StrongholdService.js
-// Stronghold-specific API service
+// src/services/DpopFunService.js
+// DPoP-Fun-specific API service
 
 import { ApiService } from './ApiService.js';
-import * as Stronghold from '../stronghold.js';
+import * as DpopFun from '../dpop-fun.js';
 import { CONFIG } from '../utils/config.js';
 
-export class StrongholdService extends ApiService {
+export class DpopFunService extends ApiService {
   constructor() {
     super();
     this.session = null;
@@ -19,7 +19,7 @@ export class StrongholdService extends ApiService {
    */
   async initSession() {
     try {
-      const response = await Stronghold.sessionInit({ sessionInitUrl: '/session/init' });
+      const response = await DpopFun.sessionInit({ sessionInitUrl: '/session/init' });
       this.session = response;
       return response;
     } catch (error) {
@@ -37,7 +37,7 @@ export class StrongholdService extends ApiService {
     }
 
     try {
-      const response = await Stronghold.bikRegisterStep({ bikRegisterUrl: '/browser/register' });
+      const response = await DpopFun.bikRegisterStep({ bikRegisterUrl: '/browser/register' });
       this.bik = response;
       return response;
     } catch (error) {
@@ -55,7 +55,7 @@ export class StrongholdService extends ApiService {
     }
 
     try {
-      const response = await Stronghold.dpopBindStep({ dpopBindUrl: '/dpop/bind' });
+      const response = await DpopFun.dpopBindStep({ dpopBindUrl: '/dpop/bind' });
       this.dpop = response;
       return response;
     } catch (error) {
@@ -74,7 +74,7 @@ export class StrongholdService extends ApiService {
       throw new Error('DPoP not bound');
     }
 
-    return Stronghold.strongholdFetch(url, options);
+    return DpopFun.dpopFunFetch(url, options);
   }
 
   /**
@@ -172,11 +172,11 @@ export class StrongholdService extends ApiService {
   async resumeSession() {
     try {
       // First restore CSRF token and reg_nonce from IndexedDB
-      await Stronghold.restoreSessionTokens();
+      await DpopFun.restoreSessionTokens();
       
       // Verify we have the necessary tokens
-      const csrf = await Stronghold.get(CONFIG.STORAGE.KEYS.CSRF);
-      const bind = await Stronghold.get(CONFIG.STORAGE.KEYS.BIND);
+      const csrf = await DpopFun.get(CONFIG.STORAGE.KEYS.CSRF);
+      const bind = await DpopFun.get(CONFIG.STORAGE.KEYS.BIND);
       
       if (!csrf?.value) {
         throw new Error('CSRF token not found in storage');
@@ -187,7 +187,7 @@ export class StrongholdService extends ApiService {
       }
       
       // Now call the server-side resume process to get fresh DPoP nonce
-      const resumeSuccess = await Stronghold.resumeViaPage();
+      const resumeSuccess = await DpopFun.resumeViaPage();
       if (!resumeSuccess) {
         throw new Error('Server-side session resume failed');
       }
@@ -210,7 +210,7 @@ export class StrongholdService extends ApiService {
       const { resume_nonce } = r1;
       
       // Get the BIK from storage
-      const bik = await Stronghold.getBIK();
+      const bik = await DpopFun.getBIK();
       if (!bik) {
         throw new Error('BIK not found in storage');
       }
@@ -223,7 +223,7 @@ export class StrongholdService extends ApiService {
       const { bind } = r2;
       
       // Store the binding token
-      await Stronghold.set(CONFIG.STORAGE.KEYS.BIND, bind);
+      await DpopFun.set(CONFIG.STORAGE.KEYS.BIND, bind);
       
       return true;
     } catch (error) {

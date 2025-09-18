@@ -285,7 +285,7 @@ async function handleNonceChallenge(res, url, method, dpop) {
   return null;
 }
 
-export async function strongholdFetch(url, { method = 'GET', body = null } = {}) {
+export async function dpopFunFetch(url, { method = 'GET', body = null } = {}) {
   try {
     coreLogger.debug('Making signed fetch request:', { url, method, hasBody: !!body });
     

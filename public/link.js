@@ -1,7 +1,7 @@
 // /public/link.js  (module)
 
 // --- Imports (unchanged) ---
-import * as Stronghold from '/src/stronghold.js';
+import * as DpopFun from '/src/dpop-fun.js';
 import * as Passkeys from '/src/passkeys.js';
 import { SignatureShare } from '/src/signature-share.js';
 
@@ -216,8 +216,8 @@ function startBcTimer(ttlSec) {
 
 async function issueBC(lid) {
   try {
-    // Use strongholdFetch so the request is DPoP-bound (we've already bound on this mobile)
-    const data = await Stronghold.strongholdFetch(ISSUE_BC_URL, {
+    // Use dpopFunFetch so the request is DPoP-bound (we've already bound on this mobile)
+    const data = await DpopFun.dpopFunFetch(ISSUE_BC_URL, {
       method: 'POST',
       body: { lid }
     });
@@ -242,7 +242,7 @@ async function issueBC(lid) {
 async function cancelBC() {
   if (!currentLid) return;
   try {
-    await Stronghold.strongholdFetch(CANCEL_BC_URL, {
+    await DpopFun.dpopFunFetch(CANCEL_BC_URL, {
       method: 'POST',
       body: { lid: currentLid }
     });
@@ -376,7 +376,7 @@ async function link(lid) {
   try {
     // Step 1: Initialize session
     updateStep(1, 'active', 'Initializing session…');
-    await Stronghold.sessionInit({ sessionInitUrl: '/session/init' });
+    await DpopFun.sessionInit({ sessionInitUrl: '/session/init' });
     updateStep(1, 'completed', 'Session initialized');
     log('Session initialized ✓', 'success');
     
@@ -398,8 +398,8 @@ async function link(lid) {
 
     // Step 2: BIK register + DPoP bind
     updateStep(2, 'active', 'Setting up security…');
-    await Stronghold.bikRegisterStep({ bikRegisterUrl: '/browser/register' });
-    await Stronghold.dpopBindStep({ dpopBindUrl: '/dpop/bind' });
+    await DpopFun.bikRegisterStep({ bikRegisterUrl: '/browser/register' });
+    await DpopFun.dpopBindStep({ dpopBindUrl: '/dpop/bind' });
     updateStep(2, 'completed', 'Security configured');
     log('Security setup completed ✓', 'success');
 
@@ -430,7 +430,7 @@ async function link(lid) {
     updateStep(4, 'active', 'Completing mobile link…');
     
     // Complete the mobile linking process
-    const completeData = await Stronghold.strongholdFetch('/link/mobile/complete', {
+    const completeData = await DpopFun.dpopFunFetch('/link/mobile/complete', {
       method: 'POST',
       body: { link_id: lid }
     });

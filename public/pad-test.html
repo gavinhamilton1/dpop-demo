@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PAD Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        input[type="file"] {
+            margin: 10px 0;
+        }
+        .results {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .error {
+            color: #dc3545;
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+        }
+        .success {
+            color: #155724;
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+        }
+        .warning {
+            color: #856404;
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>PAD (Presentation Attack Detection) Test</h1>
+        <p>This page helps you test the PAD system to verify it's working correctly.</p>
+        
+        <div class="section">
+            <h3>1. Debug PAD Analysis</h3>
+            <p>Upload a video to see detailed PAD analysis results:</p>
+            <input type="file" id="debugFile" accept="video/*">
+            <button id="debugBtn">Debug PAD</button>
+            <div id="debugResults" class="results" style="display: none;"></div>
+        </div>
+        
+        <div class="section">
+            <h3>2. Test PAD with Synthetic Attacks</h3>
+            <p>Upload a video to compare real frames vs synthetic attack frames:</p>
+            <input type="file" id="testFile" accept="video/*">
+            <button id="testBtn">Test PAD</button>
+            <div id="testResults" class="results" style="display: none;"></div>
+        </div>
+        
+        <div class="section">
+            <h3>3. Manual Attack Test</h3>
+            <p>Try these attack scenarios to test PAD:</p>
+            <ul>
+                <li><strong>Photo Attack:</strong> Hold a printed photo of a face in front of the camera</li>
+                <li><strong>Video Replay:</strong> Play a video of a face on another device</li>
+                <li><strong>Static Image:</strong> Show a static image without movement</li>
+                <li><strong>Mask Attack:</strong> Use a realistic mask (if available)</li>
+            </ul>
+            <p>Upload videos of these attacks using the debug tool above.</p>
+        </div>
+        
+        <div class="section">
+            <h3>Expected Results</h3>
+            <ul>
+                <li><strong>Real Face:</strong> High confidence scores (>0.5), no attack detected</li>
+                <li><strong>Photo Attack:</strong> Low spatial score, no temporal signal, attack detected</li>
+                <li><strong>Video Replay:</strong> Low temporal score (no heart rate), attack detected</li>
+                <li><strong>Static Image:</strong> Low pose score, attack detected</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="/public/js/pad-test.js?v=1"></script>
+</body>
+</html>

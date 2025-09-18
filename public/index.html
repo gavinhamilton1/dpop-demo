@@ -22,20 +22,47 @@
         </div>
 
         <div class="demo-section fade-in">
-            <h2>🔧 Session Creation</h2>
-            <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
-                Initialize your secure browser session and bind cryptographic keys:
-            </p>
-            
-            <div class="session-creation-form">
-                <button id="registerBrowserBtn" class="btn btn-primary">
-                    🔐 Register Browser & Bind DPoP
-                </button>
+            <h2>🔧 Session</h2>            
+            <div class="session-status-card">
+                <div id="sessionStatusIndicator" class="status-indicator">
+                    <div class="status-icon">⏳</div>
+                    <div class="status-content">
+                        <div class="status-text">Initializing session...</div>
+                        <div class="status-detail">Checking for existing browser identity and session</div>
+                        <div id="sessionTTL" class="status-ttl" style="display: none;">
+                            <span class="ttl-label">Session expires in:</span>
+                            <span class="ttl-value">--:--</span>
+                        </div>
+                        <div id="signalSummary" class="signal-summary" style="display: none;">
+                            <div class="signal-header">
+                                <span class="signal-icon">📊</span>
+                                <span class="signal-title">Signal Summary</span>
+                                <button id="signalDetailsBtn" class="signal-details-btn" title="View all signal data">
+                                    <span class="btn-icon">More data...</span>
+                                </button>
+                            </div>
+                            <div class="signal-row">
+                                <div class="signal-item">
+                                    <span class="signal-label">Location:</span>
+                                    <span class="signal-value" id="signalLocation">--</span>
+                                </div>
+                                <div class="signal-item">
+                                    <span class="signal-label">Device:</span>
+                                    <span class="signal-value" id="signalDevice">--</span>
+                                </div>
+                                <div class="signal-item">
+                                    <span class="signal-label">Browser:</span>
+                                    <span class="signal-value" id="signalBrowser">--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
         <div class="demo-section fade-in">
-            <h2>👤 User Binding</h2>
+            <h2>👤 User</h2>
             <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
                 Get started with your secure session:
             </p>
@@ -219,6 +246,21 @@
             <h2>📝 Activity Log</h2>
             <div class="log-section" id="logContainer">
                 <div class="log-entry info">[INFO] Demo page loaded. Ready to start the browser identity journey!</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signal Details Modal -->
+    <div id="signalDetailsModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📊 Complete Signal Data</h3>
+                <button class="modal-close" id="signalModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="signalDetailsContent">
+                    <div class="loading-text">Loading signal data...</div>
+                </div>
             </div>
         </div>
     </div>

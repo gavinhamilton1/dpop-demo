@@ -4,9 +4,9 @@
 import { ApiService } from './ApiService.js';
 
 export class LinkingService extends ApiService {
-  constructor(strongholdService = null) {
+  constructor(dpopFunService = null) {
     super();
-    this.strongholdService = strongholdService;
+    this.dpopFunService = dpopFunService;
     this.currentLinkId = null;
     this.statusCallbacks = new Map();
     this.websocket = null;
@@ -19,10 +19,10 @@ export class LinkingService extends ApiService {
    */
   async startLinking() {
     try {
-      if (!this.strongholdService) {
+      if (!this.dpopFunService) {
         throw new Error('StrongholdService not provided');
       }
-      const response = await this.strongholdService.secureRequest('/link/start', {
+      const response = await this.dpopFunService.secureRequest('/link/start', {
         method: 'POST'
       });
       this.currentLinkId = response.linkId;
@@ -39,10 +39,10 @@ export class LinkingService extends ApiService {
    */
   async completeMobileLink(linkId) {
     try {
-      if (!this.strongholdService) {
+      if (!this.dpopFunService) {
         throw new Error('StrongholdService not provided');
       }
-      const response = await this.strongholdService.secureRequest('/link/mobile/complete', {
+      const response = await this.dpopFunService.secureRequest('/link/mobile/complete', {
         method: 'POST',
         body: JSON.stringify({
           link_id: linkId
@@ -61,10 +61,10 @@ export class LinkingService extends ApiService {
    */
   async getLinkStatus(linkId) {
     try {
-      if (!this.strongholdService) {
+      if (!this.dpopFunService) {
         throw new Error('StrongholdService not provided');
       }
-      const response = await this.strongholdService.secureRequest(`/link/status/${linkId}`, {
+      const response = await this.dpopFunService.secureRequest(`/link/status/${linkId}`, {
         method: 'GET'
       });
       return response;

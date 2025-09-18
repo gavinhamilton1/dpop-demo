@@ -1,5 +1,5 @@
 // /src/passkeys.js
-import * as Stronghold from '/src/stronghold.js';
+import * as DpopFun from '/src/dpop-fun.js';
 import { b64uToBuf, bufToB64u } from '/src/jose-lite.js';
 import { cryptoLogger } from './utils/logging.js';
 import { AuthenticationError, NetworkError } from './utils/errors.js';
@@ -24,7 +24,7 @@ export async function registerPasskey() {
     cryptoLogger.debug('Starting passkey registration');
     
     // 1) get options
-    const opts = await Stronghold.strongholdFetch('/webauthn/registration/options', { method: 'POST' });
+    const opts = await DpopFun.dpopFunFetch('/webauthn/registration/options', { method: 'POST' });
     cryptoLogger.debug('Registration options received');
 
     const pub = {
@@ -61,7 +61,7 @@ export async function registerPasskey() {
     };
 
     cryptoLogger.debug('Sending attestation to server for verification');
-    const result = await Stronghold.strongholdFetch('/webauthn/registration/verify', {
+    const result = await DpopFun.dpopFunFetch('/webauthn/registration/verify', {
       method: 'POST',
       body: att,
     });
@@ -102,7 +102,7 @@ export async function registerPasskey() {
 export async function getAuthOptions() {
   try {
     cryptoLogger.debug('Getting authentication options');
-    const options = await Stronghold.strongholdFetch('/webauthn/authentication/options', { method: 'POST' });
+    const options = await DpopFun.dpopFunFetch('/webauthn/authentication/options', { method: 'POST' });
     cryptoLogger.debug('Authentication options received');
     return options;
   } catch (error) {
@@ -158,7 +158,7 @@ export async function authenticatePasskey(passedOpts) {
     };
 
     cryptoLogger.debug('Sending assertion to server for verification');
-    const result = await Stronghold.strongholdFetch('/webauthn/authentication/verify', {
+    const result = await DpopFun.dpopFunFetch('/webauthn/authentication/verify', {
       method: 'POST',
       body: payload,
     });

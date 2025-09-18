@@ -3,7 +3,7 @@ import requests
 import logging
 from typing import Dict, Optional
 
-log = logging.getLogger("stronghold")
+log = logging.getLogger("dpop-fun")
 
 class GeolocationService:
     """Service for IP-based geolocation lookup"""
@@ -16,7 +16,20 @@ class GeolocationService:
         """
         if not ip_address or ip_address in ['127.0.0.1', 'localhost', '::1']:
             log.info("Skipping geolocation for local IP: %s", ip_address)
-            return None
+            # Return mock data for localhost testing
+            return {
+                'ip': ip_address,
+                'city': 'Local Development',
+                'region': 'Local Environment',
+                'country': 'Development',
+                'country_code': 'DEV',
+                'postal': '00000',
+                'latitude': '0.000000',
+                'longitude': '0.000000',
+                'timezone': 'UTC',
+                'org': 'Local Development Server',
+                'asn': 'AS0000'
+            }
             
         try:
             log.info("Looking up geolocation for IP: %s", ip_address)
@@ -66,7 +79,20 @@ class GeolocationService:
         Fallback geolocation service using ip-api.com
         """
         if not ip_address or ip_address in ['127.0.0.1', 'localhost', '::1']:
-            return None
+            # Return mock data for localhost testing
+            return {
+                'ip': ip_address,
+                'city': 'Local Development',
+                'region': 'Local Environment',
+                'country': 'Development',
+                'country_code': 'DEV',
+                'postal': '00000',
+                'latitude': '0.000000',
+                'longitude': '0.000000',
+                'timezone': 'UTC',
+                'org': 'Local Development Server',
+                'asn': 'AS0000'
+            }
             
         try:
             log.info("Trying fallback geolocation for IP: %s", ip_address)

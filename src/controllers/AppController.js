@@ -3,7 +3,7 @@
 
 import { ButtonManager } from '../components/ButtonManager.js';
 import { Logger } from '../components/Logger.js';
-import { StrongholdService } from '../services/StrongholdService.js';
+import { DpopFunService } from '../services/DpopFunService.js';
 import { PasskeyService } from '../services/PasskeyService.js';
 import { LinkingService } from '../services/LinkingService.js';
 import { FingerprintService } from '../services/FingerprintService.js';
@@ -17,9 +17,9 @@ export class AppController {
     this.errorHandler = new ErrorHandler(this.logger);
     
     // Initialize services
-    this.stronghold = new StrongholdService();
+    this.dpopFun = new DpopFunService();
     this.passkeys = new PasskeyService();
-    this.linking = new LinkingService(this.stronghold);
+    this.linking = new LinkingService(this.dpopFun);
     
     // Application state
     this.state = {
@@ -48,7 +48,7 @@ export class AppController {
       
             // Initialize button manager
       this.buttonManager.initialize([
-        'registerModeBtn', 'signinModeBtn', 'submitUsernameBtn', 'submitSigninBtn', 'registerBrowserBtn', 'initBtn', 'bikBtn', 'dpopBtn', 'apiBtn',
+        'registerModeBtn', 'signinModeBtn', 'submitUsernameBtn', 'submitSigninBtn', 'initBtn', 'bikBtn', 'dpopBtn', 'apiBtn',
         'regBtn', 'authBtn', 'linkBtn', 'flushBtn', 'clientFlushBtn',
         'swRegBtn', 'swUnregBtn', 'echoSWBtn', 'testSWBtn',
         'registerFaceBtn', 'verifyFaceBtn'
@@ -59,6 +59,9 @@ export class AppController {
       
       // Check for existing session and restore state
       await this.checkExistingSession();
+      
+      // Automatically register browser and bind DPoP if needed
+      await this.autoRegisterBrowserAndBindDPoP();
       
       // Update initial state
       this.updateState();
@@ -140,6 +143,448 @@ export class AppController {
   }
 
   /**
+   * Update session status indicator
+   */
+  updateSessionStatusIndicator(status, icon, text, detail, ttlSeconds = null) {
+    const indicator = document.getElementById('sessionStatusIndicator');
+    if (!indicator) return;
+    
+    indicator.className = `status-indicator ${status}`;
+    indicator.querySelector('.status-icon').textContent = icon;
+    indicator.querySelector('.status-text').textContent = text;
+    indicator.querySelector('.status-detail').textContent = detail;
+    
+    // Update TTL display
+    const ttlElement = document.getElementById('sessionTTL');
+    if (ttlElement) {
+      if (ttlSeconds !== null && ttlSeconds > 0) {
+        ttlElement.style.display = 'block';
+        this.updateTTLDisplay(ttlSeconds);
+      } else {
+        ttlElement.style.display = 'none';
+      }
+    }
+    
+    // Show signal summary for successful states
+    if (status === 'new-session' || status === 'reconnect') {
+      this.loadSignalSummary();
+    } else {
+      this.hideSignalSummary();
+    }
+  }
+
+  /**
+   * Update TTL display with countdown
+   */
+  updateTTLDisplay(ttlSeconds) {
+    const ttlValue = document.querySelector('.ttl-value');
+    const ttlElement = document.getElementById('sessionTTL');
+    if (!ttlValue || !ttlElement) return;
+    
+    const hours = Math.floor(ttlSeconds / 3600);
+    const minutes = Math.floor((ttlSeconds % 3600) / 60);
+    const seconds = ttlSeconds % 60;
+    
+    let timeString;
+    if (hours > 0) {
+      timeString = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    } else {
+      timeString = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    }
+    
+    ttlValue.textContent = timeString;
+    
+    // Update styling based on remaining time
+    ttlElement.className = 'status-ttl';
+    if (ttlSeconds < 300) { // Less than 5 minutes
+      ttlElement.classList.add('danger');
+    } else if (ttlSeconds < 900) { // Less than 15 minutes
+      ttlElement.classList.add('warning');
+    }
+  }
+
+  /**
+   * Start TTL countdown timer
+   */
+  startTTLTimer(initialTTL) {
+    // Clear existing timer
+    if (this.ttlTimer) {
+      clearInterval(this.ttlTimer);
+    }
+    
+    let remainingSeconds = initialTTL;
+    this.updateTTLDisplay(remainingSeconds);
+    
+    this.ttlTimer = setInterval(() => {
+      remainingSeconds--;
+      if (remainingSeconds <= 0) {
+        clearInterval(this.ttlTimer);
+        this.updateSessionStatusIndicator('loading', '⏰', 'Session Expired', 'DPoP binding has expired, refreshing...');
+        // Optionally trigger session refresh
+        setTimeout(() => {
+          this.autoRegisterBrowserAndBindDPoP();
+        }, 2000);
+      } else {
+        this.updateTTLDisplay(remainingSeconds);
+      }
+    }, 1000);
+  }
+
+  /**
+   * Load and display signal summary
+   */
+  async loadSignalSummary() {
+    try {
+      const response = await fetch('/session/fingerprint', {
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        this.displaySignalSummary(data.fingerprint, data.device_type);
+      } else {
+        this.logger.debug('Could not load fingerprint data for signal summary');
+        this.hideSignalSummary();
+      }
+    } catch (error) {
+      this.logger.debug('Failed to load signal summary:', error);
+      this.hideSignalSummary();
+    }
+  }
+
+  /**
+   * Display signal summary data
+   */
+  displaySignalSummary(fingerprint, deviceType) {
+    const signalSummary = document.getElementById('signalSummary');
+    if (!signalSummary || !fingerprint) {
+      this.hideSignalSummary();
+      return;
+    }
+
+    // Extract key signals
+    const location = this.extractLocation(fingerprint);
+    const device = this.extractDevice(fingerprint, deviceType);
+    const browser = this.extractBrowser(fingerprint);
+
+    // Update display elements
+    document.getElementById('signalLocation').textContent = location;
+    document.getElementById('signalDevice').textContent = device;
+    document.getElementById('signalBrowser').textContent = browser;
+
+    // Show the summary
+    signalSummary.style.display = 'block';
+  }
+
+  /**
+   * Hide signal summary
+   */
+  hideSignalSummary() {
+    const signalSummary = document.getElementById('signalSummary');
+    if (signalSummary) {
+      signalSummary.style.display = 'none';
+    }
+  }
+
+  /**
+   * Extract location information from fingerprint
+   */
+  extractLocation(fingerprint) {
+    const timezone = fingerprint.timezone || 'Unknown';
+    const language = fingerprint.language || 'Unknown';
+    
+    // Try to get geolocation if available
+    if (fingerprint.geolocation) {
+      const geo = fingerprint.geolocation;
+      if (geo.city && geo.country) {
+        return `${geo.city}, ${geo.country}`;
+      } else if (geo.country) {
+        return geo.country;
+      }
+    }
+    
+    // Fallback to timezone
+    return timezone.replace('_', ' ');
+  }
+
+  /**
+   * Extract device information from fingerprint
+   */
+  extractDevice(fingerprint, deviceType) {
+    const platform = fingerprint.platform || 'Unknown';
+    const hardwareConcurrency = fingerprint.hardwareConcurrency || 'Unknown';
+    const deviceMemory = fingerprint.deviceMemory || 'Unknown';
+    
+    let deviceInfo = `${deviceType || 'Unknown'}`;
+    if (platform !== 'Unknown') {
+      deviceInfo += ` (${platform})`;
+    }
+    
+    return deviceInfo;
+  }
+
+  /**
+   * Extract browser information from fingerprint
+   */
+  extractBrowser(fingerprint) {
+    const userAgent = fingerprint.userAgent || '';
+    const webglVendor = fingerprint.webglVendor || 'Unknown';
+    
+    // Try to extract browser name from user agent
+    let browserName = 'Unknown';
+    if (userAgent.includes('Chrome')) browserName = 'Chrome';
+    else if (userAgent.includes('Firefox')) browserName = 'Firefox';
+    else if (userAgent.includes('Safari')) browserName = 'Safari';
+    else if (userAgent.includes('Edge')) browserName = 'Edge';
+    
+    return browserName;
+  }
+
+  /**
+   * Show signal details modal
+   */
+  async showSignalDetailsModal() {
+    const modal = document.getElementById('signalDetailsModal');
+    const content = document.getElementById('signalDetailsContent');
+    
+    if (!modal || !content) return;
+    
+    // Show modal
+    modal.style.display = 'flex';
+    
+    // Show loading state
+    content.innerHTML = '<div class="loading-text">Loading signal data...</div>';
+    
+    try {
+      // Fetch fingerprint data
+      const response = await fetch('/session/fingerprint', {
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        this.renderSignalDetails(data.fingerprint, data.device_type);
+      } else {
+        content.innerHTML = '<div class="loading-text">Failed to load signal data</div>';
+      }
+    } catch (error) {
+      content.innerHTML = '<div class="loading-text">Error loading signal data</div>';
+    }
+  }
+
+  /**
+   * Hide signal details modal
+   */
+  hideSignalDetailsModal() {
+    const modal = document.getElementById('signalDetailsModal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
+  }
+
+  /**
+   * Render detailed signal data in modal
+   */
+  renderSignalDetails(fingerprint, deviceType) {
+    const content = document.getElementById('signalDetailsContent');
+    if (!content || !fingerprint) return;
+    
+    const sections = [
+      {
+        title: '🌍 Location & Environment',
+        data: {
+          'Timezone': fingerprint.timezone || 'Unknown',
+          'Language': fingerprint.language || 'Unknown',
+          'Country': fingerprint.geolocation?.country || 'Unknown',
+          'City': fingerprint.geolocation?.city || 'Unknown',
+          'Region': fingerprint.geolocation?.region || 'Unknown'
+        }
+      },
+      {
+        title: '💻 Device Information',
+        data: {
+          'Device Type': deviceType || 'Unknown',
+          'Platform': fingerprint.platform || 'Unknown',
+          'Hardware Concurrency': fingerprint.hardwareConcurrency || 'Unknown',
+          'Device Memory': fingerprint.deviceMemory || 'Unknown',
+          'Cookie Enabled': fingerprint.cookieEnabled ? 'Yes' : 'No',
+          'Do Not Track': fingerprint.doNotTrack || 'Unknown'
+        }
+      },
+      {
+        title: '🌐 Browser Details',
+        data: {
+          'User Agent': fingerprint.userAgent || 'Unknown',
+          'WebGL Vendor': fingerprint.webglVendor || 'Unknown',
+          'WebGL Renderer': fingerprint.webglRenderer || 'Unknown',
+          'Color Depth': fingerprint.colorDepth || 'Unknown',
+          'Screen Resolution': fingerprint.screenResolution || 'Unknown'
+        }
+      },
+      {
+        title: '🔒 Security & Automation',
+        data: {
+          'WebDriver': fingerprint.automation?.webdriver ? 'Detected' : 'Not Detected',
+          'Headless UA': fingerprint.automation?.headlessUA ? 'Detected' : 'Not Detected',
+          'Plugins Count': fingerprint.automation?.pluginsLength || 'Unknown',
+          'MIME Types Count': fingerprint.automation?.mimeTypesLength || 'Unknown',
+          'Visibility State': fingerprint.automation?.visibilityState || 'Unknown',
+          'Has Focus': fingerprint.automation?.hasFocus ? 'Yes' : 'No'
+        }
+      }
+    ];
+    
+    let html = '';
+    sections.forEach(section => {
+      html += `
+        <div class="signal-detail-section">
+          <div class="signal-detail-title">${section.title}</div>
+          <div class="signal-detail-grid">
+      `;
+      
+      Object.entries(section.data).forEach(([key, value]) => {
+        html += `
+          <div class="signal-detail-item">
+            <div class="signal-detail-label">${key}:</div>
+            <div class="signal-detail-value">${value}</div>
+          </div>
+        `;
+      });
+      
+      html += `
+          </div>
+        </div>
+      `;
+    });
+    
+    content.innerHTML = html;
+  }
+
+  /**
+   * Automatically register browser and bind DPoP if needed
+   */
+  async autoRegisterBrowserAndBindDPoP() {
+    try {
+      // Debug: Check if dpopFun service is properly initialized
+      if (!this.dpopFun) {
+        throw new Error('DpopFun service not initialized');
+      }
+      
+      // Check if we already have everything we need
+      if (this.state.hasSession && this.state.hasBIK && this.state.hasDPoP) {
+        // Fetch current TTL
+        const sessionStatus = await this.dpopFun.getSessionStatus();
+        const ttlSeconds = sessionStatus?.ttl_seconds || 0;
+        
+        this.updateSessionStatusIndicator('reconnect', '✅', 'Session Restored', 'Browser identity and DPoP binding restored from existing session', ttlSeconds);
+        
+        if (ttlSeconds > 0) {
+          this.startTTLTimer(ttlSeconds);
+        }
+        
+        this.logger.info('Session already complete - no registration needed');
+        return;
+      }
+
+      // Check if we have a BIK but no DPoP binding
+      if (this.state.hasBIK && !this.state.hasDPoP) {
+        this.updateSessionStatusIndicator('loading', '🔄', 'Reconnecting...', 'Found existing browser identity, binding DPoP token');
+        
+        this.logger.info('Found existing BIK, reinitializing session and binding DPoP...');
+        
+        // Always ensure session is properly initialized with CSRF token for DPoP binding
+        // Even existing sessions need fresh CSRF tokens for binding operations
+        const session = await this.dpopFun.initSession();
+        this.state.hasSession = true;
+        this.logger.success('Session initialized with CSRF token', session);
+        
+        // Debug: Check if bindDPoP method exists
+        if (typeof this.dpopFun.bindDPoP !== 'function') {
+          throw new Error('bindDPoP method not found on DpopFun service');
+        }
+        
+        const dpop = await this.dpopFun.bindDPoP();
+        this.state.hasDPoP = true;
+        
+        // Enable passkey service authentication after DPoP binding
+        this.passkeys.setAuthenticated(true);
+        
+        // Check for existing passkeys now that we're authenticated
+        await this.checkExistingPasskeys();
+        
+        // Fetch TTL after binding
+        const sessionStatus = await this.dpopFun.getSessionStatus();
+        const ttlSeconds = sessionStatus?.ttl_seconds || 0;
+        
+        this.updateSessionStatusIndicator('reconnect', '✅', 'Reconnected Successfully', 'Browser identity restored and DPoP token bound', ttlSeconds);
+        
+        if (ttlSeconds > 0) {
+          this.startTTLTimer(ttlSeconds);
+        }
+        
+        this.logger.success('DPoP binding completed successfully', dpop);
+        return;
+      }
+
+      // Need to do full registration
+      this.updateSessionStatusIndicator('loading', '🔄', 'Creating New Session...', 'No existing browser identity found, registering new session');
+      
+      this.logger.info('No existing session found, performing full registration...');
+      
+      // Step 1: Initialize session
+      this.logger.info('Step 1: Initializing session...');
+      const session = await this.dpopFun.initSession();
+      this.state.hasSession = true;
+      this.logger.success('Session initialized successfully', session);
+      
+      // Collect device fingerprinting data after session is confirmed working
+      console.log('About to collect fingerprint...');
+      await this.collectFingerprint();
+      console.log('Fingerprint collection completed');
+      
+      // Step 2: Register BIK
+      this.logger.info('Step 2: Registering browser identity...');
+      const bik = await this.dpopFun.registerBIK();
+      this.state.hasBIK = true;
+      this.logger.success('Browser identity registered successfully', bik);
+      
+      // Step 3: Bind DPoP
+      this.logger.info('Step 3: Binding DPoP token...');
+      
+      // Debug: Check if bindDPoP method exists
+      if (typeof this.dpopFun.bindDPoP !== 'function') {
+        throw new Error('bindDPoP method not found on DpopFun service');
+      }
+      
+      const dpop = await this.dpopFun.bindDPoP();
+      this.state.hasDPoP = true;
+      
+      // Enable passkey service authentication after DPoP binding
+      this.passkeys.setAuthenticated(true);
+      
+      // Check for existing passkeys now that we're authenticated
+      await this.checkExistingPasskeys();
+      
+      // Fetch TTL after full registration
+      const sessionStatus = await this.dpopFun.getSessionStatus();
+      const ttlSeconds = sessionStatus?.ttl_seconds || 0;
+      
+      this.updateSessionStatusIndicator('new-session', '✅', 'New Session Created', 'Browser identity registered and DPoP token bound successfully', ttlSeconds);
+      
+      if (ttlSeconds > 0) {
+        this.startTTLTimer(ttlSeconds);
+      }
+      
+      this.logger.success('Automatic browser registration and DPoP binding completed successfully', { session, bik, dpop });
+      
+    } catch (error) {
+      this.updateSessionStatusIndicator('loading', '❌', 'Registration Failed', `Error: ${error.message}`);
+      this.logger.error('Automatic registration failed:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Check for existing session and restore state
    */
   async checkExistingSession() {
@@ -147,7 +592,7 @@ export class AppController {
       this.logger.info('Checking for existing session...');
       
       // Check if we have a valid session
-      const sessionStatus = await this.stronghold.getSessionStatus();
+      const sessionStatus = await this.dpopFun.getSessionStatus();
       this.logger.debug('Session status received:', sessionStatus);
       
       if (sessionStatus && sessionStatus.valid) {
@@ -161,7 +606,7 @@ export class AppController {
         this.state.hasSession = true;
         
         // Restore the service's internal state
-        await this.stronghold.restoreSessionState();
+        await this.dpopFun.restoreSessionState();
         
         // Check if DPoP is bound
         if (sessionStatus.dpop_bound) {
@@ -180,7 +625,6 @@ export class AppController {
           await this.checkExistingUsername();
           
           // Set success states for completed steps (no auto-reset for restored sessions)
-          this.buttonManager.setSuccess('registerBrowserBtn', 'Browser registered & DPoP bound!', 0);
           this.buttonManager.setSuccess('initBtn', 'Session restored!', 0);
           this.buttonManager.setSuccess('bikBtn', 'BIK restored!', 0);
           this.buttonManager.setSuccess('dpopBtn', 'DPoP restored!', 0);
@@ -192,14 +636,14 @@ export class AppController {
           this.state.hasBIK = true;
           
           // Set success state for session and BIK (no auto-reset for restored sessions)
-          this.buttonManager.setSuccess('registerBrowserBtn', 'Browser registered (DPoP pending)', 0);
+          // registerBrowserBtn removed - status shown in session indicator
           this.buttonManager.setSuccess('initBtn', 'Session restored!', 0);
           this.buttonManager.setSuccess('bikBtn', 'BIK restored!', 0);
         } else {
           this.logger.info('Session exists but BIK not registered');
           
           // Set success state for session only (no auto-reset for restored sessions)
-          this.buttonManager.setSuccess('registerBrowserBtn', 'Session restored (registration pending)', 0);
+          // registerBrowserBtn removed - status shown in session indicator
           this.buttonManager.setSuccess('initBtn', 'Session restored!', 0);
         }
         
@@ -681,10 +1125,24 @@ export class AppController {
       this.verifyFace();
     });
 
-    // Register browser and bind DPoP (merged function)
-    document.getElementById('registerBrowserBtn')?.addEventListener('click', () => {
-      this.registerBrowserAndBindDPoP();
+    // Signal details modal
+    document.getElementById('signalDetailsBtn')?.addEventListener('click', () => {
+      this.showSignalDetailsModal();
     });
+
+    document.getElementById('signalModalClose')?.addEventListener('click', () => {
+      this.hideSignalDetailsModal();
+    });
+
+    // Close modal when clicking outside
+    document.getElementById('signalDetailsModal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'signalDetailsModal') {
+        this.hideSignalDetailsModal();
+      }
+    });
+
+    // Register browser and bind DPoP (merged function)
+    // registerBrowserBtn removed - now handled automatically
 
     // API testing
     document.getElementById('apiBtn')?.addEventListener('click', () => {
@@ -726,7 +1184,7 @@ export class AppController {
       this.buttonManager.setLoading('initBtn', 'Initializing...');
       console.log('Starting session initialization...');
       
-      const session = await this.stronghold.initSession();
+      const session = await this.dpopFun.initSession();
       
       this.state.hasSession = true;
       this.updateState();
@@ -829,7 +1287,7 @@ export class AppController {
     await this.errorHandler.handleAsync(async () => {
       this.buttonManager.setLoading('bikBtn', 'Registering BIK...');
       
-      const bik = await this.stronghold.registerBIK();
+      const bik = await this.dpopFun.registerBIK();
       
       this.state.hasBIK = true;
       this.updateState();
@@ -854,7 +1312,7 @@ export class AppController {
         hasDPoP: this.state.hasDPoP
       });
       
-      const dpop = await this.stronghold.bindDPoP();
+      const dpop = await this.dpopFun.bindDPoP();
       
       this.logger.debug('DPoP binding completed:', dpop);
       
@@ -874,54 +1332,7 @@ export class AppController {
     }, 'DPoP binding', this.handleError);
   }
 
-  /**
-   * Register browser and bind DPoP (merged function)
-   */
-  async registerBrowserAndBindDPoP() {
-    await this.errorHandler.handleAsync(async () => {
-      this.buttonManager.setLoading('registerBrowserBtn', 'Setting up browser...');
-      
-      // Step 1: Initialize session
-      this.logger.info('Step 1: Initializing session...');
-      const session = await this.stronghold.initSession();
-      this.state.hasSession = true;
-      this.logger.success('Session initialized successfully', session);
-      
-      // Collect device fingerprinting data after session is confirmed working
-      console.log('About to collect fingerprint...');
-      await this.collectFingerprint();
-      console.log('Fingerprint collection completed');
-      
-      // Step 2: Register BIK
-      this.logger.info('Step 2: Registering browser identity...');
-      const bik = await this.stronghold.registerBIK();
-      this.state.hasBIK = true;
-      this.logger.success('Browser identity registered successfully', bik);
-      
-      // Step 3: Bind DPoP
-      this.logger.info('Step 3: Binding DPoP token...');
-      this.logger.debug('Current state before binding:', {
-        hasSession: this.state.hasSession,
-        hasBIK: this.state.hasBIK,
-        hasDPoP: this.state.hasDPoP
-      });
-      
-      const dpop = await this.stronghold.bindDPoP();
-      this.state.hasDPoP = true;
-      
-      // Enable passkey service authentication after DPoP binding
-      this.passkeys.setAuthenticated(true);
-      
-      // Check for existing passkeys now that we're authenticated
-      await this.checkExistingPasskeys();
-      
-      this.updateState();
-      
-      this.buttonManager.setSuccess('registerBrowserBtn', 'Browser registered & DPoP bound!');
-      this.logger.success('Browser registration and DPoP binding completed successfully', { session, bik, dpop });
-      
-    }, 'Browser registration and DPoP binding', this.handleError);
-  }
+  // registerBrowserAndBindDPoP method removed - now handled automatically in autoRegisterBrowserAndBindDPoP
 
   /**
    * Test API
@@ -1281,7 +1692,7 @@ export class AppController {
       // Capture request details before making the request
       const requestDetails = await this.captureRequestDetails(testData);
       
-      const response = await this.stronghold.testAPI(testData);
+      const response = await this.dpopFun.testAPI(testData);
 
       // Display request details
       clientRequest.innerHTML = JSON.stringify(requestDetails, null, 2);
@@ -1318,21 +1729,21 @@ export class AppController {
    */
   async captureRequestDetails(testData) {
     try {
-      // Import the stronghold module to access its functions
-      const Stronghold = await import('../stronghold.js');
+      // Import the dpop-fun module to access its functions
+      const DpopFun = await import('../dpop-fun.js');
       
       // Get current DPoP state
-      const dpopNonce = await Stronghold.getDpopNonce();
-      const bindToken = await Stronghold.getBindToken();
+      const dpopNonce = await DpopFun.getDpopNonce();
+      const bindToken = await DpopFun.getBindToken();
       
       // Get browser identity key info (without exposing private key)
-      const bik = await Stronghold.getBIK();
+      const bik = await DpopFun.getBIK();
       
       // Ensure nonce is a string or undefined
       const nonceValue = typeof dpopNonce === 'string' ? dpopNonce : undefined;
       
       // Create the actual DPoP proof that will be used
-      const dpopProof = await Stronghold.createDpopProof({
+      const dpopProof = await DpopFun.createDpopProof({
         url: window.location.origin + '/api/echo',
         method: 'POST',
         nonce: nonceValue,
@@ -1361,7 +1772,7 @@ export class AppController {
             kid: bik?.publicJwk?.kid || 'Not available',
             kty: bik?.publicJwk?.kty || 'Not available',
             crv: bik?.publicJwk?.crv || 'Not available',
-            publicKeyThumbprint: bik?.publicJwk ? await Stronghold.jwkThumbprint(bik.publicJwk) : 'Not available'
+            publicKeyThumbprint: bik?.publicJwk ? await DpopFun.jwkThumbprint(bik.publicJwk) : 'Not available'
           }
         }
       };
@@ -1382,10 +1793,10 @@ export class AppController {
     
     // Register Browser & Bind DPoP button - enabled by default (first step)
     if (!this.state.hasDPoP) {
-      this.buttonManager.enableIfNotSuccess('registerBrowserBtn');
+      // registerBrowserBtn removed - now handled automatically
     } else {
       // Keep enabled even after completion to allow re-running
-      this.buttonManager.enableIfNotSuccess('registerBrowserBtn');
+      // registerBrowserBtn removed - now handled automatically
     }
     
     // Update button states based on dependencies, preserving success states
@@ -1500,67 +1911,15 @@ export class AppController {
    */
   async clearClientStorage() {
     try {
-      // Clear IndexedDB manually since storage utilities don't exist
-      return new Promise((resolve, reject) => {
-        const request = indexedDB.open('stronghold', 1);
-        
-        request.onerror = () => {
-          reject(new Error('Failed to open IndexedDB'));
-        };
-        
-        request.onsuccess = () => {
-          const db = request.result;
-          try {
-            // Check what stores actually exist
-            const storeNames = Array.from(db.objectStoreNames);
-            this.logger.debug('Available IndexedDB stores:', storeNames);
-            
-            if (storeNames.length === 0) {
-              // No stores exist, nothing to clear
-              db.close();
-              resolve();
-              return;
-            }
-            
-            // Only clear stores that actually exist
-            const storesToClear = storeNames.filter(name => ['keys', 'meta'].includes(name));
-            
-            if (storesToClear.length === 0) {
-              // No matching stores found
-              db.close();
-              resolve();
-              return;
-            }
-            
-            const transaction = db.transaction(storesToClear, 'readwrite');
-            const clearPromises = storesToClear.map(storeName => {
-              return new Promise((storeResolve, storeReject) => {
-                const store = transaction.objectStore(storeName);
-                const clearRequest = store.clear();
-                
-                clearRequest.onsuccess = () => storeResolve();
-                clearRequest.onerror = () => storeReject(new Error(`Failed to clear ${storeName} store`));
-              });
-            });
-            
-            // Wait for all stores to be cleared
-            Promise.all(clearPromises)
-              .then(() => {
-                db.close();
-                resolve();
-              })
-              .catch((error) => {
-                db.close();
-                reject(error);
-              });
-            
-          } catch (error) {
-            db.close();
-            reject(new Error(`IndexedDB transaction failed: ${error.message}`));
-          }
-        };
-      });
+      // Import the idbWipe function to properly delete the entire database
+      const { idbWipe } = await import('/src/idb.js');
+      
+      this.logger.debug('Deleting entire IndexedDB database...');
+      await idbWipe();
+      this.logger.debug('IndexedDB database deleted successfully');
+      
     } catch (error) {
+      this.logger.error('Failed to clear client storage:', error);
       throw new Error(`Failed to clear client storage: ${error.message}`);
     }
   }
@@ -1581,7 +1940,7 @@ export class AppController {
     };
     
     // Reset service states
-    this.stronghold.clearSession();
+    this.dpopFun.clearSession();
     this.passkeys.setAuthenticated(false);
     
     // Reset all buttons
@@ -1629,5 +1988,11 @@ export class AppController {
   cleanup() {
     this.linking.stopStatusMonitoring();
     this.buttonManager.resetAll();
+    
+    // Clear TTL timer
+    if (this.ttlTimer) {
+      clearInterval(this.ttlTimer);
+      this.ttlTimer = null;
+    }
   }
 }

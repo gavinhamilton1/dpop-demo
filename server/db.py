@@ -10,7 +10,7 @@ from server.config import load_settings
 # Load config once at import
 _SETTINGS = load_settings()
 # Use config-provided path (fallback to /tmp for Render compatibility)
-_DEFAULT_DB_PATH = Path(_SETTINGS.db_path if _SETTINGS.db_path else "/tmp/stronghold.db")
+_DEFAULT_DB_PATH = Path(_SETTINGS.db_path if _SETTINGS.db_path else "/tmp/dpop-fun.db")
 print(f"DEBUG: Using database path: {_DEFAULT_DB_PATH}")
 
 class Database:
@@ -260,12 +260,22 @@ class Database:
 
     async def flush(self):
         # Danger: nukes everything (dev tool)
+        # Must delete in order to respect foreign key constraints
         await self.execscript("""
-          DELETE FROM sessions;
-          DELETE FROM nonces;
-          DELETE FROM jtis;
-          DELETE FROM passkeys;
-          DELETE FROM links;
+          -- Disable foreign key checks temporarily
+          PRAGMA foreign_keys=OFF;
+          
+          -- Delete in reverse dependency order
+          DELETE FROM users;           -- References sessions
+          DELETE FROM face_embeddings; -- References users
+          DELETE FROM links;           -- References sessions
+          DELETE FROM nonces;          -- References sessions
+          DELETE FROM jtis;            -- References sessions
+          DELETE FROM passkeys;        -- No foreign keys
+          DELETE FROM sessions;        -- Base table
+          
+          -- Re-enable foreign key checks
+          PRAGMA foreign_keys=ON;
         """)
 
     # --- passkey repo API (matches your PasskeyRepo shape, but async) -------

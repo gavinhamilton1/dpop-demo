@@ -9,11 +9,11 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.0
       - key: DATABASE_URL
-        value: sqlite:///tmp/stronghold.db
+        value: sqlite:///tmp/dpop-fun.db
       - key: LOG_LEVEL
         value: INFO
       - key: SESSION_SECRET
         generateValue: true
-      - key: STRONGHOLD_CONFIG_FILE
-        value: /opt/render/project/src/server/stronghold.prod.yaml
+      - key: DPOP_FUN_CONFIG_FILE
+        value: /opt/render/project/src/server/dpop-fun.prod.yaml
     healthCheckPath: /

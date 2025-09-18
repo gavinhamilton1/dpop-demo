@@ -78,7 +78,7 @@ class SimpleFaceService:
         return float(np.linalg.norm(encoding1 - encoding2))
     
     def find_best_match(self, query_encoding: np.ndarray, stored_encodings: List[np.ndarray], 
-                       threshold: float = 0.6) -> Tuple[Optional[int], float]:
+                       threshold: float = 0.5) -> Tuple[Optional[int], float]:
         """Find the best matching encoding from stored encodings"""
         best_match_idx = None
         best_distance = float('inf')

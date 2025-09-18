@@ -34,7 +34,7 @@ export const CONFIG = {
     }
   },
   STORAGE: {
-    DB_NAME: 'stronghold-demo',
+    DB_NAME: 'dpop-fun',
     DB_VERSION: 1,
     STORES: { KEYS: 'keys', META: 'meta' },
     KEYS: {
