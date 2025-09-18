@@ -126,14 +126,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
             
             # Set permissions policy based on path
-            if path == "/onboarding" or path == "/face-verify" or path.startswith("/public/vendor/tasks-vision"):
+            if path == "/onboarding" or path == "/face-verify" or path == "/" or path.startswith("/public/vendor/tasks-vision"):
                 resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(self), camera=(self)")
             else:
                 resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=(self)")
             return resp
 
-        # Path-based CSP: face capture pages (onboarding and verification)
-        if path == "/onboarding" or path == "/face-verify" or path.startswith("/public/vendor/tasks-vision"):
+        # Path-based CSP: face capture pages (onboarding, verification, and main page with inline face capture)
+        if path == "/onboarding" or path == "/face-verify" or path == "/" or path.startswith("/public/vendor/tasks-vision"):
             csp = self.CSP_FACE_CAPTURE
             permissions_policy = "geolocation=(), microphone=(self), camera=(self)"
         else:
@@ -1315,10 +1315,8 @@ async def verify_link_finalize(req: Request, resp: Response):
 async def register_face(req: Request):
     """Register a face by uploading a video and extracting embeddings"""
     try:
-        # Get session ID
-        sid = req.session.get("sid")
-        if not sid:
-            raise HTTPException(401, "No active session")
+        # Require valid session with username and DPoP binding
+        username, session_data = await require_valid_session(req)
         
         # Get uploaded file
         form = await req.form()
@@ -1354,7 +1352,7 @@ async def register_face(req: Request):
                     "embedding_shape": embedding.shape
                 }
                 embedding_id = await DB.store_face_embedding(
-                    user_id=sid,
+                    user_id=username,
                     embedding=embedding_bytes,
                     video_path=tmp_path,
                     frame_count=len(embeddings),
@@ -1362,7 +1360,7 @@ async def register_face(req: Request):
                 )
                 embedding_ids.append(embedding_id)
             
-            log.info(f"Registered {len(embeddings)} face embeddings for user {sid}")
+            log.info(f"Registered {len(embeddings)} face embeddings for user {username}")
             return JSONResponse({
                 "success": True,
                 "embeddings_count": len(embeddings),
@@ -1388,10 +1386,8 @@ async def register_face(req: Request):
 async def verify_face(req: Request):
     """Verify a face against stored embeddings"""
     try:
-        # Get session ID
-        sid = req.session.get("sid")
-        if not sid:
-            raise HTTPException(401, "No active session")
+        # Require valid session with username and DPoP binding
+        username, session_data = await require_valid_session(req)
         
         # Get uploaded file
         form = await req.form()
@@ -1416,8 +1412,8 @@ async def verify_face(req: Request):
             if not query_embeddings:
                 raise HTTPException(400, "No faces detected in video")
             
-            # Get all stored embeddings
-            stored_embeddings = await DB.get_all_face_embeddings()
+            # Get stored embeddings for this user
+            stored_embeddings = await DB.get_face_embeddings_for_user(username)
             
             if not stored_embeddings:
                 return JSONResponse({
@@ -1446,7 +1442,7 @@ async def verify_face(req: Request):
             
             verified = best_match is not None and best_similarity >= threshold
             
-            log.info(f"Face verification for user {sid}: verified={verified}, similarity={best_similarity:.3f}")
+            log.info(f"Face verification for user {username}: verified={verified}, similarity={best_similarity:.3f}")
             
             return JSONResponse({
                 "verified": verified,

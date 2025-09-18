@@ -72,6 +72,60 @@
         </div>
 
         <div class="demo-section fade-in">
+            <h2>👤 Face Biometrics</h2>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
+                Register and verify your face for enhanced security:
+            </p>
+            
+            <div class="face-biometrics-form">
+                <div class="face-actions">
+                    <button id="registerFaceBtn" class="btn btn-secondary" disabled>
+                        📸 Register Face
+                    </button>
+                    <button id="verifyFaceBtn" class="btn btn-secondary" disabled>
+                        🔍 Verify Face
+                    </button>
+                </div>
+                <div id="faceStatus" class="face-status" style="display: none;">
+                    <div class="status-message"></div>
+                </div>
+                
+                <!-- Face Capture UI (initially hidden) -->
+                <div id="faceCaptureContainer" class="face-capture-container" style="display: none;">
+                    <div class="face-capture-status">
+                        <span class="face-status-text" id="status">Initializing camera...</span>
+                    </div>
+
+                    <div class="face-capture-row">
+                        <div class="face-capture-col">
+                            <div class="face-preview-wrap">
+                                <video id="video" playsinline muted></video>
+                                <canvas id="canvas"></canvas>
+                                <div class="face-overlay"></div>
+                            </div>
+                        </div>
+                        <div class="face-capture-col">
+                            <div class="face-prompt" id="prompt">Ready.</div>
+                            <div class="face-chips">
+                                <div class="face-chip" id="chipFace">Face detected</div>
+                                <div class="face-chip" id="chipCenter">Center face</div>
+                                <div class="face-chip" id="chipLeft">Turn LEFT</div>
+                                <div class="face-chip" id="chipRight">Turn RIGHT</div>
+                            </div>
+                            <div class="face-result" id="resultBox">
+                                <div><strong>Processing face registration...</strong></div>
+                                <div style="margin-top:6px;">
+                                    <span class="face-pill" id="pillDuration">-- s</span>
+                                    <span class="face-pill" id="pillSize">-- KB</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="demo-section fade-in">
             <h2>🎮 Interactive Demo</h2>
             <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
                 Follow the execution story below to experience the complete browser identity and cryptographic security workflow:

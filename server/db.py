@@ -396,6 +396,22 @@ class Database:
             })
         return embeddings
 
+    async def get_face_embeddings_for_user(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get face embeddings for a specific user"""
+        rows = await self.fetchall("SELECT * FROM face_embeddings WHERE user_id=? ORDER BY created_at DESC", (user_id,))
+        embeddings = []
+        for r in rows:
+            embeddings.append({
+                "id": r["id"],
+                "user_id": r["user_id"],
+                "embedding": r["embedding"],  # Keep as bytes for numpy conversion
+                "video_path": r["video_path"],
+                "frame_count": r["frame_count"],
+                "created_at": r["created_at"],
+                "metadata": json.loads(r["metadata"]) if r["metadata"] else {}
+            })
+        return embeddings
+
     async def delete_face_embeddings_for_user(self, user_id: str) -> bool:
         """Delete all face embeddings for a user"""
         await self.exec("DELETE FROM face_embeddings WHERE user_id=?", (user_id,))

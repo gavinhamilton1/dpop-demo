@@ -8,8 +8,8 @@ import {
     wasmRoot: "/vendor/tasks-vision/wasm",         // local WASM path
     modelUrl: "/models/face_landmarker.task",      // local model
     minFaceScore: 0.6,
-    yawLeftThresh: 0.22,
-    yawRightThresh: -0.22,
+    yawLeftThresh: 0.5,    // Increased: requires more right turn to register left
+    yawRightThresh: -0.5,  // Increased: requires more left turn to register right
     maxDurationMs: 12000,
     mimeType: "video/webm;codecs=vp9,opus"
   };
@@ -17,21 +17,45 @@ import {
   const el = (id)=>document.getElementById(id);
   const video = el("video");
   const canvas = el("canvas");
-  const banner = el("banner");
+  const banner = el("banner"); // May be null if banner was removed
   const statusEl = el("status");
   const promptEl = el("prompt");
   const chipFace = el("chipFace");
+  const chipCenter = el("chipCenter");
   const chipLeft = el("chipLeft");
   const chipRight = el("chipRight");
-  const chipRec = el("chipRecording");
   const resultBox = el("resultBox");
   const pillDuration = el("pillDuration");
   const pillSize = el("pillSize");
-  const btnStart = el("btnStart");
-  const btnRedo = el("btnRedo");
-  const btnSend = el("btnSend");
-  const btnRedo2 = el("btnRedo2");
-  const btnSend2 = el("btnSend2");
+  const btnStartEl = el("btnStart");
+  // Removed button references since we're auto-registering
+  
+  // Check if elements exist, if not, create fallback functions
+  const safeSetStatus = (text) => {
+    if (statusEl) statusEl.textContent = text;
+    else console.log('Status:', text);
+  };
+  
+  const safeSetPrompt = (text, cls) => {
+    if (promptEl) {
+      promptEl.textContent = text;
+      promptEl.className = "face-prompt " + (cls || "");
+    } else {
+      console.log('Prompt:', text);
+    }
+  };
+  
+  const safeSetBanner = (text) => {
+    if (banner) banner.textContent = text;
+  };
+  
+  const safeMark = (chip, ok = false, fail = false) => {
+    if (chip) {
+      chip.classList.remove("done", "fail");
+      if (ok) chip.classList.add("done");
+      if (fail) chip.classList.add("fail");
+    }
+  };
   
   let mediaStream = null;
   let recorder = null;
@@ -40,23 +64,52 @@ import {
   let rafId = null;
   let faceLM = null;
   let running = false;
-  let faced = false, leftOK = false, rightOK = false, recording = false;
+  let faced = false, centered = false, leftOK = false, rightOK = false, recording = false;
+  let recordingTimedOut = false;
   
-  const setStatus = (t)=> statusEl.textContent = t;
-  const setBanner = (t)=> banner.textContent = t;
-  const setPrompt = (t, cls) => { promptEl.textContent = t; promptEl.className = "prompt " + (cls||""); };
-  const mark = (chip, ok=false, fail=false) => {
-    chip.classList.remove("done","fail");
-    if (ok) chip.classList.add("done");
-    if (fail) chip.classList.add("fail");
-  };
+  const setStatus = safeSetStatus;
+  const setBanner = safeSetBanner;
+  const setPrompt = safeSetPrompt;
+  const mark = safeMark;
   
   function resetState() {
-    faced = leftOK = rightOK = recording = false;
-    mark(chipFace); mark(chipLeft); mark(chipRight); mark(chipRec);
-    resultBox.classList.remove("show");
-    btnSend.disabled = true; btnRedo.disabled = true; btnSend2.disabled = true;
+    faced = centered = leftOK = rightOK = recording = false;
+    recordingTimedOut = false;
+    mark(chipFace); mark(chipCenter); mark(chipLeft); mark(chipRight);
+    updateOverlayCentered(false);
+    if (resultBox) resultBox.classList.remove("show");
     setPrompt("Ready."); setBanner("Press \"Start onboarding\"");
+  }
+
+  function resetFaceCapture() {
+    // Stop any running processes
+    stopLoop();
+    stopRecording();
+    
+    // Clear media stream
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(track => track.stop());
+      mediaStream = null;
+    }
+    
+    // Clear video source
+    if (video) {
+      video.srcObject = null;
+    }
+    
+    // Clear canvas
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+    
+    // Reset all state
+    resetState();
+    
+    // Reset status
+    setStatus("Initializing camera...");
   }
   
   function yawRatio(landmarks) {
@@ -66,6 +119,76 @@ import {
     const dR = Math.hypot(nose.x - R.x, nose.y - R.y);
     // Since video is mirrored, swap L and R to match user's perspective
     return Math.log((dL + 1e-6) / (dR + 1e-6));
+  }
+
+  function getFaceCenter(lm) {
+    // Use nose tip as face center
+    const nose = lm[1];
+    console.log('Nose landmark:', nose);
+    return { x: nose.x, y: nose.y };
+  }
+
+  function getFaceSize(lm) {
+    // Calculate face width using eye distance
+    const leftEye = lm[234]; // Left eye outer corner
+    const rightEye = lm[454]; // Right eye outer corner
+    const eyeDistance = Math.abs(rightEye.x - leftEye.x);
+    
+    // Calculate face height using face contour points (more reliable than specific chin point)
+    const topFace = lm[10]; // Top of face
+    const bottomFace = lm[152]; // Bottom of face (try this first)
+    const faceHeight = Math.abs(bottomFace.y - topFace.y);
+    
+    // Also try calculating face bounding box from all landmarks
+    const xCoords = lm.map(p => p.x);
+    const yCoords = lm.map(p => p.y);
+    const faceWidth = Math.max(...xCoords) - Math.min(...xCoords);
+    const faceHeight2 = Math.max(...yCoords) - Math.min(...yCoords);
+    
+    console.log('Eye landmarks:', { leftEye, rightEye, eyeDistance });
+    console.log('Face height landmarks:', { topFace, bottomFace, faceHeight });
+    console.log('Face bounding box:', { faceWidth, faceHeight2 });
+    
+    // Use the larger of the two measurements for more reliable detection
+    return { 
+      width: Math.max(eyeDistance, faceWidth), 
+      height: Math.max(faceHeight, faceHeight2) 
+    };
+  }
+
+  function isFaceCentered(faceCenter) {
+    const centerX = 0.5; // Center of frame
+    const centerY = 0.5; // Center of frame
+    const tolerance = 0.15; // Allow 15% deviation from center (more precise)
+    
+    const xDiff = Math.abs(faceCenter.x - centerX);
+    const yDiff = Math.abs(faceCenter.y - centerY);
+    
+    console.log(`Centering check: x=${faceCenter.x.toFixed(2)} (diff: ${xDiff.toFixed(2)}), y=${faceCenter.y.toFixed(2)} (diff: ${yDiff.toFixed(2)}), tolerance: ${tolerance}`);
+    
+    return xDiff < tolerance && yDiff < tolerance;
+  }
+
+  function isFaceGoodSize(faceSize) {
+    // Good face size: face width should be between 0.25 and 0.55 of frame width
+    // This ensures the face is close enough for good quality but not too close
+    const minFaceWidth = 0.25;
+    const maxFaceWidth = 0.55;
+    
+    console.log(`Size check: faceWidth=${faceSize.width.toFixed(3)}, min=${minFaceWidth}, max=${maxFaceWidth}`);
+    
+    return faceSize.width >= minFaceWidth && faceSize.width <= maxFaceWidth;
+  }
+
+  function updateOverlayCentered(isCentered) {
+    const overlay = document.querySelector('.face-overlay');
+    if (overlay) {
+      if (isCentered) {
+        overlay.classList.add('centered');
+      } else {
+        overlay.classList.remove('centered');
+      }
+    }
   }
   
 
@@ -88,6 +211,26 @@ import {
     });
     video.srcObject = mediaStream;
     await video.play();
+    
+    // Wait for video metadata to load with timeout
+    await new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        resolve(); // Continue with fallback
+      }, 5000); // 5 second timeout
+      
+      video.addEventListener('loadedmetadata', () => {
+        clearTimeout(timeout);
+        resolve();
+      }, { once: true });
+      
+      // Also try to resolve if video dimensions are already available
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        clearTimeout(timeout);
+        resolve();
+      }
+    });
+    
+    // Size canvas to match the video's actual dimensions for proper face detection
     canvas.width = video.videoWidth || 720;
     canvas.height = video.videoHeight || 960;
   }
@@ -106,7 +249,6 @@ import {
     recording = true; recordingStartedAt = performance.now();
     setStatus("Recording…"); setBanner("Recording… follow the instructions");
     setPrompt("Turn your head LEFT", "warn");
-    mark(chipRec, true);
   }
   
   function stopRecording() {
@@ -121,21 +263,46 @@ import {
     pillDuration.textContent = `${durSec}s`;
     pillSize.textContent = `${(blob.size/1024).toFixed(0)} KB`;
     resultBox.classList.add("show");
-    btnSend.disabled = false; btnRedo.disabled = false; btnSend2.disabled = false;
+    
+    if (recordingTimedOut) {
+      // Recording timed out - show failure state
+      setStatus("Capture failed - Time limit exceeded");
+      setPrompt("Time limit exceeded. Please try again.", "danger-txt");
+      setBanner("Time limit exceeded - Please redo");
+    } else {
+      // Recording completed successfully - check if all checks passed
+      if (centered && leftOK && rightOK) {
+        setStatus("All checks passed - Registering face...");
+        setPrompt("Processing face registration...", "ok");
+        setBanner("Registering face...");
+        // Automatically register the face
+        setTimeout(() => {
+          sendForVerification();
+        }, 500);
+      } else {
+        setStatus("Checks incomplete");
+        if (!centered) {
+          setPrompt("Please center your face in the frame.", "danger-txt");
+          setBanner("Center your face");
+        } else if (!leftOK || !rightOK) {
+          setPrompt("Please complete left and right turns.", "danger-txt");
+          setBanner("Complete liveliness checks");
+        }
+      }
+    }
+    
     resultBox.dataset.blobUrl = URL.createObjectURL(blob);
     resultBox._blob = blob;
-    setPrompt("Capture complete.", "ok");
-    setBanner("Capture complete");
   }
   
   async function sendForVerification() {
     const blob = resultBox._blob;
     if (!blob) return;
-    btnSend.disabled = btnSend2.disabled = true;
     
-    // Determine endpoint based on URL or context
+    // Determine endpoint based on URL, context, or inline mode
     const isVerifyMode = window.location.pathname.includes('/face-verify') || 
-                        new URLSearchParams(window.location.search).get('mode') === 'verify';
+                        new URLSearchParams(window.location.search).get('mode') === 'verify' ||
+                        (window.faceCapture && window.faceCapture.mode === 'verify');
     const endpoint = isVerifyMode ? '/face/verify' : '/face/register';
     const actionText = isVerifyMode ? 'verification' : 'registration';
     
@@ -158,7 +325,6 @@ import {
         } else {
           setStatus("Verification failed"); 
           setPrompt(`Face verification failed (Similarity: ${(data.similarity * 100).toFixed(1)}%)`, "danger-txt");
-          btnSend.disabled = btnSend2.disabled = false;
         }
       } else {
         setStatus("Face registered ✓"); 
@@ -168,7 +334,6 @@ import {
     } catch (e) {
       setStatus(`${actionText} failed`); 
       setPrompt(`${actionText} failed: ${e.message}`, "danger-txt");
-      btnSend.disabled = btnSend2.disabled = false;
     }
   }
   
@@ -183,13 +348,6 @@ import {
       if (!running) return;
       const now = performance.now();
       const res = faceLM.detectForVideo(video, now);
-      
-    //   // Debug: log detection result structure
-    //   if (res && Object.keys(res).length > 0) {
-    //     console.log('Detection result keys:', Object.keys(res));
-    //     if (res.faceLandmarks) console.log('Face landmarks:', res.faceLandmarks.length);
-    //     if (res.faceBlendshapes) console.log('Face blendshapes:', res.faceBlendshapes.length);
-    //   }
   
       ctx.clearRect(0,0,canvas.width,canvas.height);
       
@@ -197,10 +355,10 @@ import {
       if (res.faceLandmarks && res.faceLandmarks.length > 0) {
         const originalLm = res.faceLandmarks[0];
         
-        // Transform landmarks to adjust mesh position
+        // Transform landmarks to adjust mesh position (keep normalized coordinates for DrawingUtils)
         const lm = originalLm.map(landmark => ({
-          x: landmark.x - 0.08, // Move mesh left (subtract from x)
-          y: landmark.y - 0.07, // Move mesh up (subtract from y)
+          x: landmark.x - 0.08, // Move mesh left
+          y: landmark.y - 0.07, // Move mesh up
           z: landmark.z
         }));
                 
@@ -209,9 +367,37 @@ import {
   
         if (!faced) {
           faced = true; mark(chipFace, true);
-          setPrompt("Face detected. Recording will start.", "ok");
-          setBanner("Face detected — starting…");
-          startRecording();
+          setPrompt("Face detected. Center your face.", "ok");
+          setBanner("Center your face in the frame");
+        }
+
+        // Check if face is centered and at good distance
+        if (faced && !centered) {
+          const faceCenter = getFaceCenter(originalLm);
+          const faceSize = getFaceSize(originalLm);
+          
+          // Debug logging
+          console.log('Face center:', faceCenter, 'Face size:', faceSize);
+          console.log('Is centered:', isFaceCentered(faceCenter), 'Is good size:', isFaceGoodSize(faceSize));
+          
+          // For now, let's be more lenient with centering to test
+          const isCentered = isFaceCentered(faceCenter);
+          const isGoodSize = isFaceGoodSize(faceSize);
+          
+          if (isCentered && isGoodSize) {
+            centered = true; mark(chipCenter, true);
+            setPrompt("Face centered. Recording will start.", "ok");
+            setBanner("Face centered — starting…");
+            updateOverlayCentered(true);
+            startRecording();
+          } else {
+            updateOverlayCentered(false);
+            if (!isCentered) {
+              setBanner(`Move face to center (x:${faceCenter.x.toFixed(2)}, y:${faceCenter.y.toFixed(2)}, target: 0.5±0.15)`);
+            } else if (!isGoodSize) {
+              setBanner(`Move closer (size:${faceSize.width.toFixed(3)}, target: 0.25-0.55)`);
+            }
+          }
         }
   
         if (recording) {
@@ -231,6 +417,7 @@ import {
             }
           }
           if (performance.now() - recordingStartedAt > CONFIG.maxDurationMs) {
+            recordingTimedOut = true;
             stopRecording();
             setBanner("Time limit reached. Review & send or redo.");
           }
@@ -274,10 +461,9 @@ import {
     updatePageContext();
   }
 
-  // Wire up buttons
-  document.getElementById("btnStart").addEventListener("click", async () => {
-    btnStart.disabled = true;
-    resetState(); setStatus("Initialixzing…");
+  // Function to start face capture (reusable)
+  async function startFaceCapture() {
+    resetState(); setStatus("Initializing…");
     try {
       await initFaceLandmarker();
       await startCamera();
@@ -285,26 +471,85 @@ import {
       loop();
     } catch (e) {
       setStatus("Camera/model init failed"); setPrompt("Camera or model failed to load.", "danger-txt");
-      btnStart.disabled = false;
+      throw e;
     }
-  });
+  }
+
+  // Wire up buttons (only if btnStart exists - for backward compatibility)
+  if (btnStartEl) {
+    btnStartEl.addEventListener("click", async () => {
+      btnStartEl.disabled = true;
+      try {
+        await startFaceCapture();
+      } catch (e) {
+        btnStartEl.disabled = false;
+      }
+    });
+  }
   
   function redo() {
     stopRecording(); chunks = [];
     resultBox.classList.remove("show");
-    btnSend.disabled = true; btnRedo.disabled = true; btnSend2.disabled = true;
-    faced = leftOK = rightOK = recording = false;
+    
+    faced = centered = leftOK = rightOK = recording = false;
+    updateOverlayCentered(false);
         
-    mark(chipFace, false, true); mark(chipLeft, false, true); mark(chipRight, false, true); mark(chipRec, false, true);
+    mark(chipFace, false, true); mark(chipCenter, false, true); mark(chipLeft, false, true); mark(chipRight, false, true);
     
     setPrompt("Ready. Face the camera to start.", ""); setBanner("Looking for your face…");
   }
-  btnRedo.addEventListener("click", redo);
-  btnRedo2.addEventListener("click", redo);
-  btnSend.addEventListener("click", sendForVerification);
-  btnSend2.addEventListener("click", sendForVerification);
+  // Button event listeners removed - using automatic registration
   
   window.addEventListener("beforeunload", () => {
     stopLoop();
     if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
   });
+
+  // Export class for inline usage
+  export class FaceCaptureInline {
+    constructor(mode = 'register') {
+      this.mode = mode;
+      this.initialized = false;
+    }
+
+    async init() {
+      if (this.initialized) return;
+      
+      // Update button text based on mode
+      this.updatePageContext();
+      
+      this.initialized = true;
+    }
+
+    async startCapture() {
+      // Auto-start the face capture process
+      await startFaceCapture();
+    }
+
+    resetFaceCapture() {
+      resetFaceCapture();
+    }
+
+    setMode(mode) {
+      this.mode = mode;
+      if (this.initialized) {
+        this.updatePageContext();
+      }
+    }
+
+    updatePageContext() {
+      const resultBox = document.getElementById('resultBox');
+      
+      if (this.mode === 'verify') {
+        if (resultBox) {
+          const resultText = resultBox.querySelector('div');
+          if (resultText) resultText.innerHTML = '<strong>Processing face verification...</strong>';
+        }
+      } else {
+        if (resultBox) {
+          const resultText = resultBox.querySelector('div');
+          if (resultText) resultText.innerHTML = '<strong>Processing face registration...</strong>';
+        }
+      }
+    }
+  }

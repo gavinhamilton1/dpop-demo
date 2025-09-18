@@ -50,7 +50,8 @@ export class AppController {
       this.buttonManager.initialize([
         'registerModeBtn', 'signinModeBtn', 'submitUsernameBtn', 'submitSigninBtn', 'registerBrowserBtn', 'initBtn', 'bikBtn', 'dpopBtn', 'apiBtn',
         'regBtn', 'authBtn', 'linkBtn', 'flushBtn', 'clientFlushBtn',
-        'swRegBtn', 'swUnregBtn', 'echoSWBtn', 'testSWBtn'
+        'swRegBtn', 'swUnregBtn', 'echoSWBtn', 'testSWBtn',
+        'registerFaceBtn', 'verifyFaceBtn'
       ]);
       
       // Check passkey support
@@ -115,6 +116,30 @@ export class AppController {
   }
 
   /**
+   * Check for existing username in session
+   */
+  async checkExistingUsername() {
+    try {
+      const response = await fetch('/onboarding/current-user', {
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        this.state.username = data.username;
+        this.logger.info('Existing username found:', data.username);
+        
+        // Show success message for existing username
+        this.showUsernameSuccess(data.username, 'signin');
+      } else {
+        this.logger.info('No existing username found for this session');
+      }
+    } catch (error) {
+      this.logger.debug('Could not check for existing username:', error);
+    }
+  }
+
+  /**
    * Check for existing session and restore state
    */
   async checkExistingSession() {
@@ -150,6 +175,9 @@ export class AppController {
           
           // Update passkey authentication state
           this.passkeys.setAuthenticated(true);
+          
+          // Check for existing username
+          await this.checkExistingUsername();
           
           // Set success states for completed steps (no auto-reset for restored sessions)
           this.buttonManager.setSuccess('registerBrowserBtn', 'Browser registered & DPoP bound!', 0);
@@ -276,6 +304,9 @@ export class AppController {
         
         // Store username in state
         this.state.username = username;
+        
+        // Update button states
+        this.updateState();
         
       } catch (error) {
         // Only show error for unexpected network/server errors
@@ -450,6 +481,9 @@ export class AppController {
         // Store username in state
         this.state.username = username;
         
+        // Update button states
+        this.updateState();
+        
       } catch (error) {
         // Only show error for unexpected network/server errors
         this.showSigninError('Network error. Please try again.');
@@ -494,6 +528,114 @@ export class AppController {
   }
 
   /**
+   * Register face biometrics
+   */
+  async registerFace() {
+    await this.errorHandler.handleAsync(async () => {
+      // Check if user has valid session
+      if (!this.state.username) {
+        this.showFaceStatus('error', 'Please complete user binding first');
+        return;
+      }
+
+      // Show inline face capture UI for registration
+      this.showFaceCaptureUI('register');
+    }, 'Face Registration', this.handleError);
+  }
+
+  /**
+   * Verify face biometrics
+   */
+  async verifyFace() {
+    await this.errorHandler.handleAsync(async () => {
+      // Check if user has valid session
+      if (!this.state.username) {
+        this.showFaceStatus('error', 'Please complete user binding first');
+        return;
+      }
+
+      // Show inline face capture UI for verification
+      this.showFaceCaptureUI('verify');
+    }, 'Face Verification', this.handleError);
+  }
+
+  /**
+   * Show face status message
+   */
+  showFaceStatus(type, message) {
+    const statusDiv = document.getElementById('faceStatus');
+    if (!statusDiv) return;
+
+    const messageDiv = statusDiv.querySelector('.status-message');
+    if (!messageDiv) return;
+
+    // Clear previous classes
+    statusDiv.className = 'face-status';
+    statusDiv.classList.add(type);
+
+    // Set message
+    messageDiv.textContent = message;
+    statusDiv.style.display = 'block';
+
+    // Auto-hide after 5 seconds for info messages
+    if (type === 'info') {
+      setTimeout(() => {
+        statusDiv.style.display = 'none';
+      }, 5000);
+    }
+  }
+
+  /**
+   * Show inline face capture UI
+   */
+  showFaceCaptureUI(mode) {
+    const container = document.getElementById('faceCaptureContainer');
+    if (!container) {
+      this.showFaceStatus('error', 'Face capture UI not found');
+      return;
+    }
+
+    // Show the face capture container
+    container.style.display = 'block';
+
+    // Scroll to the face biometrics section
+    const section = container.closest('.demo-section');
+    if (section) {
+      section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // Reset face capture if it exists, then initialize
+    if (window.faceCapture && window.faceCapture.resetFaceCapture) {
+      window.faceCapture.resetFaceCapture();
+      window.faceCapture.setMode(mode);
+      // Restart the capture process
+      setTimeout(() => {
+        window.faceCapture.startCapture();
+      }, 100);
+    } else {
+      this.initializeFaceCapture(mode);
+    }
+  }
+
+  /**
+   * Initialize face capture module
+   */
+  async initializeFaceCapture(mode) {
+    try {
+      // Dynamically import the face capture module
+      const faceCaptureModule = await import('/public/js/face-capture.js');
+      window.faceCapture = new faceCaptureModule.FaceCaptureInline(mode);
+      await window.faceCapture.init();
+
+      // Auto-start the face capture process
+      await window.faceCapture.startCapture();
+    } catch (error) {
+      this.logger.error('Failed to initialize face capture:', error);
+      this.showFaceStatus('error', 'Failed to initialize face capture. Please refresh and try again.');
+    }
+  }
+
+  /**
    * Set up event listeners
    */
   setupEventListeners() {
@@ -528,6 +670,15 @@ export class AppController {
       if (e.key === 'Enter') {
         this.submitSignin();
       }
+    });
+
+    // Face biometrics
+    document.getElementById('registerFaceBtn')?.addEventListener('click', () => {
+      this.registerFace();
+    });
+
+    document.getElementById('verifyFaceBtn')?.addEventListener('click', () => {
+      this.verifyFace();
     });
 
     // Register browser and bind DPoP (merged function)
@@ -1261,6 +1412,15 @@ export class AppController {
     } else {
       this.buttonManager.disable('apiBtn');
       this.buttonManager.disable('linkBtn');
+    }
+
+    // Face biometrics buttons - enabled when user has valid session (username + DPoP)
+    if (this.state.hasDPoP && this.state.username) {
+      this.buttonManager.enableIfNotSuccess('registerFaceBtn');
+      this.buttonManager.enableIfNotSuccess('verifyFaceBtn');
+    } else {
+      this.buttonManager.disable('registerFaceBtn');
+      this.buttonManager.disable('verifyFaceBtn');
     }
 
     // Log state changes

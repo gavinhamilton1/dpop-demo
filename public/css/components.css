@@ -464,6 +464,244 @@ textarea.form-control {
   border-color: var(--primary);
 }
 
+/* Face Biometrics Form */
+.face-biometrics-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-4);
+}
+
+.face-actions {
+  display: flex;
+  gap: var(--spacing-4);
+  justify-content: center;
+}
+
+.face-actions button {
+  min-width: 200px;
+}
+
+.face-status {
+  text-align: center;
+  padding: var(--spacing-4);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  max-width: 500px;
+  width: 100%;
+}
+
+.face-status.success {
+  background: var(--success-light);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.face-status.error {
+  background: var(--error-light);
+  border-color: var(--error);
+  color: var(--error);
+}
+
+/* Face Capture Inline UI */
+.face-capture-container {
+  max-width: 800px;
+  margin: var(--spacing-4) auto 0;
+  padding: var(--spacing-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.face-capture-status {
+  display: flex;
+  justify-content: center;
+  margin-bottom: var(--spacing-4);
+}
+
+.face-status-text {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.face-capture-row {
+  display: grid;
+  grid-template-columns: 180px 1fr; /* Fixed width for video, flexible for controls */
+  gap: var(--spacing-4);
+  align-items: start;
+  min-width: 660px;
+  margin: 0 auto;
+}
+
+.face-capture-col {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-3);
+}
+
+.face-preview-wrap {
+  position: relative;
+  width: 154px; /* 180px - 26px = 154px */
+  height: 205px; /* 154 * 4/3 = 205px for 3:4 aspect ratio */
+  background: var(--background);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin: 0 auto;
+  flex-shrink: 0; /* Prevent shrinking */
+}
+
+.face-preview-wrap video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* Flip video horizontally for selfie mode */
+}
+
+.face-preview-wrap canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* Flip canvas to match flipped video */
+  image-rendering: pixelated; /* Ensure crisp rendering */
+}
+
+.face-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.1);
+}
+
+.face-overlay::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 80px;
+  height: 100px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50px 50px 40px 40px; /* Oval shape for face guide */
+  background: transparent;
+  transition: border-color 0.3s ease;
+}
+
+.face-overlay.centered::before {
+  border-color: rgba(34, 197, 94, 0.8); /* Green when centered */
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
+}
+
+.face-prompt-banner {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: var(--spacing-3);
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid var(--border);
+  padding: var(--spacing-2) var(--spacing-3);
+  border-radius: var(--radius-md);
+  font-weight: var(--font-weight-medium);
+  backdrop-filter: blur(8px);
+}
+
+.face-prompt {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.2px;
+  margin: var(--spacing-2) 0 var(--spacing-1);
+}
+
+.face-chips {
+  display: flex;
+  gap: var(--spacing-2);
+  flex-wrap: wrap;
+  margin: var(--spacing-2) 0 var(--spacing-3);
+}
+
+.face-chip {
+  font-size: var(--font-size-xs);
+  padding: var(--spacing-1) var(--spacing-2);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  transition: all 0.2s ease;
+}
+
+.face-chip.done {
+  border-color: var(--success);
+  color: var(--success);
+  background: var(--success-light);
+}
+
+.face-chip.fail {
+  border-color: var(--error);
+  color: var(--error);
+  background: var(--error-light);
+}
+
+.face-result {
+  display: none;
+  margin-top: var(--spacing-2);
+  padding: var(--spacing-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.face-result.show {
+  display: block;
+}
+
+.face-actions {
+  margin-top: var(--spacing-3);
+  display: flex;
+  gap: var(--spacing-3);
+}
+
+.face-pill {
+  display: inline-block;
+  padding: var(--spacing-1) var(--spacing-2);
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  margin-right: var(--spacing-2);
+}
+
+/* Responsive design for face capture */
+@media (max-width: 768px) {
+  .face-capture-row {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-3);
+    min-width: 100%;
+  }
+  
+  .face-capture-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .face-status-text {
+    margin-left: 0;
+    text-align: center;
+  }
+}
+
+.face-status.info {
+  background: var(--info-light);
+  border-color: var(--info);
+  color: var(--info);
+}
+
 .form-label {
   display: block;
   margin-bottom: var(--spacing-2);
