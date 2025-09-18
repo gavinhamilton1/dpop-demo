@@ -11,6 +11,7 @@ import {
     yawLeftThresh: 0.5,    // Increased: requires more right turn to register left
     yawRightThresh: -0.5,  // Increased: requires more left turn to register right
     maxDurationMs: 12000,
+    minDurationMs: 4000,   // Minimum 4 seconds of recording for better embeddings
     mimeType: "video/webm;codecs=vp9,opus"
   };
   
@@ -277,8 +278,8 @@ import {
       // Recording completed successfully - check if all checks passed
       if (centered && leftOK && rightOK) {
         setStatus("All checks passed - Registering face...");
-        setPrompt("Processing face registration...", "ok");
-        setBanner("Registering face...");
+        setPrompt("Processing face registration with enhanced quality...", "ok");
+        setBanner("Registering face with improved accuracy...");
         // Automatically register the face
         setTimeout(() => {
           sendForVerification();
@@ -325,7 +326,7 @@ import {
         if (data.verified) {
           setStatus("Face verified ✓"); 
           setBanner("Face verification successful ✓"); 
-          setPrompt(`Face verification successful! (Similarity: ${(data.similarity * 100).toFixed(1)}%)`, "ok");
+          setPrompt(`Face verification successful with enhanced accuracy! (Similarity: ${(data.similarity * 100).toFixed(1)}%)`, "ok");
           // Stop camera after successful verification
           setTimeout(() => {
             stopCamera();
@@ -345,7 +346,7 @@ import {
       } else {
         setStatus("Face registered ✓"); 
         setBanner("Face registered successfully ✓"); 
-        setPrompt(`Face registered with ${data.embeddings_count} embedding(s).`, "ok");
+        setPrompt(`Face registered with enhanced quality! ${data.embeddings_count} embedding(s) captured.`, "ok");
         // Stop camera after successful registration
         setTimeout(() => {
           stopCamera();
@@ -364,7 +365,7 @@ import {
   function stopLoop() { if (rafId) cancelAnimationFrame(rafId); rafId = null; running = false; }
   
   function stopCamera() {
-    console.log('🛑 Stopping camera...');
+    console.log('Stopping camera...');
     stopLoop();
     stopRecording();
     
@@ -380,7 +381,7 @@ import {
       video.srcObject = null;
     }
     
-    console.log('✅ Camera stopped');
+    console.log('Camera stopped');
   }
   
   async function loop() {
@@ -457,8 +458,26 @@ import {
             setBanner("Turn your head LEFT");
             if (r < CONFIG.yawRightThresh) {
               rightOK = true; mark(chipRight, true);
+              // Check if we've recorded for minimum duration
+              const recordingDuration = performance.now() - recordingStartedAt;
+              if (recordingDuration >= CONFIG.minDurationMs) {
+                stopRecording();
+                setBanner("Done. Review & send.");
+              } else {
+                const remainingMs = CONFIG.minDurationMs - recordingDuration;
+                setBanner(`Good! Keep recording for ${Math.ceil(remainingMs / 1000)} more seconds...`);
+                setPrompt("Hold still and keep your face centered", "ok");
+              }
+            }
+          } else {
+            // Both turns completed, check if we need more time
+            const recordingDuration = performance.now() - recordingStartedAt;
+            if (recordingDuration >= CONFIG.minDurationMs) {
               stopRecording();
               setBanner("Done. Review & send.");
+            } else {
+              const remainingMs = CONFIG.minDurationMs - recordingDuration;
+              setBanner(`Keep recording for ${Math.ceil(remainingMs / 1000)} more seconds...`);
             }
           }
           if (performance.now() - recordingStartedAt > CONFIG.maxDurationMs) {

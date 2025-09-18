@@ -1,5 +1,5 @@
-// /src/dpop.js
-import { b64uJSON, sigToJoseEcdsa } from '/src/jose-lite.js';
+// /public/js/dpop.js
+import { b64uJSON, sigToJoseEcdsa } from './jose-lite.js';
 import { cryptoLogger } from './utils/logging.js';
 import { CryptoError } from './utils/errors.js';
 import { validateUrl, validateMethod, validateKeyPair, validateNonce } from './utils/validation.js';

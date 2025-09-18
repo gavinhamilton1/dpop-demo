@@ -411,12 +411,12 @@ class QRGenerator {
             
             // Use the AprilTag numbers from the server
             if (result.apriltag_numbers) {
-                console.log('🎯 Server-provided AprilTag numbers:', result.apriltag_numbers);
-                console.log('📊 AprilTag numbers breakdown:', result.apriltag_numbers.map((num, i) => `Pattern ${i + 1}: ${num}`).join(', '));
+                console.log('Server-provided AprilTag numbers:', result.apriltag_numbers);
+                console.log('AprilTag numbers breakdown:', result.apriltag_numbers.map((num, i) => `Pattern ${i + 1}: ${num}`).join(', '));
                 
                 // Store the AprilTag numbers for rendering
                 this.apriltagNumbers = result.apriltag_numbers;
-                console.log('🔄 Stored AprilTag numbers:', this.apriltagNumbers.length, 'numbers');
+                console.log('Stored AprilTag numbers:', this.apriltagNumbers.length, 'numbers');
             }
             
             return result;

@@ -1,8 +1,8 @@
 // Stronghold core: keys, bind, DPoP proof, signed fetch, client flush
 
-import { b64uJSON, sigToJoseEcdsa, createJwsES256, jwkThumbprint } from '/src/jose-lite.js';
-import { idbPut, idbGet, idbWipe, STORES } from '/src/idb.js';
-import { createDpopProof, canonicalUrl } from '/src/dpop.js';
+import { b64uJSON, sigToJoseEcdsa, createJwsES256, jwkThumbprint } from './jose-lite.js';
+import { idbPut, idbGet, idbWipe, STORES } from './idb.js';
+import { createDpopProof, canonicalUrl } from './dpop.js';
 import { coreLogger } from './utils/logging.js';
 import { AuthenticationError, NetworkError, StorageError } from './utils/errors.js';
 import { CONFIG } from './utils/config.js';

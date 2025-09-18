@@ -1,9 +1,9 @@
 // /public/link.js  (module)
 
 // --- Imports (unchanged) ---
-import * as DpopFun from '/src/dpop-fun.js';
-import * as Passkeys from '/src/passkeys.js';
-import { SignatureShare } from '/src/signature-share.js';
+import * as DpopFun from './dpop-fun.js';
+import * as Passkeys from './passkeys.js';
+import { SignatureShare } from './signature-share.js';
 
 // --- Constants ---
 const VERIFY_URL = 'https://verify.dpop.fun/device';
@@ -39,13 +39,13 @@ async function collectMobileFingerprint() {
     const result = await FingerprintService.collectAndSendFingerprint('mobile');
     
     log('Mobile fingerprint collection completed successfully', 'success');
-    console.log('✅ Mobile fingerprint collection completed successfully');
+    console.log('Mobile fingerprint collection completed successfully');
     return result;
     
   } catch (error) {
     log(`Mobile fingerprint collection failed: ${error.message}`, 'error');
     log(`Mobile fingerprint error details: ${error.stack}`, 'error');
-    console.log('❌ MOBILE FINGERPRINT COLLECTION FAILED:', error.message);
+    console.log('MOBILE FINGERPRINT COLLECTION FAILED:', error.message);
     // Don't throw - fingerprinting failure shouldn't break the linking flow
     return null;
   }
@@ -389,10 +389,10 @@ async function link(lid) {
     try {
       await collectMobileFingerprint();
       log('Mobile fingerprint collection completed successfully', 'success');
-      console.log('✅ Mobile fingerprint collection completed successfully');
+      console.log('Mobile fingerprint collection completed successfully');
     } catch (error) {
       log(`Mobile fingerprint collection failed: ${error.message}`, 'error');
-      console.log('❌ Mobile fingerprint collection failed:', error.message);
+      console.log('Mobile fingerprint collection failed:', error.message);
       // Continue with linking flow even if fingerprinting fails
     }
 

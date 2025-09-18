@@ -325,7 +325,6 @@ BASE_DIR = os.path.dirname(__file__)
 
 # Static file mounting
 app.mount("/public", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public")), name="public")
-app.mount("/src", StaticFiles(directory=os.path.join(BASE_DIR, "..", "src")), name="src")
 app.mount("/vendor", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public", "vendor")), name="public")
 app.mount("/models", StaticFiles(directory=os.path.join(BASE_DIR, "..", "public", "models")), name="public")
 
@@ -1286,9 +1285,28 @@ async def clear_test_links():
 
 @app.post("/_admin/flush")
 async def admin_flush():
+    # Clear database
     await DB.flush()
-    log.warning("admin_flush: cleared demo stores")
-    return {"ok": True}
+    
+    # Clear in-memory link storage
+    from server.linking import _LINKS, _LINKS_LOCK, _WATCHERS
+    with _LINKS_LOCK:
+        _LINKS.clear()
+        _WATCHERS.clear()
+    
+    # Clear test link storage
+    global _test_link_storage
+    _test_link_storage.clear()
+    
+    log.warning("admin_flush: cleared demo stores, links, watchers, and test data")
+    
+    # Return response that tells client to clear session cookie
+    response = JSONResponse({"ok": True, "message": "Server data cleared. Please reload page for new session."})
+    
+    # Clear the session cookie on the server side
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    
+    return response
 
 # ======================================================================
 # =============== NEW: verify subdomain desktop endpoints ===============

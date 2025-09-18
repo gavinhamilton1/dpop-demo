@@ -52,7 +52,7 @@ class FaceService:
             self._initialization_error = e
             raise
     
-    def extract_frames_from_video(self, video_path: str, max_frames: int = 10) -> List[np.ndarray]:
+    def extract_frames_from_video(self, video_path: str, max_frames: int = 20) -> List[np.ndarray]:
         """Extract frames from video for face analysis"""
         frames = []
         
@@ -98,7 +98,10 @@ class FaceService:
                 if not ret:
                     break
                 frame_indices.append(current_frame)
-                current_frame += max(1, int(fps))  # Skip frames based on FPS
+                # Skip frames more conservatively to ensure we get enough frames
+                # For 4+ second videos, we want to sample evenly across the duration
+                frame_skip = max(1, int(fps * 0.2))  # Skip 20% of frames (every 5th frame at 30fps)
+                current_frame += frame_skip
         else:
             # Sample frames evenly throughout the video
             if frame_count > max_frames:
@@ -129,6 +132,9 @@ class FaceService:
             cap.release()  # Close and reopen for clean state
             cap = cv2.VideoCapture(video_path)
             
+            # Clear any existing frames from failed indexed reading
+            frames.clear()
+            
             frame_count = 0
             while len(frames) < max_frames:
                 ret, frame = cap.read()
@@ -142,15 +148,18 @@ class FaceService:
                 log.info(f"Extracted sequential frame {frame_count}, shape: {frame_rgb.shape}")
                 frame_count += 1
                 
-                # Skip some frames to get variety
-                if frame_count % 5 == 0:  # Skip every 5th frame
-                    for _ in range(3):
-                        ret = cap.read()[0]  # Skip 3 frames
+                # Skip frames more intelligently to get variety across the video
+                # For 4+ second videos at 30fps, we want to sample evenly
+                if frame_count % 6 == 0:  # Skip every 6th frame to get better distribution
+                    for _ in range(4):  # Skip 4 frames for better temporal distribution
+                        ret = cap.read()[0]  # Skip frames
                         if not ret:
                             break
         
         cap.release()
-        log.info(f"Extracted {len(frames)} frames from video")
+        log.info(f"Extracted {len(frames)} frames from video (target was {max_frames})")
+        if len(frames) < max_frames:
+            log.warning(f"Only extracted {len(frames)} frames, less than target {max_frames}")
         return frames
     
     def extract_face_embeddings(self, frames: List[np.ndarray]) -> List[np.ndarray]:
@@ -160,12 +169,13 @@ class FaceService:
         log.info("Face service initialized successfully")
         
         embeddings = []
+        log.info(f"Starting face extraction from {len(frames)} frames")
         for i, frame in enumerate(frames):
             try:
-                log.info(f"Processing frame {i}, shape: {frame.shape}")
+                log.info(f"Processing frame {i+1}/{len(frames)}, shape: {frame.shape}")
                 # Detect faces and extract embeddings
                 faces = self.app.get(frame)
-                log.info(f"Found {len(faces)} faces in frame {i}")
+                log.info(f"Found {len(faces)} faces in frame {i+1}")
                 
                 if len(faces) > 0:
                     # Use the largest face (most likely to be the main subject)
@@ -196,7 +206,9 @@ class FaceService:
                 log.error(f"Traceback: {traceback.format_exc()}")
                 continue
         
-        log.info(f"Extracted {len(embeddings)} face embeddings")
+        log.info(f"Face extraction complete: {len(embeddings)} embeddings from {len(frames)} frames")
+        if len(embeddings) < len(frames):
+            log.warning(f"Only {len(embeddings)}/{len(frames)} frames had detectable faces")
         return embeddings
     
     async def extract_face_embeddings_with_pad(self, frames: List[np.ndarray]) -> Dict[str, Any]:

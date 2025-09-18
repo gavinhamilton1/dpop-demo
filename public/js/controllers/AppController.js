@@ -150,9 +150,18 @@ export class AppController {
     if (!indicator) return;
     
     indicator.className = `status-indicator ${status}`;
-    indicator.querySelector('.status-icon').textContent = icon;
-    indicator.querySelector('.status-text').textContent = text;
-    indicator.querySelector('.status-detail').textContent = detail;
+    
+    // Update status title (the actual text element)
+    const statusTitle = indicator.querySelector('.status-title');
+    if (statusTitle) {
+      statusTitle.textContent = text;
+    }
+    
+    // Update status detail
+    const statusDetail = indicator.querySelector('.status-detail');
+    if (statusDetail) {
+      statusDetail.textContent = detail;
+    }
     
     // Update TTL display
     const ttlElement = document.getElementById('sessionTTL');
@@ -179,7 +188,10 @@ export class AppController {
   updateTTLDisplay(ttlSeconds) {
     const ttlValue = document.querySelector('.ttl-value');
     const ttlElement = document.getElementById('sessionTTL');
-    if (!ttlValue || !ttlElement) return;
+    if (!ttlValue || !ttlElement) {
+      // TTL elements were removed from HTML, so skip TTL display
+      return;
+    }
     
     const hours = Math.floor(ttlSeconds / 3600);
     const minutes = Math.floor((ttlSeconds % 3600) / 60);
@@ -268,9 +280,13 @@ export class AppController {
     const browser = this.extractBrowser(fingerprint);
 
     // Update display elements
-    document.getElementById('signalLocation').textContent = location;
-    document.getElementById('signalDevice').textContent = device;
-    document.getElementById('signalBrowser').textContent = browser;
+    const signalLocation = document.getElementById('signalLocation');
+    const signalDevice = document.getElementById('signalDevice');
+    const signalBrowser = document.getElementById('signalBrowser');
+    
+    if (signalLocation) signalLocation.textContent = location;
+    if (signalDevice) signalDevice.textContent = device;
+    if (signalBrowser) signalBrowser.textContent = browser;
 
     // Show the summary
     signalSummary.style.display = 'block';
@@ -470,20 +486,29 @@ export class AppController {
         throw new Error('DpopFun service not initialized');
       }
       
-      // Check if we already have everything we need
+      // Check if we already have everything we need AND the session is actually valid
       if (this.state.hasSession && this.state.hasBIK && this.state.hasDPoP) {
-        // Fetch current TTL
+        // Verify the session is actually valid on the server
         const sessionStatus = await this.dpopFun.getSessionStatus();
-        const ttlSeconds = sessionStatus?.ttl_seconds || 0;
         
-        this.updateSessionStatusIndicator('reconnect', '✅', 'Session Restored', 'Browser identity and DPoP binding restored from existing session', ttlSeconds);
-        
-        if (ttlSeconds > 0) {
-          this.startTTLTimer(ttlSeconds);
+        if (sessionStatus && sessionStatus.valid && sessionStatus.dpop_bound) {
+          const ttlSeconds = sessionStatus?.ttl_seconds || 0;
+          
+          this.updateSessionStatusIndicator('reconnect', '✅', 'Session Restored', 'Browser identity and DPoP binding restored from existing session', ttlSeconds);
+          
+          if (ttlSeconds > 0) {
+            this.startTTLTimer(ttlSeconds);
+          }
+          
+          this.logger.info('Session already complete - no registration needed');
+          return;
+        } else {
+          this.logger.info('State indicates session exists but server says invalid - will recreate');
+          // Reset state since server says session is invalid
+          this.state.hasSession = false;
+          this.state.hasBIK = false;
+          this.state.hasDPoP = false;
         }
-        
-        this.logger.info('Session already complete - no registration needed');
-        return;
       }
 
       // Check if we have a BIK but no DPoP binding
@@ -598,6 +623,7 @@ export class AppController {
       if (sessionStatus && sessionStatus.valid) {
         this.logger.info('Valid session found, checking DPoP binding...');
         this.logger.debug('Session details:', {
+          valid: sessionStatus.valid,
           state: sessionStatus.state,
           bik_registered: sessionStatus.bik_registered,
           dpop_bound: sessionStatus.dpop_bound
@@ -1213,7 +1239,7 @@ export class AppController {
       this.logger.info('Fingerprint collection completed successfully');
       return result;
     } catch (error) {
-      console.log('❌ FINGERPRINT COLLECTION FAILED:', error);
+      console.log('FINGERPRINT COLLECTION FAILED:', error);
       this.logger.error('Failed to collect fingerprint:', error);
       // Don't throw - fingerprinting failure shouldn't break session initialization
     }
@@ -1912,7 +1938,7 @@ export class AppController {
   async clearClientStorage() {
     try {
       // Import the idbWipe function to properly delete the entire database
-      const { idbWipe } = await import('/src/idb.js');
+      const { idbWipe } = await import('../idb.js');
       
       this.logger.debug('Deleting entire IndexedDB database...');
       await idbWipe();

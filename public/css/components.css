@@ -957,24 +957,25 @@ textarea.form-control {
 .status-indicator {
   display: flex;
   align-items: center;
-  gap: 1rem;
 }
 
 .status-content {
   flex: 1;
 }
 
-.status-icon {
-  font-size: 2rem;
-  min-width: 2rem;
-  text-align: center;
-}
-
 .status-text {
   font-weight: 600;
   font-size: 1.1rem;
   color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
+
+.status-title {
+  flex: 1;
+}
+
 
 .status-detail {
   font-size: 0.9rem;
@@ -982,51 +983,12 @@ textarea.form-control {
   margin-top: 0.25rem;
 }
 
-.status-indicator.new-session .status-icon {
-  color: var(--success-color);
-}
-
-.status-indicator.reconnect .status-icon {
-  color: var(--info-color);
-}
-
-.status-indicator.loading .status-icon {
-  color: var(--warning-color);
-  animation: pulse 2s infinite;
-}
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
 
-.status-ttl {
-  margin-top: 0.5rem;
-  padding: 0.5rem;
-  background: var(--surface-light);
-  border-radius: 6px;
-  border-left: 3px solid var(--info-color);
-  font-size: 0.9rem;
-}
-
-.ttl-label {
-  color: var(--text-muted);
-  margin-right: 0.5rem;
-}
-
-.ttl-value {
-  font-weight: 600;
-  color: var(--info-color);
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-}
-
-.status-ttl.warning .ttl-value {
-  color: var(--warning-color);
-}
-
-.status-ttl.danger .ttl-value {
-  color: var(--danger-color);
-}
 
 .signal-summary {
   margin-top: 0.75rem;

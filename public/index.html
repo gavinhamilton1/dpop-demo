@@ -17,32 +17,27 @@
     
     <div class="container">
         <div class="header">
-                                <h1>🔐 Browser Identity & DPoP Security</h1>
-                    <p>A comprehensive reference implementation demonstrating browser identity management using non-exportable WebCrypto keys and DPoP (Demonstration of Proof-of-Possession) tokens for advanced cryptographic security.</p>
+            <h1>🔐 Browser Identity & DPoP Security</h1>
         </div>
 
         <div class="demo-section fade-in">
-            <h2>🔧 Session</h2>            
+            <h2>🔧 Browser Session</h2>            
             <div class="session-status-card">
                 <div id="sessionStatusIndicator" class="status-indicator">
-                    <div class="status-icon">⏳</div>
                     <div class="status-content">
-                        <div class="status-text">Initializing session...</div>
-                        <div class="status-detail">Checking for existing browser identity and session</div>
-                        <div id="sessionTTL" class="status-ttl" style="display: none;">
-                            <span class="ttl-label">Session expires in:</span>
-                            <span class="ttl-value">--:--</span>
+                        <div class="status-text">
+                            <span class="status-title">Initializing session...</span>
                         </div>
+                        <div class="status-detail">Checking for existing browser identity and session</div>
                         <div id="signalSummary" class="signal-summary" style="display: none;">
                             <div class="signal-header">
-                                <span class="signal-icon">📊</span>
-                                <span class="signal-title">Signal Summary</span>
+                                <span class="signal-title">Risk Signal Summary</span>
                                 <button id="signalDetailsBtn" class="signal-details-btn" title="View all signal data">
                                     <span class="btn-icon">More data...</span>
                                 </button>
                             </div>
                             <div class="signal-row">
-                                <div class="signal-item">
+                                <div class="signal-item">   
                                     <span class="signal-label">Location:</span>
                                     <span class="signal-value" id="signalLocation">--</span>
                                 </div>
@@ -265,10 +260,10 @@
         </div>
     </div>
 
-    <script src="/public/qrcode.min.js"></script>
-    <script src="/public/browser.js"></script>
-    <script src="/public/apriltag.js"></script>
-    <script type="module" src="/public/app.js?v=1"></script>
+    <script src="/public/vendor/qrcode.min.js"></script>
+    <script src="/public/js/browser.js"></script>
+    <script src="/public/js/apriltag.js"></script>
+    <script type="module" src="/public/js/app.js"></script>
 
 </body>
 </html>

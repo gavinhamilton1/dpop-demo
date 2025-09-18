@@ -37,10 +37,10 @@ class AppPageController {
             // Set up global functions
             this.setupGlobalFunctions();
             
-            console.log('✅ App Page initialized successfully');
+            console.log('App Page initialized successfully');
             
         } catch (error) {
-            console.error('❌ Failed to initialize App Page:', error);
+            console.error('Failed to initialize App Page:', error);
             this.showError('Failed to initialize app page: ' + error.message);
         }
     }
@@ -81,7 +81,7 @@ class AppPageController {
             }
             
             const data = await response.json();
-            console.log('📊 Fingerprint data received:', data);
+            console.log('Fingerprint data received:', data);
             
             // Display desktop fingerprint
             this.displayDesktopFingerprint(data.desktop);
@@ -90,7 +90,7 @@ class AppPageController {
             this.displayMobileFingerprint(data.mobile);
             
         } catch (error) {
-            console.error('❌ Failed to load fingerprint data:', error);
+            console.error('Failed to load fingerprint data:', error);
             this.showFingerprintError('Failed to load fingerprint data: ' + error.message);
         }
     }
@@ -137,7 +137,7 @@ class AppPageController {
         const html = this.generateFingerprintHTML(info);
         
         summaryEl.innerHTML = html;
-        console.log(`✅ Displayed fingerprint data for ${deviceType}`);
+        console.log(`Displayed fingerprint data for ${deviceType}`);
     }
 
     /**
@@ -204,11 +204,11 @@ class AppPageController {
      */
     async initializeSignatureSharing() {
         try {
-            console.log('🔗 Initializing signature sharing...');
+            console.log('Initializing signature sharing...');
             this.updateScribbleStatus('Connecting to mobile device...', 'connecting');
             
             // Import and initialize signature sharing
-            const { SignatureShare } = await import('/src/signature-share.js');
+            const { SignatureShare } = await import('./signature-share.js');
             this.signatureShare = new SignatureShare();
             
             // Initialize for desktop (viewing)
@@ -218,10 +218,10 @@ class AppPageController {
             this.setupConnectionMonitoring();
             
             this.updateScribbleStatus('Connected! Draw on your mobile device to see it here.', 'connected');
-            console.log('✅ Signature sharing initialized');
+            console.log('Signature sharing initialized');
             
         } catch (error) {
-            console.error('❌ Failed to initialize signature sharing:', error);
+            console.error('Failed to initialize signature sharing:', error);
             this.updateScribbleStatus('Failed to connect to mobile device', 'error');
         }
     }
@@ -321,7 +321,7 @@ class AppPageController {
             }
             
         } catch (error) {
-            console.error('❌ Error killing session:', error);
+            console.error('Error killing session:', error);
             alert('Error killing session. Please try again.');
         }
     }
@@ -347,7 +347,7 @@ class AppPageController {
             this.signatureShare.websocket.close();
         }
         
-        console.log('🧹 App Page cleaned up');
+        console.log('App Page cleaned up');
     }
 }
 

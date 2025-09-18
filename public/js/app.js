@@ -1,7 +1,7 @@
 // public/app.js
 // Main application entry point - Refactored to use modular architecture
 
-import { AppController } from '../src/controllers/AppController.js';
+import { AppController } from './controllers/AppController.js';
 
 // Global application instance
 let appController = null;

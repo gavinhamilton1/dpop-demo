@@ -164,11 +164,11 @@ class FingerprintService {
         deviceType: deviceType
       };
 
-      console.log(`✅ FINGERPRINT COLLECTION COMPLETED for ${deviceType}:`, Object.keys(fingerprint).length, 'signals');
+      console.log(`FINGERPRINT COLLECTION COMPLETED for ${deviceType}:`, Object.keys(fingerprint).length, 'signals');
       return fingerprint;
       
     } catch (error) {
-      console.error(`❌ FINGERPRINT COLLECTION FAILED for ${deviceType}:`, error);
+      console.error(`FINGERPRINT COLLECTION FAILED for ${deviceType}:`, error);
       throw error;
     }
   }
@@ -195,11 +195,11 @@ class FingerprintService {
       }
 
       const result = await response.json();
-      console.log('✅ Fingerprint sent to server successfully');
+      console.log('Fingerprint sent to server successfully');
       return result;
       
     } catch (error) {
-      console.error('❌ Failed to send fingerprint to server:', error);
+      console.error('Failed to send fingerprint to server:', error);
       throw error;
     }
   }
@@ -215,7 +215,7 @@ class FingerprintService {
       const result = await this.sendFingerprintToServer(fingerprint);
       return result;
     } catch (error) {
-      console.error(`❌ Failed to collect and send fingerprint for ${deviceType}:`, error);
+      console.error(`Failed to collect and send fingerprint for ${deviceType}:`, error);
       throw error;
     }
   }

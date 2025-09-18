@@ -1,6 +1,6 @@
-// /src/passkeys.js
-import * as DpopFun from '/src/dpop-fun.js';
-import { b64uToBuf, bufToB64u } from '/src/jose-lite.js';
+// /public/js/passkeys.js
+import * as DpopFun from './dpop-fun.js';
+import { b64uToBuf, bufToB64u } from './jose-lite.js';
 import { cryptoLogger } from './utils/logging.js';
 import { AuthenticationError, NetworkError } from './utils/errors.js';
 
