@@ -159,7 +159,7 @@ import {
   function isFaceCentered(faceCenter) {
     const centerX = 0.5; // Center of frame
     const centerY = 0.5; // Center of frame
-    const tolerance = 0.15; // Allow 15% deviation from center (more precise)
+    const tolerance = 0.20; // Allow 20% deviation from center (more lenient)
     
     const xDiff = Math.abs(faceCenter.x - centerX);
     const yDiff = Math.abs(faceCenter.y - centerY);
@@ -172,7 +172,7 @@ import {
   function isFaceGoodSize(faceSize) {
     // Good face size: face width should be between 0.45 and 0.75 of frame width
     // This ensures the face is very close for maximum detection quality and signal-to-noise ratio
-    const minFaceWidth = 0.50;  // Increased from 0.35 to require much closer face
+    const minFaceWidth = 0.40;  // Increased from 0.35 to require much closer face
     const maxFaceWidth = 0.80;  // Increased from 0.65 to allow closer maximum
     
     console.log(`Size check: faceWidth=${faceSize.width.toFixed(3)}, min=${minFaceWidth}, max=${maxFaceWidth}`);
@@ -438,7 +438,7 @@ import {
           } else {
             updateOverlayCentered(false);
             if (!isCentered) {
-              setBanner(`Move face to center (x:${faceCenter.x.toFixed(2)}, y:${faceCenter.y.toFixed(2)}, target: 0.5±0.15)`);
+              setBanner(`Move face to center (x:${faceCenter.x.toFixed(2)}, y:${faceCenter.y.toFixed(2)}, target: 0.5±0.20)`);
             } else if (!isGoodSize) {
               setBanner(`Move closer (size:${faceSize.width.toFixed(3)}, target: 0.55-0.85)`);
             }

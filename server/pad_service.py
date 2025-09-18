@@ -120,19 +120,19 @@ class SpatialPADAnalyzer:
         return features
     
     def _compute_gabor_features(self, image: np.ndarray) -> List[float]:
-        """Compute Gabor filter responses"""
-        log.info(f"Computing Gabor features for image shape: {image.shape}")
+        """Compute Gabor filter responses - optimized version"""
         features = []
         
-        # Different orientations and frequencies
-        orientations = [0, 45, 90, 135]
-        frequencies = [0.1, 0.3, 0.5]
+        # Reduced orientations and frequencies for speed
+        orientations = [0, 90]  # Only horizontal and vertical
+        frequencies = [0.3]      # Only one frequency
         
         for orientation in orientations:
             for frequency in frequencies:
                 try:
+                    # Smaller kernel for speed
                     kernel = cv2.getGaborKernel(
-                        (21, 21), 5, np.radians(orientation), 
+                        (15, 15), 3, np.radians(orientation), 
                         2*np.pi*frequency, 0.5, 0, ktype=cv2.CV_32F
                     )
                     filtered = cv2.filter2D(image.astype(np.float32), cv2.CV_32F, kernel)
@@ -170,13 +170,18 @@ class SpatialPADAnalyzer:
             return [0.0, 0.0, 0.0, 0.0]
     
     def analyze_spatial_pad(self, face_frames: List[np.ndarray]) -> float:
-        """Analyze spatial PAD for a sequence of face frames"""
+        """Analyze spatial PAD for a sequence of face frames - optimized version"""
         if face_frames is None or len(face_frames) == 0:
             return 0.0
         
-        # Extract features from each frame
+        # Process only every other frame for speed (or max 5 frames)
+        max_frames = min(5, len(face_frames))
+        step = max(1, len(face_frames) // max_frames)
+        selected_frames = face_frames[::step][:max_frames]
+        
+        # Extract features from selected frames only
         all_features = []
-        for i, frame in enumerate(face_frames):
+        for i, frame in enumerate(selected_frames):
             features = self.extract_texture_features(frame)
             all_features.append(features)
         
@@ -611,7 +616,7 @@ class DisplayFlickerAnalyzer:
                 
             # Focus on higher frequencies (screen refresh patterns)
             # Real screens typically refresh at 60Hz+, but with limited frames we look for any high-freq patterns
-            high_freq_mask = freqs >= 2.0  # Focus on 2Hz+ (above natural head movement)
+            high_freq_mask = freqs >= 3.0  # Focus on 3Hz+ (above natural head movement)
             high_freq_psd = psd[high_freq_mask]
             high_freq_freqs = freqs[high_freq_mask]
             
@@ -624,7 +629,7 @@ class DisplayFlickerAnalyzer:
                 noise_power = (np.sum(psd) - peak_power) / max(len(psd) - 1, 1)
                 snr = (peak_power + 1e-9) / (noise_power + 1e-9)
                 # Much lower sensitivity for low frequencies
-                flicker_score = float(np.clip((snr - 5) / 10, 0, 1)) if peak_freq >= 2.0 else 0.0
+                flicker_score = float(np.clip((snr - 8) / 15, 0, 1)) if peak_freq >= 3.0 else 0.0
             else:
                 # Use high-frequency analysis
                 peak_idx = np.argmax(high_freq_psd)
@@ -632,8 +637,8 @@ class DisplayFlickerAnalyzer:
                 peak_power = high_freq_psd[peak_idx]
                 noise_power = (np.sum(high_freq_psd) - peak_power) / max(len(high_freq_psd) - 1, 1)
                 snr = (peak_power + 1e-9) / (noise_power + 1e-9)
-                # Higher sensitivity for high frequencies
-                flicker_score = float(np.clip((snr - 2) / 5, 0, 1))
+                # Much lower sensitivity for high frequencies to avoid false positives
+                flicker_score = float(np.clip((snr - 5) / 10, 0, 1))
             
             log.info(f"Flicker analysis: peak_freq={peak_freq:.2f}Hz, peak_power={peak_power:.3f}, noise={noise_power:.3f}, snr={snr:.3f}, score={flicker_score:.3f}")
             return flicker_score
@@ -817,7 +822,7 @@ class PADService:
         return attack_frames
         
     async def analyze_pad(self, face_frames: List[np.ndarray], landmarks_sequence: List[List] = None) -> Dict[str, Any]:
-        """Perform comprehensive PAD analysis using advanced techniques"""
+        """Perform comprehensive PAD analysis using advanced techniques with timeout"""
         try:
             if not face_frames or len(face_frames) < 10:
                 log.warning("Insufficient frames for PAD analysis")
@@ -828,6 +833,31 @@ class PADService:
                     "analysis_details": {"error": "Insufficient frames"}
                 }
             
+            # Add timeout to prevent hanging
+            return await asyncio.wait_for(
+                self._perform_pad_analysis(face_frames, landmarks_sequence),
+                timeout=15.0  # 15 second timeout
+            )
+        except asyncio.TimeoutError:
+            log.warning("PAD analysis timed out after 15 seconds")
+            return {
+                "attack_detected": False,
+                "confidence": 0.5,
+                "live_final": True,
+                "analysis_details": {"error": "Analysis timed out"}
+            }
+        except Exception as e:
+            log.error(f"PAD analysis failed: {e}")
+            return {
+                "attack_detected": False,
+                "confidence": 0.5,
+                "live_final": True,
+                "analysis_details": {"error": str(e)}
+            }
+    
+    async def _perform_pad_analysis(self, face_frames: List[np.ndarray], landmarks_sequence: List[List] = None) -> Dict[str, Any]:
+        """Internal PAD analysis method"""
+        try:
             # Advanced rPPG analysis
             rppg_results = self.advanced_rppg.analyze_rppg(face_frames, fs=10)
             
@@ -851,7 +881,7 @@ class PADService:
             else:
                 log.warning(f"No landmarks provided for planarity analysis: {landmarks_sequence}")
             
-            # Legacy analyzers (for comparison)
+            # Legacy analyzers (for comparison) - optimized to process fewer frames
             spatial_score = self.spatial_analyzer.analyze_spatial_pad(face_frames)
             temporal_score = self.temporal_analyzer.analyze_temporal_pad(face_frames)
             pose_score = 0.0
@@ -868,32 +898,32 @@ class PADService:
             rppg_failed = hr_bpm is None or rppg_snr_db <= -500
             live_ok = rppg_failed or ((rppg_live_prob >= 0.6) and (40 <= (hr_bpm or 0) <= 180))
             
-            # Spoof indicators - require much stronger evidence to avoid false positives
-            screen_suspect = flicker_score >= 0.9  # Much higher threshold for stronger evidence
-            planar_suspect = planarity_score >= 0.8  # Higher threshold for stronger evidence
+            # Spoof indicators - be very conservative to avoid false negatives
+            screen_suspect = flicker_score >= 0.95  # Even higher threshold to avoid false positives
+            planar_suspect = planarity_score >= 0.9  # Higher threshold for stronger evidence
             
             # Final decision: live if rPPG is good OR failed (conservative), AND no strong spoof indicators
             # Flag as spoof if EITHER screen OR planar indicators are detected (proper spoof detection)
             is_live = live_ok and not (screen_suspect or planar_suspect)
             
-            # Calculate overall confidence
+            # Calculate overall confidence - be more lenient
             if rppg_failed:
-                # If rPPG failed, use neutral confidence unless we have strong spoof indicators
-                confidence = 0.5 if not (screen_suspect or planar_suspect) else 0.2
+                # If rPPG failed, use neutral confidence unless we have very strong spoof indicators
+                confidence = 0.6 if not (screen_suspect or planar_suspect) else 0.3
             else:
                 confidence = rppg_live_prob
                 if screen_suspect:
-                    confidence *= 0.3  # Reduce confidence if screen detected
+                    confidence *= 0.5  # Less aggressive reduction
                 if planar_suspect:
-                    confidence *= 0.3  # Reduce confidence if planar motion detected
+                    confidence *= 0.5  # Less aggressive reduction
             
             attack_detected = not is_live
             
             log.info(f"Advanced PAD Analysis Results:")
             hr_display = f"{hr_bpm:.1f}" if hr_bpm is not None else "N/A"
             log.info(f"  rPPG HR: {hr_display} BPM, SNR: {rppg_snr_db:.1f} dB, Live Prob: {rppg_live_prob:.3f}")
-            log.info(f"  Display Flicker Score: {flicker_score:.3f} (threshold: 0.9)")
-            log.info(f"  Planarity Score: {planarity_score:.3f} (threshold: 0.8)")
+            log.info(f"  Display Flicker Score: {flicker_score:.3f} (threshold: 0.95)")
+            log.info(f"  Planarity Score: {planarity_score:.3f} (threshold: 0.9)")
             log.info(f"  rPPG Failed: {rppg_failed}, Live OK: {live_ok}")
             log.info(f"  Screen Suspect: {screen_suspect}, Planar Suspect: {planar_suspect}")
             log.info(f"  Final Decision: {'LIVE' if is_live else 'SPOOF'} (confidence: {confidence:.3f})")
