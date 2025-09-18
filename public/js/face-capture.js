@@ -269,6 +269,10 @@ import {
       setStatus("Capture failed - Time limit exceeded");
       setPrompt("Time limit exceeded. Please try again.", "danger-txt");
       setBanner("Time limit exceeded - Please redo");
+      // Stop camera after timeout
+      setTimeout(() => {
+        stopCamera();
+      }, 3000); // Stop camera after 3 seconds
     } else {
       // Recording completed successfully - check if all checks passed
       if (centered && leftOK && rightOK) {
@@ -322,6 +326,10 @@ import {
           setStatus("Face verified ✓"); 
           setBanner("Face verification successful ✓"); 
           setPrompt(`Face verification successful! (Similarity: ${(data.similarity * 100).toFixed(1)}%)`, "ok");
+          // Stop camera after successful verification
+          setTimeout(() => {
+            stopCamera();
+          }, 2000); // Stop camera after 2 seconds
         } else {
           setStatus("Verification failed"); 
           // Check if this is a PAD attack detection
@@ -338,14 +346,42 @@ import {
         setStatus("Face registered ✓"); 
         setBanner("Face registered successfully ✓"); 
         setPrompt(`Face registered with ${data.embeddings_count} embedding(s).`, "ok");
+        // Stop camera after successful registration
+        setTimeout(() => {
+          stopCamera();
+        }, 2000); // Stop camera after 2 seconds
       }
     } catch (e) {
       setStatus(`${actionText} failed`); 
       setPrompt(`${actionText} failed: ${e.message}`, "danger-txt");
+      // Stop camera after failed attempt
+      setTimeout(() => {
+        stopCamera();
+      }, 3000); // Stop camera after 3 seconds
     }
   }
   
   function stopLoop() { if (rafId) cancelAnimationFrame(rafId); rafId = null; running = false; }
+  
+  function stopCamera() {
+    console.log('🛑 Stopping camera...');
+    stopLoop();
+    stopRecording();
+    
+    // Clear media stream
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(track => track.stop());
+      mediaStream = null;
+    }
+    
+    // Clear video element
+    const video = el("video");
+    if (video) {
+      video.srcObject = null;
+    }
+    
+    console.log('✅ Camera stopped');
+  }
   
   async function loop() {
     running = true;

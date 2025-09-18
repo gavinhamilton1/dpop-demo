@@ -110,7 +110,7 @@ class FaceService:
         
         # Try indexed reading first, but fallback to sequential if it fails
         frames_extracted = 0
-        if frame_indices:
+        if len(frame_indices) > 0:
             for frame_idx in frame_indices:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
                 ret, frame = cap.read()
