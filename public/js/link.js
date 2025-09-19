@@ -1,7 +1,7 @@
 // /public/link.js  (module)
 
 // --- Imports (unchanged) ---
-import * as DpopFun from './dpop-fun.js';
+import * as DpopFun from './core/dpop-fun.js';
 import * as Passkeys from './passkeys.js';
 import { SignatureShare } from './signature-share.js';
 
@@ -374,11 +374,11 @@ async function link(lid) {
   console.log('🚀 MOBILE LINKING FLOW STARTED with lid:', lid);
   console.log('📱 Mobile link function called - this should appear in mobile logs');
   try {
-    // Step 1: Initialize session
-    updateStep(1, 'active', 'Initializing session…');
-    await DpopFun.sessionInit({ sessionInitUrl: '/session/init' });
-    updateStep(1, 'completed', 'Session initialized');
-    log('Session initialized ✓', 'success');
+    // Step 1: Setup complete session (init + BIK + DPoP)
+    updateStep(1, 'active', 'Setting up session…');
+    const sessionData = await DpopFun.setupSession();
+    updateStep(1, 'completed', 'Session setup complete');
+    log('Session setup completed ✓', 'success');
     
     // Collect mobile device fingerprint (with small delay to ensure session is established)
     log('Starting mobile fingerprint collection...', 'info');
@@ -396,15 +396,8 @@ async function link(lid) {
       // Continue with linking flow even if fingerprinting fails
     }
 
-    // Step 2: BIK register + DPoP bind
-    updateStep(2, 'active', 'Setting up security…');
-    await DpopFun.bikRegisterStep({ bikRegisterUrl: '/browser/register' });
-    await DpopFun.dpopBindStep({ dpopBindUrl: '/dpop/bind' });
-    updateStep(2, 'completed', 'Security configured');
-    log('Security setup completed ✓', 'success');
-
-    // Step 3: Passkey UV (register if needed, then authenticate)
-    updateStep(3, 'active', 'Verifying passkey…');
+    // Step 2: Passkey UV (register if needed, then authenticate)
+    updateStep(2, 'active', 'Verifying passkey…');
     let hasCreds = false;
     let authOptions = null;
     try {
@@ -417,17 +410,17 @@ async function link(lid) {
     }
 
     if (!hasCreds) {
-      updateStep(3, 'active', 'Creating new passkey…');
+      updateStep(2, 'active', 'Creating new passkey…');
       await Passkeys.registerPasskey();
       log('Passkey registered ✓', 'success');
     }
     await Passkeys.authenticatePasskey(hasCreds ? authOptions : undefined);
-    updateStep(3, 'completed', 'Passkey verified');
+    updateStep(2, 'completed', 'Passkey verified');
     log('Passkey authenticated ✓', 'success');
 
-    // Step 4: Complete mobile linking and issue BC
+    // Step 3: Complete mobile linking and issue BC
     currentLid = lid;
-    updateStep(4, 'active', 'Completing mobile link…');
+    updateStep(3, 'active', 'Completing mobile link…');
     
     // Complete the mobile linking process
     const completeData = await DpopFun.dpopFunFetch('/link/mobile/complete', {
@@ -444,7 +437,7 @@ async function link(lid) {
     log(`Document cookies: ${document.cookie}`, 'info');
     
     // Now issue BC for desktop to enter
-    updateStep(4, 'active', 'Issuing verification code…');
+    updateStep(3, 'active', 'Issuing verification code…');
     await issueBC(lid);
     startPollingConfirmation(lid);
 

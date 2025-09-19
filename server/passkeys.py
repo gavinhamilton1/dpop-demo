@@ -16,7 +16,7 @@ from cryptography.x509.oid import ObjectIdentifier
 from server.config import load_settings
 from server.utils import b64u, b64u_dec, ec_p256_thumbprint, now
 
-log = logging.getLogger("stronghold")
+log = logging.getLogger("dpop-fun")
 SETTINGS = load_settings()
 
 # ---------------- Policy (Android-friendly by default) ----------------

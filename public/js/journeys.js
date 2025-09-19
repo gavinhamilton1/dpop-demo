@@ -3,14 +3,16 @@
  * Provides user-friendly interfaces for different authentication flows
  */
 
-import { Logger } from './components/Logger.js';
-import * as DpopFun from './dpop-fun.js';
-import * as Passkeys from './passkeys.js';
-import { generateQRCode } from './utils/qr-generator.js';
+import { logger } from '../js/utils/logging.js';
+import { CONFIG } from '../js/utils/config.js';
+import { idbGet, STORES } from '../js/utils/idb.js';
+import * as DpopFun from './core/dpop-fun.js';
+import * as Passkeys from './core/passkeys.js';
+import { FingerprintService } from './services/FingerprintService.js';
+import { generateQRCode } from '../js/utils/qr-generator.js';
 
 class JourneysController {
     constructor() {
-        this.logger = new Logger('logContainer');
         this.currentJourney = null;
         this.currentStep = 0;
         this.sessionState = {
@@ -140,37 +142,33 @@ class JourneysController {
         this.init();
     }
     
-    async getSessionStatus() {
-        try {
-            const response = await fetch('/session/status', {
-                method: 'GET',
-                credentials: 'include'
-            });
-            
-            if (response.ok) {
-                return await response.json();
-            } else {
-                return { valid: false, state: null, bik_registered: false, dpop_bound: false, ttl_seconds: 0 };
-            }
-        } catch (error) {
-            this.logger.error('Failed to get session status:', error);
-            return { valid: false, state: null, bik_registered: false, dpop_bound: false, ttl_seconds: 0 };
-        }
-    }
     
     async init() {
         try {
-            this.logger.info('Initializing Journeys Controller...');
+            logger.info('Initializing Journeys Controller...');
             this.setupEventListeners();
             await this.checkSessionStatus();
             this.updateJourneyAvailability();
-            this.logger.info('Journeys Controller initialized successfully');
+            logger.info('Journeys Controller initialized successfully');
         } catch (error) {
-            this.logger.error('Failed to initialize Journeys Controller:', error);
+            logger.error('Failed to initialize Journeys Controller:', error);
         }
     }
     
     setupEventListeners() {
+        // Admin control buttons
+        document.getElementById('serverFlushBtn').addEventListener('click', () => this.handleServerFlush());
+        document.getElementById('clientFlushBtn').addEventListener('click', () => this.handleClientFlush());
+        
+        // Test API button
+        document.getElementById('testApiBtn').addEventListener('click', () => this.handleTestAPI());
+        
+        // Signal details button
+        document.getElementById('signalDetailsBtn').addEventListener('click', () => this.handleSignalDetails());
+        
+        // Modal event listeners
+        this.setupModalHandlers();
+        
         // Journey selection buttons
         document.getElementById('startNewUserBtn').addEventListener('click', () => this.startJourney('newUser'));
         document.getElementById('startDesktopPasskeyBtn').addEventListener('click', () => this.startJourney('desktopPasskey'));
@@ -188,113 +186,35 @@ class JourneysController {
         document.getElementById('logoutBtn').addEventListener('click', () => this.logout());
         
         // Clear logs
-        document.getElementById('clearLogsBtn').addEventListener('click', () => this.logger.clear());
+        document.getElementById('clearLogsBtn').addEventListener('click', () => loggerclear());
     }
     
     async checkSessionStatus() {
         try {
-            this.logger.info('Checking session status...');
+            logger.info('Setting up session...');
+            this.updateSessionStatus('loading', 'Setting up Session...', 'Checking for existing session or creating new one');
             
-            // Check if we have a valid session
-            const sessionStatus = await this.getSessionStatus();
-            this.logger.debug('Session status:', sessionStatus);
+            // Use the consolidated session setup logic
+            const sessionData = await DpopFun.setupSession();
             
-            if (sessionStatus && sessionStatus.valid) {
-                this.sessionState.hasSession = true;
-                this.updateSessionStatus('loading', 'Restoring Session...', 'Found existing session, restoring browser identity and DPoP binding');
-                
-                if (sessionStatus.bik_registered) {
-                    this.sessionState.hasBIK = true;
-                }
-                
-                if (sessionStatus.dpop_bound) {
-                    this.sessionState.hasDPoP = true;
-                    
-                    // Restore session state for DPoP-bound sessions
-                    try {
-                        await DpopFun.restoreSessionTokens();
-                        this.logger.info('Session tokens restored successfully');
-                    } catch (error) {
-                        this.logger.warn('Failed to restore session tokens:', error);
-                    }
-                }
-                
-                // Check for existing username
-                try {
-                    const userResponse = await fetch('/onboarding/current-user', {
-                        credentials: 'include'
-                    });
-                    
-                    if (userResponse.ok) {
-                        const userData = await userResponse.json();
-                        this.sessionState.hasUsername = true;
-                        this.sessionState.username = userData.username;
-                        this.logger.info('Found existing username:', userData.username);
-                    }
-                } catch (error) {
-                    this.logger.debug('No existing username found');
-                }
-                
-                // Check for existing passkeys
-                try {
-                    const passkeyResponse = await Passkeys.getAuthOptions();
-                    if (passkeyResponse) {
-                        this.sessionState.hasPasskey = true;
-                    }
-                } catch (error) {
-                    this.logger.debug('No passkeys found');
-                }
-                
-                // Update status based on what we found
-                if (this.sessionState.hasDPoP && this.sessionState.hasUsername) {
-                    this.updateSessionStatus('success', 'Session Restored', 'Browser identity, DPoP binding, and username restored');
-                } else if (this.sessionState.hasDPoP) {
-                    this.updateSessionStatus('success', 'Session Restored', 'Browser identity and DPoP binding restored');
-                } else if (this.sessionState.hasBIK) {
-                    this.updateSessionStatus('success', 'Session Restored', 'Browser identity restored, DPoP binding needed');
-                } else {
-                    this.updateSessionStatus('success', 'Session Restored', 'Basic session restored, browser identity needed');
-                }
-                
-            } else {
-                this.logger.info('No valid session found - creating new session');
-                this.updateSessionStatus('loading', 'Creating New Session...', 'Initializing new browser identity and session');
-                
-                // Automatically create a new session
-                await this.createNewSession();
-            }
+            // Update our session state with the results
+            this.sessionState.hasSession = sessionData.hasSession;
+            this.sessionState.hasBIK = sessionData.hasBIK;
+            this.sessionState.hasDPoP = sessionData.hasDPoP;
+            this.sessionState.hasUsername = sessionData.hasUsername;
+            this.sessionState.username = sessionData.username;
+            
+            // Update UI status based on detailed session information
+            this.updateSessionStatusWithDetails(sessionData);
+            
+            logger.info('Session setup completed successfully');
             
         } catch (error) {
-            this.logger.error('Failed to check session status:', error);
-            this.updateSessionStatus('error', 'Session Check Failed', error.message);
+            logger.error('Failed to setup session:', error);
+            this.updateSessionStatus('error', 'Session Setup Failed', error.message);
         }
     }
     
-    async createNewSession() {
-        try {
-            // Initialize session
-            await DpopFun.sessionInit();
-            this.sessionState.hasSession = true;
-            
-            // Register browser identity
-            await DpopFun.bikRegisterStep();
-            this.sessionState.hasBIK = true;
-            
-            // Bind DPoP
-            await DpopFun.dpopBindStep();
-            this.sessionState.hasDPoP = true;
-            
-            this.updateSessionStatus('success', 'New Session Created', 'Browser identity registered and DPoP token bound successfully');
-            this.logger.success('New session created successfully');
-            
-        } catch (error) {
-            this.logger.error('Failed to create new session:', error);
-            this.updateSessionStatus('error', 'Session Creation Failed', error.message);
-            this.sessionState.hasSession = false;
-            this.sessionState.hasBIK = false;
-            this.sessionState.hasDPoP = false;
-        }
-    }
     
     updateSessionStatus(status, title, detail) {
         const indicator = document.getElementById('sessionStatusIndicator');
@@ -305,6 +225,107 @@ class JourneysController {
         
         if (titleEl) titleEl.textContent = title;
         if (detailEl) detailEl.textContent = detail;
+    }
+
+    updateSessionStatusWithDetails(sessionData) {
+        const { details, hasUsername, username } = sessionData;
+        
+        if (!sessionData.hasSession) {
+            // Check if this is due to a mismatch that was cleared
+            if (details.localBIK || details.localDPoP) {
+                this.updateSessionStatus('warning', 'Session Cleared', 'Client/server mismatch detected - server session cleared, creating fresh session');
+            } else {
+                this.updateSessionStatus('error', 'No Session', 'No server session found');
+            }
+            return;
+        }
+
+        // Build detailed status message
+        let status = 'success';
+        let title = 'Session Status';
+        let detail = '';
+
+        // Server session status
+        if (details.serverSession) {
+            const sessionType = details.sessionType === 'new' ? ' (new)' : details.sessionType === 'restored' ? ' (restored)' : '';
+            detail += `✅ Server session found${sessionType}\n`;
+        } else {
+            detail += '❌ No server session\n';
+            status = 'error';
+        }
+
+        // BIK status
+        if (details.serverBIK && details.localBIK) {
+            if (details.bikMatch) {
+                const bikType = details.bikType === 'new' ? ' (new)' : details.bikType === 'restored' ? ' (restored)' : '';
+                detail += `✅ BIK: Server + Local (matched)${bikType}\n`;
+            } else {
+                detail += '⚠️ BIK: Server + Local (mismatch)\n';
+                status = 'warning';
+            }
+        } else if (details.serverBIK && !details.localBIK) {
+            detail += '⚠️ BIK: Server only (local missing)\n';
+            status = 'warning';
+        } else if (!details.serverBIK && details.localBIK) {
+            detail += '⚠️ BIK: Local only (server missing)\n';
+            status = 'warning';
+        } else {
+            detail += '❌ BIK: Not found\n';
+        }
+
+        // DPoP status
+        if (details.serverDPoP && details.localDPoP) {
+            if (details.dpopWorking) {
+                const dpopType = details.dpopType === 'new' ? ' (new)' : details.dpopType === 'restored' ? ' (restored)' : '';
+                detail += `✅ DPoP: Server + Local (working)${dpopType}\n`;
+            } else {
+                detail += '⚠️ DPoP: Server + Local (not working)\n';
+                status = 'warning';
+            }
+        } else if (details.serverDPoP && !details.localDPoP) {
+            detail += '⚠️ DPoP: Server only (local missing)\n';
+            status = 'warning';
+        } else if (!details.serverDPoP && details.localDPoP) {
+            detail += '⚠️ DPoP: Local only (server missing)\n';
+            status = 'warning';
+        } else {
+            detail += '❌ DPoP: Not found\n';
+        }
+
+        // Username status
+        if (hasUsername) {
+            detail += `✅ Username: ${username}\n`;
+        } else {
+            detail += '❌ Username: Not set\n';
+        }
+
+        // Overall readiness
+        if (details.dpopWorking && hasUsername) {
+            title = 'Session Ready';
+            detail += '\n🚀 Ready for onboarding';
+        } else if (details.dpopWorking) {
+            title = 'DPoP Ready';
+            detail += '\n📝 Ready for username setup';
+        } else if (details.serverBIK && details.localBIK) {
+            title = 'BIK Ready';
+            detail += '\n🔗 Ready for DPoP binding';
+        } else if (details.serverSession) {
+            title = 'Session Ready';
+            detail += '\n🔑 Ready for BIK registration';
+        } else {
+            title = 'Session Error';
+            detail += '\n❌ Session setup needed';
+        }
+
+        this.updateSessionStatus(status, title, detail.trim());
+        
+        // Show/hide test API button based on DPoP status
+        this.updateTestApiButton(sessionData.hasDPoP && sessionData.hasSession);
+        
+        // Load signal data when session is ready
+        if (sessionData.hasSession && sessionData.hasDPoP) {
+            this.loadSignalSummary();
+        }
     }
     
     updateJourneyAvailability() {
@@ -335,9 +356,97 @@ class JourneysController {
                typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function';
     }
     
+    updateTestApiButton(isDPoPReady) {
+        const sessionActions = document.getElementById('sessionActions');
+        const testApiBtn = document.getElementById('testApiBtn');
+        
+        if (isDPoPReady) {
+            // Show the test API button and enable it
+            sessionActions.style.display = 'flex';
+            testApiBtn.disabled = false;
+        } else {
+            // Hide the test API button
+            sessionActions.style.display = 'none';
+            testApiBtn.disabled = true;
+        }
+    }
+    
+    /**
+     * Setup modal event handlers
+     */
+    setupModalHandlers() {
+        const modal = document.getElementById('apiModal');
+        const closeBtn = document.getElementById('closeApiModal');
+        const cancelBtn = document.getElementById('cancelApiRequest');
+        const sendBtn = document.getElementById('sendApiRequest');
+
+        // Close modal handlers
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                this.hideApiModal();
+            });
+        }
+
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                this.hideApiModal();
+            });
+        }
+
+        // Close modal when clicking outside
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    this.hideApiModal();
+                }
+            });
+        }
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && modal && modal.classList.contains('show')) {
+                this.hideApiModal();
+            }
+        });
+
+        // Send API request
+        if (sendBtn) {
+            sendBtn.addEventListener('click', () => {
+                this.sendApiRequest();
+            });
+        }
+
+        // Signal details modal handlers
+        const signalModal = document.getElementById('signalDetailsModal');
+        const signalCloseBtn = document.getElementById('signalModalClose');
+
+        // Close signal modal handlers
+        if (signalCloseBtn) {
+            signalCloseBtn.addEventListener('click', () => {
+                this.hideSignalModal();
+            });
+        }
+
+        // Close signal modal when clicking outside
+        if (signalModal) {
+            signalModal.addEventListener('click', (e) => {
+                if (e.target === signalModal) {
+                    this.hideSignalModal();
+                }
+            });
+        }
+
+        // Close signal modal with Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && signalModal && signalModal.classList.contains('show')) {
+                this.hideSignalModal();
+            }
+        });
+    }
+    
     async startJourney(journeyType) {
         try {
-            this.logger.info(`Starting ${journeyType} journey...`);
+            logger.info(`Starting ${journeyType} journey...`);
             
             // Hide journey selection
             document.getElementById('journeySelection').style.display = 'none';
@@ -364,7 +473,7 @@ class JourneysController {
             await this.executeCurrentStep();
             
         } catch (error) {
-            this.logger.error(`Failed to start ${journeyType} journey:`, error);
+            logger.error(`Failed to start ${journeyType} journey:`, error);
         }
     }
     
@@ -406,12 +515,12 @@ class JourneysController {
         const step = this.currentJourney.steps[this.currentStep];
         const stepEl = document.getElementById(`step-${step.id}`);
         
-        this.logger.info(`Executing step: ${step.title}`);
+        logger.info(`Executing step: ${step.title}`);
         
         try {
             await step.action();
         } catch (error) {
-            this.logger.error(`Step ${step.title} failed:`, error);
+            logger.error(`Step ${step.title} failed:`, error);
             this.showStepError(stepEl, error.message);
         }
     }
@@ -456,11 +565,11 @@ class JourneysController {
         document.getElementById('journeySelection').style.display = 'grid';
         document.getElementById('logoutBtn').style.display = 'none';
         
-        this.logger.info('Journey cancelled');
+        logger.info('Journey cancelled');
     }
     
     async completeJourney() {
-        this.logger.success('Journey completed successfully!');
+        loggersuccess('Journey completed successfully!');
         
         // Show completion message
         const actionsContainer = document.getElementById('journeyActions');
@@ -501,7 +610,7 @@ class JourneysController {
                 </div>
             `;
             
-            this.logger.info('Browser identity already registered');
+            logger.info('Browser identity already registered');
             await this.completeStep();
             return;
         }
@@ -513,21 +622,13 @@ class JourneysController {
         `;
         
         try {
-            // Initialize session and register BIK if not already done
-            if (!this.sessionState.hasSession) {
-                await DpopFun.sessionInit();
-                this.sessionState.hasSession = true;
-            }
+            // Use the core session setup logic
+            const sessionData = await DpopFun.setupSession();
             
-            if (!this.sessionState.hasBIK) {
-                await DpopFun.bikRegisterStep();
-                this.sessionState.hasBIK = true;
-            }
-            
-            if (!this.sessionState.hasDPoP) {
-                await DpopFun.dpopBindStep();
-                this.sessionState.hasDPoP = true;
-            }
+            // Update session state
+            this.sessionState.hasSession = sessionData.hasSession;
+            this.sessionState.hasBIK = sessionData.hasBIK;
+            this.sessionState.hasDPoP = sessionData.hasDPoP;
             
             contentEl.innerHTML = `
                 <div class="step-status success">
@@ -535,7 +636,7 @@ class JourneysController {
                 </div>
             `;
             
-            this.logger.success('Browser identity registered successfully');
+            loggersuccess('Browser identity registered successfully');
             await this.completeStep();
             
         } catch (error) {
@@ -585,7 +686,7 @@ class JourneysController {
                         </div>
                     `;
                     
-                    this.logger.success(`Username "${username}" created successfully`);
+                    loggersuccess(`Username "${username}" created successfully`);
                     await this.completeStep();
                     
                 } else {
@@ -637,7 +738,7 @@ class JourneysController {
                     </div>
                 `;
                 
-                this.logger.success('Passkey registered successfully');
+                loggersuccess('Passkey registered successfully');
                 await this.completeStep();
                 
             } catch (error) {
@@ -723,7 +824,7 @@ class JourneysController {
     
     async startFaceRegistration() {
         try {
-            this.logger.info('Starting face registration process...');
+            logger.info('Starting face registration process...');
             
             // Show face capture phase
             document.getElementById('faceStartPhase').style.display = 'none';
@@ -742,7 +843,7 @@ class JourneysController {
             // Auto-start the face capture process
             await window.faceCapture.startCapture();
             
-            this.logger.info('Face registration started');
+            logger.info('Face registration started');
             
             // Listen for completion by checking the status element periodically
             const checkCompletion = () => {
@@ -751,7 +852,7 @@ class JourneysController {
                     const statusText = statusEl.textContent || statusEl.innerText;
                     if (statusText.includes('Face registered ✓') || statusText.includes('Face verified ✓')) {
                         this.sessionState.hasFace = true;
-                        this.logger.success('Face registered successfully');
+                        loggersuccess('Face registered successfully');
                         this.completeStep();
                         return;
                     }
@@ -764,7 +865,7 @@ class JourneysController {
             setTimeout(checkCompletion, 2000);
             
         } catch (error) {
-            this.logger.error('Failed to initialize face capture:', error);
+            logger.error('Failed to initialize face capture:', error);
             
             // Show error and re-enable start button
             const startBtn = document.getElementById('startFaceBtn');
@@ -880,7 +981,7 @@ class JourneysController {
     
     async startMobileLinking() {
         try {
-            this.logger.info('Starting mobile linking process...');
+            logger.info('Starting mobile linking process...');
             
             // Show QR code container
             document.getElementById('qrContainer').style.display = 'block';
@@ -902,7 +1003,7 @@ class JourneysController {
             // Start linking using the same service as index.html
             const linkData = await linkingService.startLinking();
             
-            this.logger.success('Cross-device linking started', linkData);
+            loggersuccess('Cross-device linking started', linkData);
             
             // Display link information
             document.getElementById('linkId').textContent = linkData.linkId;
@@ -919,7 +1020,7 @@ class JourneysController {
             startBtn.classList.add('success');
             
         } catch (error) {
-            this.logger.error('Failed to start mobile linking:', error);
+            logger.error('Failed to start mobile linking:', error);
             document.getElementById('qrStatus').textContent = `Error: ${error.message}`;
             
             // Re-enable start button on error
@@ -946,7 +1047,7 @@ class JourneysController {
         const onStatusUpdate = (status) => {
             // Handle different message types (same as index.html)
             if (status.type === 'status') {
-                this.logger.info(`Linking status: ${status.status}`, status);
+                logger.info(`Linking status: ${status.status}`, status);
                 
                 if (status.status === 'scanned') {
                     this.updateQRStatus('scanned');
@@ -958,15 +1059,15 @@ class JourneysController {
                     this.handleLinkingFailed(status.error);
                 }
             } else if (status.type === 'signature') {
-                this.logger.info('Signature data received', status.data);
+                logger.info('Signature data received', status.data);
                 // Handle signature data if needed
             } else {
-                this.logger.info('Unknown message type received', status);
+                logger.info('Unknown message type received', status);
             }
         };
 
         const onError = (error) => {
-            this.logger.error('Linking status monitoring failed', error);
+            logger.error('Linking status monitoring failed', error);
         };
 
         // Use SSE monitoring (same as index.html)
@@ -987,8 +1088,8 @@ class JourneysController {
                 qrContainer.remove();
             }
             
-            this.logger.success('Cross-device linking completed successfully');
-            this.logger.info('Redirecting to verify page to enter BC code...');
+            loggersuccess('Cross-device linking completed successfully');
+            logger.info('Redirecting to verify page to enter BC code...');
             
             // Redirect to verify page to enter BC code (same as index.html)
             setTimeout(() => {
@@ -996,7 +1097,7 @@ class JourneysController {
             }, 1000);
             
         } catch (error) {
-            this.logger.error('Linking completion failed:', error);
+            logger.error('Linking completion failed:', error);
         }
     }
 
@@ -1006,7 +1107,7 @@ class JourneysController {
      */
     handleLinkingFailed(error) {
         this.updateQRStatus('failed');
-        this.logger.error('Cross-device linking failed', error);
+        logger.error('Cross-device linking failed', error);
     }
 
     /**
@@ -1046,7 +1147,7 @@ class JourneysController {
     }
     
     initializeVerificationUI(linkId) {
-        this.logger.info('Initializing verification UI for linkId:', linkId);
+        logger.info('Initializing verification UI for linkId:', linkId);
         
         // Initialize code input boxes
         this.initializeCodeInputs();
@@ -1083,7 +1184,7 @@ class JourneysController {
             });
         }
         
-        this.logger.info('Verification UI initialized');
+        logger.info('Verification UI initialized');
     }
     
     initializeCodeInputs() {
@@ -1189,7 +1290,7 @@ class JourneysController {
             }
             
             const { dpop_nonce, link_id } = await redeemResponse.json();
-            this.logger.info('Bootstrap code redeemed successfully', { dpop_nonce, link_id });
+            logger.info('Bootstrap code redeemed successfully', { dpop_nonce, link_id });
             
             // Now finalize the link with DPoP proof
             await DpopFun.dpopFunFetch('/link/finalize', {
@@ -1201,7 +1302,7 @@ class JourneysController {
             this.sessionState.hasMobile = true;
             await this.completeStep();
         } catch (error) {
-            this.logger.error('Code submission failed:', error);
+            logger.error('Code submission failed:', error);
             this.updateCodeStatus(`Verification failed: ${error.message}`, 'err');
         }
     }
@@ -1244,13 +1345,13 @@ class JourneysController {
     
     startCameraScan() {
         // TODO: Implement camera scanning with jsQR
-        this.logger.info('Camera scanning not yet implemented');
+        logger.info('Camera scanning not yet implemented');
         this.updateCamStatus('Camera scanning not yet implemented', 'err');
     }
     
     stopCameraScan() {
         // TODO: Stop camera scanning
-        this.logger.info('Stopping camera scan');
+        logger.info('Stopping camera scan');
     }
     
     updateCamStatus(message, type = '') {
@@ -1286,7 +1387,7 @@ class JourneysController {
             // Check if we need to restore session tokens
             if (this.sessionState.hasDPoP) {
                 await DpopFun.restoreSessionTokens();
-                this.logger.info('Session tokens restored successfully');
+                logger.info('Session tokens restored successfully');
             }
             
             // If we don't have a complete session, we need to complete the setup
@@ -1300,7 +1401,7 @@ class JourneysController {
                 </div>
             `;
             
-            this.logger.success('Browser identity restored successfully');
+            loggersuccess('Browser identity restored successfully');
             await this.completeStep();
             
         } catch (error) {
@@ -1364,7 +1465,7 @@ class JourneysController {
                         </div>
                     `;
                     
-                    this.logger.success(`Username "${username}" verified`);
+                    loggersuccess(`Username "${username}" verified`);
                     this.pendingUsernameStep = false;
                     await this.completeStep();
                 }
@@ -1407,7 +1508,7 @@ class JourneysController {
                 </div>
             `;
             
-            this.logger.success('Passkey authentication successful');
+            loggersuccess('Passkey authentication successful');
             await this.completeStep();
             
         } catch (error) {
@@ -1480,7 +1581,7 @@ class JourneysController {
     
     async startFaceAuthentication() {
         try {
-            this.logger.info('Starting face authentication process...');
+            logger.info('Starting face authentication process...');
             
             // Show face capture phase
             document.getElementById('faceStartPhase').style.display = 'none';
@@ -1499,7 +1600,7 @@ class JourneysController {
             // Auto-start the face capture process
             await window.faceCapture.startCapture();
             
-            this.logger.info('Face verification started');
+            logger.info('Face verification started');
             
             // Listen for completion by checking the status element periodically
             const checkCompletion = () => {
@@ -1507,7 +1608,7 @@ class JourneysController {
                 if (statusEl) {
                     const statusText = statusEl.textContent || statusEl.innerText;
                     if (statusText.includes('Face verified ✓') || statusText.includes('Face registered ✓')) {
-                        this.logger.success('Face authentication successful');
+                        loggersuccess('Face authentication successful');
                         this.completeStep();
                         return;
                     }
@@ -1520,7 +1621,7 @@ class JourneysController {
             setTimeout(checkCompletion, 2000);
             
         } catch (error) {
-            this.logger.error('Failed to initialize face capture:', error);
+            logger.error('Failed to initialize face capture:', error);
             
             // Show error and re-enable start button
             const startBtn = document.getElementById('startFaceBtn');
@@ -1561,13 +1662,13 @@ class JourneysController {
             </div>
         `;
         
-        this.logger.info('Mobile passkey authentication initiated');
+        logger.info('Mobile passkey authentication initiated');
     }
     
     async skipCurrentStep() {
         const step = this.currentJourney.steps[this.currentStep];
         if (step.optional) {
-            this.logger.info(`Skipping optional step: ${step.title}`);
+            logger.info(`Skipping optional step: ${step.title}`);
             await this.completeStep();
         } else {
             throw new Error('Cannot skip required step');
@@ -1594,12 +1695,635 @@ class JourneysController {
             await this.checkSessionStatus();
             this.updateJourneyAvailability();
             
-            this.logger.info('Logged out successfully');
+            logger.info('Logged out successfully');
             
         } catch (error) {
-            this.logger.error('Logout failed:', error);
+            logger.error('Logout failed:', error);
         }
     }
+    
+    /**
+     * Handle server flush button click
+     */
+    async handleServerFlush() {
+        const button = document.getElementById('serverFlushBtn');
+        const originalText = button.textContent;
+        
+        try {
+            // Disable button and show loading state
+            button.disabled = true;
+            button.textContent = '🔄 Flushing...';
+            
+            logger.info('Server flush initiated by user');
+            
+            // Call the server flush function
+            const success = await DpopFun.clearServerSession();
+            
+            if (success) {
+                logger.info('Server flush completed successfully');
+                
+                // Update session status to reflect cleared state
+                this.sessionState.hasSession = false;
+                this.sessionState.hasBIK = false;
+                this.sessionState.hasDPoP = false;
+                this.sessionState.hasUsername = false;
+                this.sessionState.username = null;
+                
+                // Update UI
+                this.updateSessionStatus('warning', 'Server Cleared', 'Server session data has been cleared');
+                this.updateJourneyAvailability();
+                
+                // Show success message
+                button.textContent = '✅ Cleared';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.disabled = false;
+                }, 2000);
+            } else {
+                throw new Error('Server flush failed');
+            }
+            
+        } catch (error) {
+            logger.error('Server flush failed:', error);
+            
+            // Show error state
+            button.textContent = '❌ Failed';
+            setTimeout(() => {
+                button.textContent = originalText;
+                button.disabled = false;
+            }, 2000);
+            
+            // Update UI to show error
+            this.updateSessionStatus('error', 'Flush Failed', `Server flush failed: ${error.message}`);
+        }
+    }
+    
+    /**
+     * Handle client flush button click
+     */
+    async handleClientFlush() {
+        const button = document.getElementById('clientFlushBtn');
+        const originalText = button.textContent;
+        
+        try {
+            // Disable button and show loading state
+            button.disabled = true;
+            button.textContent = '🔄 Flushing...';
+            
+            logger.info('Client flush initiated by user');
+            
+            // Call the client flush function
+            await DpopFun.clientFlush();
+            
+            logger.info('Client flush completed successfully');
+            
+            // Update session status to reflect cleared state
+            this.sessionState.hasSession = false;
+            this.sessionState.hasBIK = false;
+            this.sessionState.hasDPoP = false;
+            this.sessionState.hasUsername = false;
+            this.sessionState.username = null;
+            
+            // Update UI
+            this.updateSessionStatus('warning', 'Client Cleared', 'Client session data and IndexedDB have been cleared');
+            this.updateJourneyAvailability();
+            
+            // Show success message
+            button.textContent = '✅ Cleared';
+            setTimeout(() => {
+                button.textContent = originalText;
+                button.disabled = false;
+            }, 2000);
+            
+        } catch (error) {
+            logger.error('Client flush failed:', error);
+            
+            // Show error state
+            button.textContent = '❌ Failed';
+            setTimeout(() => {
+                button.textContent = originalText;
+                button.disabled = false;
+            }, 2000);
+            
+            // Update UI to show error
+            this.updateSessionStatus('error', 'Flush Failed', `Client flush failed: ${error.message}`);
+        }
+    }
+    
+    /**
+     * Handle test API button click - show modal
+     */
+    handleTestAPI() {
+        this.showApiModal();
+    }
+    
+    /**
+     * Show API test modal
+     */
+    showApiModal() {
+        const modal = document.getElementById('apiModal');
+        if (modal) {
+            modal.classList.add('show');
+            
+            // Reset response boxes
+            const apiResponse = modal.querySelector('#apiResponse');
+            const clientRequest = modal.querySelector('#clientRequest');
+            
+            if (apiResponse) {
+                apiResponse.innerHTML = '<em>Click "Send Request" to test the API...</em>';
+                apiResponse.className = 'response-box';
+            }
+            
+            if (clientRequest) {
+                clientRequest.innerHTML = '<em>Request details will appear here...</em>';
+                clientRequest.className = 'response-box';
+            }
+        }
+    }
+    
+    /**
+     * Hide API test modal
+     */
+    hideApiModal() {
+        const modal = document.getElementById('apiModal');
+        if (modal) {
+            modal.classList.remove('show');
+        }
+    }
+    
+    /**
+     * Send API request from modal
+     */
+    async sendApiRequest() {
+        const sendBtn = document.getElementById('sendApiRequest');
+        const apiResponse = document.getElementById('apiResponse');
+        const clientRequest = document.getElementById('clientRequest');
+        const apiMessage = document.getElementById('apiMessage');
+
+        if (!sendBtn || !apiResponse || !clientRequest || !apiMessage) return;
+
+        try {
+            sendBtn.disabled = true;
+            sendBtn.textContent = 'Sending...';
+            apiResponse.innerHTML = 'Sending request...';
+            apiResponse.className = 'response-box';
+            clientRequest.innerHTML = 'Preparing request...';
+            clientRequest.className = 'response-box';
+
+            logger.info('Testing API access with DPoP token...');
+
+            const message = apiMessage.value.trim() || 'Hello from DPoP-Fun Journeys!';
+            
+            const testData = {
+                message: message,
+                timestamp: new Date().toISOString(),
+                userAgent: navigator.userAgent
+            };
+
+            // Capture request details before making the request
+            const requestDetails = await this.captureRequestDetails(testData);
+            
+            const response = await DpopFun.dpopFunFetch('/api/echo', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(testData)
+            });
+
+            // Create response details (dpopFunFetch returns parsed JSON, not Response object)
+            const responseDetails = {
+                status: 200,
+                statusText: 'OK',
+                headers: {
+                    'Access-Control-Allow-Credentials': 'true',
+                    'Access-Control-Allow-Origin': 'http://localhost:8000',
+                    'Content-Length': JSON.stringify(response).length.toString(),
+                    'Content-Type': 'application/json',
+                    'DPoP-Nonce': 'Updated by server (see logs)',
+                    'Server': 'uvicorn',
+                    'Set-Cookie': 'dpop-fun_session=<updated-session>; Path=/; HttpOnly; SameSite=Lax',
+                    'X-Request-ID': 'req_' + Math.random().toString(36).substr(2, 9)
+                },
+                body: response,
+                timestamp: new Date().toISOString(),
+                note: 'dpopFunFetch returns parsed JSON, not Response object - headers are simulated based on typical server response'
+            };
+
+            // Display request details
+            clientRequest.innerHTML = JSON.stringify(requestDetails, null, 2);
+            clientRequest.className = 'response-box info';
+
+            // Display response details
+            apiResponse.innerHTML = JSON.stringify(responseDetails, null, 2);
+            apiResponse.className = 'response-box success';
+
+            logger.info('API access successful - DPoP token working!');
+            logger.info(`Response: ${JSON.stringify(response, null, 2)}`);
+
+        } catch (error) {
+            // Display error
+            apiResponse.innerHTML = `Error: ${error.message}`;
+            apiResponse.className = 'response-box error';
+            clientRequest.innerHTML = 'Request details unavailable due to error';
+            clientRequest.className = 'response-box error';
+
+            logger.error(`API access failed: ${error.message}`);
+        } finally {
+            sendBtn.disabled = false;
+            sendBtn.textContent = 'Send Request';
+        }
+    }
+    
+    /**
+     * Capture request details including actual DPoP and nonce headers
+     */
+    async captureRequestDetails(testData) {
+        try {
+            // Get current session info
+            const sessionStatus = await DpopFun.getSessionStatus();
+            
+            // Get actual DPoP token and binding token
+            const dpopToken = await this.generateDPoPTokenForDisplay();
+            const bindToken = await DpopFun.get(CONFIG.STORAGE.KEYS.BIND);
+            
+            // Get current session cookie (this would be sent automatically by browser)
+            const sessionCookie = document.cookie.split(';').find(c => c.trim().startsWith('dpop-fun_session='));
+            
+            return {
+                url: '/api/echo',
+                method: 'POST',
+                headers: {
+                    'Accept': '*/*',
+                    'Accept-Encoding': 'gzip, deflate, br, zstd',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                    'Content-Length': JSON.stringify(testData).length.toString(),
+                    'Content-Type': 'application/json',
+                    'Cookie': sessionCookie ? sessionCookie.trim() : 'dpop-fun_session=<session-token>',
+                    'DPoP': dpopToken,
+                    'DPoP-Bind': bindToken?.value || 'No binding token',
+                    'Host': 'localhost:8000',
+                    'Origin': window.location.origin,
+                    'Pragma': 'no-cache',
+                    'Sec-Ch-Ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
+                    'Sec-Ch-Ua-Mobile': '?0',
+                    'Sec-Ch-Ua-Platform': '"macOS"',
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'User-Agent': navigator.userAgent
+                },
+                body: testData,
+                session: {
+                    valid: sessionStatus?.valid || false,
+                    bik_registered: sessionStatus?.bik_registered || false,
+                    dpop_bound: sessionStatus?.dpop_bound || false
+                },
+                timestamp: new Date().toISOString()
+            };
+        } catch (error) {
+            return {
+                url: '/api/echo',
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'DPoP': 'Error retrieving details',
+                    'DPoP-Bind': 'Error retrieving binding token'
+                },
+                body: testData,
+                error: error.message,
+                timestamp: new Date().toISOString()
+            };
+        }
+    }
+
+    /**
+     * Generate DPoP token for display purposes
+     */
+    async generateDPoPTokenForDisplay() {
+        try {
+            // Get current DPoP key using the same method as ensureDPoP
+            const dpopRecord = await idbGet(STORES.KEYS, CONFIG.STORAGE.KEYS.DPOP_CURRENT);
+            const nonceRecord = await DpopFun.get(CONFIG.STORAGE.KEYS.DPOP_NONCE);
+            
+            if (!dpopRecord || !dpopRecord.privateKey || !dpopRecord.publicJwk) {
+                return 'No DPoP key available';
+            }
+            
+            if (!nonceRecord?.value) {
+                return 'No DPoP nonce available';
+            }
+            
+            // Create a DPoP proof for display (this mimics what dpopFunFetch does internally)
+            const dpopProof = await DpopFun.createDpopProof({ 
+                url: '/api/echo', 
+                method: 'POST', 
+                nonce: nonceRecord.value,
+                privateKey: dpopRecord.privateKey, 
+                publicJwk: dpopRecord.publicJwk 
+            });
+            return dpopProof;
+        } catch (error) {
+            logger.error('Failed to generate DPoP token for display:', error);
+            return 'Error generating DPoP token';
+        }
+    }
+
+    /**
+     * Load and display signal summary data
+     */
+    async loadSignalSummary() {
+        try {
+            logger.info('Collecting client-side fingerprint data for signal summary...');
+            
+            // Collect fingerprint data client-side
+            const fingerprint = await FingerprintService.collectFingerprint('desktop');
+            
+            if (fingerprint && Object.keys(fingerprint).length > 0) {
+                logger.info('Fingerprint data collected successfully');
+                this.displaySignalSummary(fingerprint, 'desktop');
+                
+                // Optionally send to server for storage
+                try {
+                    await FingerprintService.sendFingerprintToServer(fingerprint);
+                    logger.info('Fingerprint data sent to server');
+                } catch (error) {
+                    logger.warn('Failed to send fingerprint to server:', error);
+                    // Continue anyway - local display is more important
+                }
+            } else {
+                logger.warn('No fingerprint data collected');
+                this.hideSignalSummary();
+            }
+        } catch (error) {
+            logger.error('Failed to collect signal summary:', error);
+            this.hideSignalSummary();
+        }
+    }
+
+    /**
+     * Display signal summary data
+     */
+    displaySignalSummary(fingerprint, deviceType) {
+        const signalSummary = document.getElementById('signalSummary');
+        if (!signalSummary || !fingerprint) {
+            this.hideSignalSummary();
+            return;
+        }
+
+        // Extract key signals
+        const location = this.extractLocation(fingerprint);
+        const device = this.extractDevice(fingerprint, deviceType);
+        const browser = this.extractBrowser(fingerprint);
+
+        // Update display elements
+        const signalLocation = document.getElementById('signalLocation');
+        const signalDevice = document.getElementById('signalDevice');
+        const signalBrowser = document.getElementById('signalBrowser');
+        
+        if (signalLocation) signalLocation.textContent = location;
+        if (signalDevice) signalDevice.textContent = device;
+        if (signalBrowser) signalBrowser.textContent = browser;
+
+        // Show the summary
+        signalSummary.style.display = 'block';
+    }
+
+    /**
+     * Hide signal summary
+     */
+    hideSignalSummary() {
+        const signalSummary = document.getElementById('signalSummary');
+        if (signalSummary) {
+            signalSummary.style.display = 'none';
+        }
+    }
+
+    /**
+     * Extract location information from fingerprint
+     */
+    extractLocation(fingerprint) {
+        const timezone = fingerprint.timezone || 'Unknown';
+        const language = fingerprint.language || 'Unknown';
+        
+        // Try to get geolocation if available
+        if (fingerprint.geolocation) {
+            const geo = fingerprint.geolocation;
+            if (geo.city && geo.country) {
+                return `${geo.city}, ${geo.country}`;
+            } else if (geo.country) {
+                return geo.country;
+            }
+        }
+        
+        // Fallback to timezone
+        return timezone.replace('_', ' ');
+    }
+
+    /**
+     * Extract device information from fingerprint
+     */
+    extractDevice(fingerprint, deviceType) {
+        const platform = fingerprint.platform || 'Unknown';
+        const hardwareConcurrency = fingerprint.hardwareConcurrency || 'Unknown';
+        const deviceMemory = fingerprint.deviceMemory || 'Unknown';
+        
+        let deviceInfo = `${deviceType || 'Unknown'}`;
+        if (platform !== 'Unknown') {
+            deviceInfo += ` (${platform})`;
+        }
+        
+        return deviceInfo;
+    }
+
+    /**
+     * Extract browser information from fingerprint
+     */
+    extractBrowser(fingerprint) {
+        const userAgent = fingerprint.userAgent || '';
+        const webglVendor = fingerprint.webglVendor || 'Unknown';
+        
+        // Try to extract browser name from user agent
+        let browserName = 'Unknown';
+        if (userAgent.includes('Chrome')) browserName = 'Chrome';
+        else if (userAgent.includes('Firefox')) browserName = 'Firefox';
+        else if (userAgent.includes('Safari')) browserName = 'Safari';
+        else if (userAgent.includes('Edge')) browserName = 'Edge';
+        
+        return browserName;
+    }
+
+    /**
+     * Handle signal details button click
+     */
+    async handleSignalDetails() {
+        try {
+            logger.info('Opening signal details modal...');
+            
+            // Try to get existing server fingerprint data first (simpler approach)
+            try {
+                const response = await fetch('/session/fingerprint-data', {
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    logger.info('Server response data:', data);
+                    logger.info('Server response keys:', Object.keys(data || {}));
+                    
+                    // Check different possible data structures
+                    let fingerprint = null;
+                    if (data.fingerprint) {
+                        fingerprint = data.fingerprint;
+                    } else if (data.desktop && data.desktop.fingerprint) {
+                        fingerprint = data.desktop.fingerprint;
+                    } else if (data.mobile && data.mobile.fingerprint) {
+                        fingerprint = data.mobile.fingerprint;
+                    } else if (Array.isArray(data) && data.length > 0) {
+                        // If data is an array, take the first item
+                        fingerprint = data[0];
+                    }
+                    
+                    logger.info('Extracted fingerprint:', fingerprint);
+                    logger.info('Fingerprint keys:', Object.keys(fingerprint || {}));
+                    
+                    if (fingerprint && Object.keys(fingerprint).length > 0) {
+                        this.showSignalModal(fingerprint);
+                        return;
+                    } else {
+                        logger.warn('No valid fingerprint data found in server response');
+                    }
+                }
+            } catch (error) {
+                logger.warn('Failed to fetch existing fingerprint data:', error);
+            }
+            
+            // Fallback: collect fresh client-side data
+            logger.info('Collecting fresh client-side fingerprint data...');
+            const fingerprint = await FingerprintService.collectFingerprint('desktop');
+            logger.info('Client-side fingerprint collected:', Object.keys(fingerprint || {}));
+            
+            if (fingerprint && Object.keys(fingerprint).length > 0) {
+                this.showSignalModal(fingerprint);
+            } else {
+                logger.warn('No fingerprint data available for signal details');
+                this.showSignalModal(null);
+            }
+        } catch (error) {
+            logger.error('Failed to collect signal details:', error);
+            this.showSignalModal(null);
+        }
+    }
+
+    /**
+     * Show signal details modal
+     */
+    showSignalModal(fingerprint) {
+        const modal = document.getElementById('signalDetailsModal');
+        const content = document.getElementById('signalDetailsContent');
+        
+        if (!modal || !content) {
+            logger.error('Signal modal elements not found');
+            return;
+        }
+
+        if (fingerprint && Object.keys(fingerprint).length > 0) {
+            logger.info('Displaying signal modal with fingerprint data');
+            // Generate detailed signal content
+            content.innerHTML = this.generateSignalDetailsHTML(fingerprint);
+        } else {
+            logger.warn('No fingerprint data available, showing error message');
+            content.innerHTML = '<div class="loading-text">Failed to load signal data - No fingerprint data available</div>';
+        }
+
+        // Show modal
+        modal.style.display = 'flex';
+        modal.classList.add('show');
+    }
+
+    /**
+     * Hide signal details modal
+     */
+    hideSignalModal() {
+        const modal = document.getElementById('signalDetailsModal');
+        if (modal) {
+            modal.style.display = 'none';
+            modal.classList.remove('show');
+        }
+    }
+
+    /**
+     * Generate detailed signal HTML content
+     */
+    generateSignalDetailsHTML(fingerprint) {
+        try {
+            if (!fingerprint) {
+                logger.error('Fingerprint data is null or undefined');
+                return '<div class="loading-text">No fingerprint data available</div>';
+            }
+
+            logger.info('Generating HTML for fingerprint with keys:', Object.keys(fingerprint));
+            let html = '';
+
+            // Location & Environment
+            html += '<div class="signal-section">';
+            html += '<h4>🌍 Location & Environment</h4>';
+            html += `<div class="signal-item"><span class="signal-label">Timezone:</span><span class="signal-value">${fingerprint.timezone || 'Unknown'}</span></div>`;
+            html += `<div class="signal-item"><span class="signal-label">Language:</span><span class="signal-value">${fingerprint.language || 'Unknown'}</span></div>`;
+            
+            if (fingerprint.geolocation) {
+                html += `<div class="signal-item"><span class="signal-label">Country:</span><span class="signal-value">${fingerprint.geolocation.country || 'Unknown'}</span></div>`;
+                html += `<div class="signal-item"><span class="signal-label">City:</span><span class="signal-value">${fingerprint.geolocation.city || 'Unknown'}</span></div>`;
+                html += `<div class="signal-item"><span class="signal-label">Region:</span><span class="signal-value">${fingerprint.geolocation.region || 'Unknown'}</span></div>`;
+            }
+            html += '</div>';
+
+            // Device Information
+            html += '<div class="signal-section">';
+            html += '<h4>💻 Device Information</h4>';
+            html += `<div class="signal-item"><span class="signal-label">Device Type:</span><span class="signal-value">${fingerprint.deviceType || 'Unknown'}</span></div>`;
+            html += `<div class="signal-item"><span class="signal-label">Platform:</span><span class="signal-value">${fingerprint.platform || 'Unknown'}</span></div>`;
+            html += `<div class="signal-item"><span class="signal-label">Hardware Concurrency:</span><span class="signal-value">${fingerprint.hardwareConcurrency || 'Unknown'}</span></div>`;
+            html += `<div class="signal-item"><span class="signal-label">Device Memory:</span><span class="signal-value">${fingerprint.deviceMemory || 'Unknown'}</span></div>`;
+            html += `<div class="signal-item"><span class="signal-label">Cookie Enabled:</span><span class="signal-value">${fingerprint.cookieEnabled ? 'Yes' : 'No'}</span></div>`;
+            html += `<div class="signal-item"><span class="signal-label">Do Not Track:</span><span class="signal-value">${fingerprint.doNotTrack || 'Unknown'}</span></div>`;
+            html += '</div>';
+
+            // Browser Details
+            html += '<div class="signal-section">';
+            html += '<h4>🌐 Browser Details</h4>';
+            html += `<div class="signal-item"><span class="signal-label">User Agent:</span><span class="signal-value">${fingerprint.userAgent || 'Unknown'}</span></div>`;
+            html += `<div class="signal-item"><span class="signal-label">WebGL Vendor:</span><span class="signal-value">${fingerprint.webglVendor || 'Unknown'}</span></div>`;
+            html += `<div class="signal-item"><span class="signal-label">WebGL Renderer:</span><span class="signal-value">${fingerprint.webglRenderer || 'Unknown'}</span></div>`;
+            html += `<div class="signal-item"><span class="signal-label">Color Depth:</span><span class="signal-value">${fingerprint.colorDepth || 'Unknown'}</span></div>`;
+            html += `<div class="signal-item"><span class="signal-label">Screen Resolution:</span><span class="signal-value">${fingerprint.screenResolution || 'Unknown'}</span></div>`;
+            html += '</div>';
+
+            // Security & Automation
+            html += '<div class="signal-section">';
+            html += '<h4>🔒 Security & Automation</h4>';
+            if (fingerprint.automation) {
+                html += `<div class="signal-item"><span class="signal-label">WebDriver:</span><span class="signal-value">${fingerprint.automation.webdriver ? 'Detected' : 'Not Detected'}</span></div>`;
+                html += `<div class="signal-item"><span class="signal-label">Headless UA:</span><span class="signal-value">${fingerprint.automation.headlessUA ? 'Detected' : 'Not Detected'}</span></div>`;
+                html += `<div class="signal-item"><span class="signal-label">Plugins Count:</span><span class="signal-value">${fingerprint.automation.pluginsLength || 'Unknown'}</span></div>`;
+                html += `<div class="signal-item"><span class="signal-label">MIME Types Count:</span><span class="signal-value">${fingerprint.automation.mimeTypesLength || 'Unknown'}</span></div>`;
+                html += `<div class="signal-item"><span class="signal-label">Visibility State:</span><span class="signal-value">${fingerprint.automation.visibilityState || 'Unknown'}</span></div>`;
+                html += `<div class="signal-item"><span class="signal-label">Has Focus:</span><span class="signal-value">${fingerprint.automation.hasFocus ? 'Yes' : 'No'}</span></div>`;
+            } else {
+                html += '<div class="signal-item"><span class="signal-label">Automation Data:</span><span class="signal-value">Not Available</span></div>';
+            }
+            html += '</div>';
+
+            logger.info('HTML generated successfully, length:', html.length);
+            return html;
+        } catch (error) {
+            logger.error('Error generating signal HTML:', error);
+            return `<div class="loading-text">Error generating signal data: ${error.message}</div>`;
+        }
+    }
+
 }
 
 // Initialize the journeys controller

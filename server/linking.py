@@ -10,7 +10,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from server.config import load_settings
 from server.utils import b64u, b64u_dec, jws_es256_sign, jws_es256_verify, now
 
-log = logging.getLogger("stronghold")
+log = logging.getLogger("dpop-fun")
 SETTINGS = load_settings()
 
 # ---------------- utils ----------------
@@ -132,7 +132,7 @@ def get_router(
         rid = secrets.token_urlsafe(12)
         iat = now_fn()
         exp = iat + _LINK_TTL
-        payload = {"iss":"stronghold","aud":"link","iat":iat,"exp":exp,"lid":rid}
+        payload = {"iss":"dpop-fun","aud":"link","iat":iat,"exp":exp,"lid":rid}
         token = jws_es256_sign(payload)
 
         origin, _ = canonicalize_origin_and_url(req)
@@ -630,7 +630,7 @@ def get_router(
                 raise HTTPException(status_code=404, detail="no such link")
         # Re-issue token pointing at same link (keeps original exp)
         now_ts = now()
-        payload = {"iss":"stronghold","aud":"link","iat":now_ts,"exp":rec["exp"],"lid":link_id}
+        payload = {"iss":"dpop-fun","aud":"link","iat":now_ts,"exp":rec["exp"],"lid":link_id}
         token = jws_es256_sign(payload)
         origin, _ = canonicalize_origin_and_url(req)
         uri = f"{origin}/public/link.html?lid={link_id}"

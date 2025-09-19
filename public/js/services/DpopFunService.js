@@ -2,7 +2,7 @@
 // DPoP-Fun-specific API service
 
 import { ApiService } from './ApiService.js';
-import * as DpopFun from '../dpop-fun.js';
+import * as DpopFun from '../core/dpop-fun.js';
 import { CONFIG } from '../utils/config.js';
 
 export class DpopFunService extends ApiService {
@@ -32,10 +32,6 @@ export class DpopFunService extends ApiService {
    * @returns {Promise<Object>} BIK registration data
    */
   async registerBIK() {
-    if (!this.session) {
-      throw new Error('Session not initialized');
-    }
-
     try {
       const response = await DpopFun.bikRegisterStep({ bikRegisterUrl: '/browser/register' });
       this.bik = response;
@@ -50,10 +46,6 @@ export class DpopFunService extends ApiService {
    * @returns {Promise<Object>} DPoP binding data
    */
   async bindDPoP() {
-    if (!this.session || !this.bik) {
-      throw new Error('Session and BIK must be initialized');
-    }
-
     try {
       const response = await DpopFun.dpopBindStep({ dpopBindUrl: '/dpop/bind' });
       this.dpop = response;
@@ -125,7 +117,11 @@ export class DpopFunService extends ApiService {
    * @returns {Promise<Object>} Session status
    */
   async getSessionStatus() {
-    return this.get('/session/status');
+    try {
+      return await DpopFun.getSessionStatus();
+    } catch (error) {
+      throw new Error(`Failed to get session status: ${error.message}`);
+    }
   }
 
   /**
@@ -134,28 +130,14 @@ export class DpopFunService extends ApiService {
    */
   async restoreSessionState() {
     try {
-      // Get the current session status
-      const status = await this.getSessionStatus();
+      // Use the core session restoration logic
+      const sessionData = await DpopFun.restoreSession();
       
-      if (status.valid) {
-        // For existing sessions, we need to use the session resume process
-        // to get fresh binding tokens without overwriting the session
-        
-        // Mark that we have a session
-        this.session = { state: status.state };
-        
-        if (status.bik_registered) {
-          // Mark that we have BIK
-          this.bik = { registered: true };
-        }
-        
-        if (status.dpop_bound) {
-          // Mark that we have DPoP and trigger resume to get fresh binding token
-          this.dpop = { bound: true };
-          
-          // Use the session resume process to get fresh binding token
-          await this.resumeSession();
-        }
+      if (sessionData.hasSession) {
+        // Update service state based on restored session
+        this.session = { state: sessionData.sessionStatus?.state };
+        this.bik = sessionData.hasBIK ? { registered: true } : null;
+        this.dpop = sessionData.hasDPoP ? { bound: true } : null;
         
         return true;
       }
@@ -167,34 +149,11 @@ export class DpopFunService extends ApiService {
   }
 
   /**
-   * Restore session state from IndexedDB and get fresh nonces from server
+   * Resume session with fresh binding token
    */
   async resumeSession() {
     try {
-      // First restore CSRF token and reg_nonce from IndexedDB
-      await DpopFun.restoreSessionTokens();
-      
-      // Verify we have the necessary tokens
-      const csrf = await DpopFun.get(CONFIG.STORAGE.KEYS.CSRF);
-      const bind = await DpopFun.get(CONFIG.STORAGE.KEYS.BIND);
-      
-      if (!csrf?.value) {
-        throw new Error('CSRF token not found in storage');
-      }
-      
-      if (!bind?.value) {
-        throw new Error('Binding token not found in storage');
-      }
-      
-      // Now call the server-side resume process to get fresh DPoP nonce
-      const resumeSuccess = await DpopFun.resumeViaPage();
-      if (!resumeSuccess) {
-        throw new Error('Server-side session resume failed');
-      }
-      
-      // Session state restored successfully with fresh nonce
-      
-      return true;
+      return await DpopFun.resumeSession();
     } catch (error) {
       throw new Error(`Session restoration failed: ${error.message}`);
     }
@@ -205,56 +164,10 @@ export class DpopFunService extends ApiService {
    */
   async performFullResume() {
     try {
-      // Call the resume endpoints directly to get a fresh binding token
-      const r1 = await this.post('/session/resume-init');
-      const { resume_nonce } = r1;
-      
-      // Get the BIK from storage
-      const bik = await DpopFun.getBIK();
-      if (!bik) {
-        throw new Error('BIK not found in storage');
-      }
-      
-      // Create the resume JWS manually
-      const jws = await this.createResumeJws(resume_nonce, bik);
-      
-      // Confirm the resume
-      const r2 = await this.post('/session/resume-confirm', jws);
-      const { bind } = r2;
-      
-      // Store the binding token
-      await DpopFun.set(CONFIG.STORAGE.KEYS.BIND, bind);
-      
-      return true;
+      return await DpopFun.performFullResume();
     } catch (error) {
       throw new Error(`Full session resume failed: ${error.message}`);
     }
-  }
-
-  /**
-   * Create a resume JWS manually
-   */
-  async createResumeJws(resume_nonce, bik) {
-    // Import the necessary crypto functions from the Stronghold module
-    const { jose } = await import('../jose-lite.js');
-    
-    // Create the JWS payload
-    const payload = {
-      resume_nonce,
-      iat: Math.floor(Date.now() / 1000)
-    };
-    
-    // Create the JWS header
-    const header = {
-      alg: 'ES256',
-      typ: 'bik-resume+jws',
-      jwk: bik.publicJwk
-    };
-    
-    // Sign the JWS
-    const jws = await jose.sign(header, payload, bik.privateKey);
-    
-    return jws;
   }
 
 

@@ -45,8 +45,4 @@ class Logger {
 
 export const createLogger = (prefix, level = DEFAULT_LEVEL) => new Logger(prefix, level);
 
-export const coreLogger = createLogger('stronghold/core');
-export const swLogger = createLogger('stronghold/sw');
-export const cryptoLogger = createLogger('stronghold/crypto');
-export const storageLogger = createLogger('stronghold/storage');
-export const networkLogger = createLogger('stronghold/network');
+export const logger = createLogger('dpop-fun');

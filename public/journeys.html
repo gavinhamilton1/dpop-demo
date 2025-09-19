@@ -15,12 +15,6 @@
     <link rel="stylesheet" href="/public/css/components.css">
     <link rel="stylesheet" href="/public/css/journeys.css">
     
-    <!-- Vendor Libraries -->
-    <script src="/public/vendor/qrcode.min.js"></script>
-    
-    <!-- Core JavaScript -->
-    <script src="/public/js/browser.js"></script>
-    <script src="/public/js/apriltag.js"></script>
 </head>
 <body>
     <div class="journey-container">
@@ -28,6 +22,16 @@
         <header class="journey-header">
             <h1>🔐 DPoP Authentication Journeys</h1>
             <p class="journey-subtitle">Choose your authentication method</p>
+            
+            <!-- Admin Controls -->
+            <div class="admin-controls">
+                <button class="admin-btn server-flush" id="serverFlushBtn">
+                    🗑️ Server Flush
+                </button>
+                <button class="admin-btn client-flush" id="clientFlushBtn">
+                    🧹 Client Flush
+                </button>
+            </div>
         </header>
 
         <!-- Session Status -->
@@ -38,6 +42,36 @@
                         <span class="status-title">Initializing session...</span>
                     </div>
                     <div class="status-detail">Checking for existing browser identity and session</div>
+                    
+                    <!-- Signal Data Summary -->
+                    <div id="signalSummary" class="signal-summary" style="display: none;">
+                        <div class="signal-header">
+                            <span class="signal-title">Risk Signals</span>
+                            <button id="signalDetailsBtn" class="signal-details-btn" title="View all signal data">
+                                <span class="btn-icon">More...</span>
+                            </button>
+                        </div>
+                        <div class="signal-row">
+                            <div class="signal-item">   
+                                <span class="signal-label">Location:</span>
+                                <span class="signal-value" id="signalLocation">--</span>
+                            </div>
+                            <div class="signal-item">
+                                <span class="signal-label">Device:</span>
+                                <span class="signal-value" id="signalDevice">--</span>
+                            </div>
+                            <div class="signal-item">
+                                <span class="signal-label">Browser:</span>
+                                <span class="signal-value" id="signalBrowser">--</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="session-actions" id="sessionActions" style="display: none;">
+                        <button class="btn-pill" id="testApiBtn" disabled>
+                            🧪 Test API
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -129,10 +163,59 @@
         </div>
     </div>
 
+    <!-- API Test Modal -->
+    <div id="apiModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🧪 Test API with DPoP</h3>
+                <span class="close" id="closeApiModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="apiMessage">Message to send to server:</label>
+                    <textarea id="apiMessage" class="form-control" rows="3" placeholder="Enter your message here...">Hello from DPoP-Fun Journeys!</textarea>
+                </div>
+                <div class="request-response-grid">
+                    <div class="form-group">
+                        <label>📤 Client Request (with DPoP):</label>
+                        <div id="clientRequest" class="response-box">
+                            <em>Request details will appear here...</em>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>📥 Server Response:</label>
+                        <div id="apiResponse" class="response-box">
+                            <em>Click "Send Request" to test the API...</em>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="sendApiRequest" class="btn btn-primary">Send Request</button>
+                <button id="cancelApiRequest" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signal Details Modal -->
+    <div id="signalDetailsModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📊 Complete Signal Data</h3>
+                <button class="modal-close" id="signalModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="signalDetailsContent">
+                    <div class="loading-text">Loading signal data...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="/public/vendor/qrcode.min.js"></script>
-    <script src="/public/js/browser.js"></script>
-    <script src="/public/js/apriltag.js"></script>
+    <script src="/public/vendor/browser.js"></script>
+    <script src="/public/js/utils/apriltag.js"></script>
     <script type="module" src="/public/js/journeys.js"></script>
 </body>
 </html>

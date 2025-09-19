@@ -29,9 +29,347 @@
     margin: 0;
 }
 
+/* Admin Controls */
+.admin-controls {
+    display: flex;
+    justify-content: center;
+    gap: var(--spacing-4);
+    margin-top: var(--spacing-6);
+}
+
+.admin-btn {
+    padding: var(--spacing-3) var(--spacing-4);
+    border: 2px solid;
+    border-radius: var(--border-radius-md);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+}
+
+.admin-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+.admin-btn:active {
+    transform: translateY(0);
+}
+
+.server-flush {
+    background: var(--color-red-50);
+    border-color: var(--color-red-200);
+    color: var(--color-red-700);
+}
+
+.server-flush:hover {
+    background: var(--color-red-100);
+    border-color: var(--color-red-300);
+}
+
+.client-flush {
+    background: var(--color-orange-50);
+    border-color: var(--color-orange-200);
+    color: var(--color-orange-700);
+}
+
+.client-flush:hover {
+    background: var(--color-orange-100);
+    border-color: var(--color-orange-300);
+}
+
+.admin-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.admin-btn:disabled:hover {
+    transform: none;
+    box-shadow: none;
+}
+
 /* Session Status */
 .session-status-section {
     margin-bottom: 2rem;
+    position: relative;
+}
+
+.session-actions {
+    position: absolute;
+    top: var(--spacing-4);
+    right: var(--spacing-4);
+    display: flex;
+    justify-content: flex-end;
+}
+
+
+/* API Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    overflow-y: auto;
+}
+
+.modal-content {
+    background-color: var(--surface);
+    margin: 20px auto;
+    padding: 0;
+    border-radius: 16px;
+    width: 90%;
+    max-width: 600px;
+    max-height: calc(100vh - 40px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    animation: modalSlideIn 0.3s ease-out;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 16px 16px 0 0;
+    flex-shrink: 0;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: var(--text);
+}
+
+.close {
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: color 0.3s ease;
+}
+
+.close:hover {
+    color: var(--text);
+}
+
+.modal-body {
+    padding: 2rem;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    background: var(--surface-elevated);
+    background-color: rgba(36, 62, 86, 0.5);
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    padding: 1.5rem 2rem;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 0 0 16px 16px;
+    flex-shrink: 0;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: var(--font-weight-medium);
+    color: var(--text);
+}
+
+.form-control {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.1);
+}
+
+.response-box {
+    background: var(--surface-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    min-height: 100px;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-y: auto;
+}
+
+.request-response-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Ensure API modal is hidden by default */
+#apiModal {
+    display: none !important;
+}
+
+#apiModal.show {
+    display: flex !important;
+}
+
+/* Signal Summary - Condensed for session card */
+.session-status-section .signal-summary {
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.875rem;
+}
+
+.session-status-section .signal-header {
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.session-status-section .signal-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.session-status-section .signal-details-btn {
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.session-status-section .signal-details-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.session-status-section .signal-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+}
+
+.session-status-section .signal-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+}
+
+.session-status-section .signal-label {
+    font-size: 0.625rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.25px;
+}
+
+.session-status-section .signal-value {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text);
+    word-break: break-word;
+}
+
+/* Mobile responsive signal summary */
+@media (max-width: 768px) {
+    .session-status-section .signal-row {
+        grid-template-columns: 1fr;
+        gap: 0.25rem;
+    }
+    
+    .session-status-section .signal-item {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .session-status-section .signal-label {
+        font-size: 0.75rem;
+    }
+    
+    .session-status-section .signal-value {
+        font-size: 0.875rem;
+    }
+}
+
+/* Mobile responsive modal */
+@media (max-width: 768px) {
+    .modal {
+        padding: 10px;
+    }
+    
+    .modal-content {
+        margin: 10px auto;
+        width: 95%;
+        max-height: calc(100vh - 20px);
+    }
+    
+    .modal-header,
+    .modal-body,
+    .modal-footer {
+        padding: 1rem;
+    }
+    
+    .modal-footer {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .modal-footer .btn {
+        width: 100%;
+    }
+    
+    .request-response-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .status-indicator {
@@ -779,6 +1117,163 @@
     right: 0;
     border-left: none;
     border-top: none;
+}
+
+/* Signal Details Modal Styles */
+#signalDetailsModal {
+    display: none !important;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    overflow-y: auto;
+}
+
+#signalDetailsModal.show {
+    display: flex !important;
+}
+
+#signalDetailsModal .modal-content {
+    background-color: var(--surface);
+    margin: 20px auto;
+    padding: 0;
+    border-radius: 16px;
+    width: 90%;
+    max-width: 700px;
+    max-height: calc(100vh - 40px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    animation: modalSlideIn 0.3s ease-out;
+    display: flex;
+    flex-direction: column;
+}
+
+#signalDetailsModal .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 16px 16px 0 0;
+    flex-shrink: 0;
+}
+
+#signalDetailsModal .modal-header h3 {
+    margin: 0;
+    color: var(--text);
+}
+
+#signalDetailsModal .modal-close {
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: color 0.3s ease;
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+#signalDetailsModal .modal-close:hover {
+    color: var(--text);
+}
+
+#signalDetailsModal .modal-body {
+    padding: 2rem;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    background: var(--surface-elevated);
+}
+
+/* Signal sections styling */
+.signal-section {
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    background: var(--surface);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+}
+
+.signal-section:last-child {
+    margin-bottom: 0;
+}
+
+.signal-section h4 {
+    margin: 0 0 1rem 0;
+    color: var(--text);
+    font-size: 1.1rem;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5rem;
+}
+
+.signal-section .signal-item {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+    align-items: center;
+}
+
+.signal-section .signal-item:last-child {
+    margin-bottom: 0;
+}
+
+.signal-section .signal-label {
+    font-weight: 500;
+    color: var(--text-muted);
+    text-align: left;
+}
+
+.signal-section .signal-value {
+    font-weight: 400;
+    color: var(--text);
+    text-align: left;
+    word-break: break-word;
+    background: var(--surface-elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+}
+
+/* Mobile responsive signal details */
+@media (max-width: 768px) {
+    #signalDetailsModal .modal-content {
+        width: 95%;
+        margin: 10px auto;
+        max-height: calc(100vh - 20px);
+    }
+    
+    #signalDetailsModal .modal-header,
+    #signalDetailsModal .modal-body {
+        padding: 1rem;
+    }
+    
+    .signal-section {
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+    
+    .signal-section .signal-item {
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+    }
+    
+    .signal-section .signal-label {
+        font-size: 0.85rem;
+    }
+    
+    .signal-section .signal-value {
+        font-size: 0.85rem;
+        padding: 0.4rem 0.6rem;
+    }
 }
 
 .hidden {

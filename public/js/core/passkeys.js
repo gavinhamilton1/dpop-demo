@@ -1,19 +1,19 @@
 // /public/js/passkeys.js
 import * as DpopFun from './dpop-fun.js';
-import { b64uToBuf, bufToB64u } from './jose-lite.js';
-import { cryptoLogger } from './utils/logging.js';
-import { AuthenticationError, NetworkError } from './utils/errors.js';
+import { b64uToBuf, bufToB64u } from '../utils/jose-lite.js';
+import { logger } from '../utils/logging.js';
+import { AuthenticationError, NetworkError } from '../utils/errors.js';
 
 export async function checkSupport() {
   try {
-    cryptoLogger.debug('Checking WebAuthn support');
+    logger.debug('Checking WebAuthn support');
     const hasAPI = !!(window.PublicKeyCredential && navigator.credentials);
     const uvp = hasAPI && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable?.().catch(() => false);
     const result = { hasAPI, uvp: !!uvp };
-    cryptoLogger.debug('WebAuthn support check result:', result);
+    logger.debug('WebAuthn support check result:', result);
     return result;
   } catch (error) {
-    cryptoLogger.error('Failed to check WebAuthn support:', error);
+    logger.error('Failed to check WebAuthn support:', error);
     throw new AuthenticationError('Failed to check WebAuthn support', { originalError: error.message });
   }
 }
@@ -21,11 +21,11 @@ export async function checkSupport() {
 // ----- Registration -----
 export async function registerPasskey() {
   try {
-    cryptoLogger.debug('Starting passkey registration');
+    logger.debug('Starting passkey registration');
     
     // 1) get options
     const opts = await DpopFun.dpopFunFetch('/webauthn/registration/options', { method: 'POST' });
-    cryptoLogger.debug('Registration options received');
+    logger.debug('Registration options received');
 
     const pub = {
       rp: opts.rp,
@@ -40,13 +40,13 @@ export async function registerPasskey() {
     };
 
     // 2) create
-    cryptoLogger.debug('Creating credential with navigator.credentials.create');
+    logger.debug('Creating credential with navigator.credentials.create');
     const cred = await navigator.credentials.create({ publicKey: pub });
     if (!cred) {
-      cryptoLogger.warn('User cancelled passkey registration');
+      logger.warn('User cancelled passkey registration');
       throw new AuthenticationError('registration cancelled');
     }
-    cryptoLogger.debug('Credential created successfully');
+    logger.debug('Credential created successfully');
 
     // 3) send to server
     const att = {
@@ -60,18 +60,18 @@ export async function registerPasskey() {
       transports: cred.response.getTransports?.() || ['internal'],
     };
 
-    cryptoLogger.debug('Sending attestation to server for verification');
+    logger.debug('Sending attestation to server for verification');
     const result = await DpopFun.dpopFunFetch('/webauthn/registration/verify', {
       method: 'POST',
       body: att,
     });
     
-    cryptoLogger.debug('Passkey registration completed successfully');
+    logger.debug('Passkey registration completed successfully');
     return result;
   } catch (error) {
     // Handle user cancellation gracefully first
     if (error.name === 'NotAllowedError') {
-      cryptoLogger.info('User cancelled passkey registration');
+      logger.info('User cancelled passkey registration');
       throw new AuthenticationError('Registration cancelled by user', { 
         originalError: error.message,
         cancelled: true 
@@ -84,7 +84,7 @@ export async function registerPasskey() {
     
     // Handle other WebAuthn errors
     if (error.name === 'InvalidStateError' || error.name === 'SecurityError') {
-      cryptoLogger.warn('Passkey registration failed - retryable error:', error);
+      logger.warn('Passkey registration failed - retryable error:', error);
       throw new AuthenticationError('Registration failed - please try again', { 
         originalError: error.message,
         retryable: true 
@@ -92,7 +92,7 @@ export async function registerPasskey() {
     }
     
     // Log other errors as errors
-    cryptoLogger.error('Passkey registration failed:', error);
+    logger.error('Passkey registration failed:', error);
     throw new AuthenticationError('Passkey registration failed', { originalError: error.message });
   }
 }
@@ -101,12 +101,12 @@ export async function registerPasskey() {
 
 export async function getAuthOptions() {
   try {
-    cryptoLogger.debug('Getting authentication options');
+    logger.debug('Getting authentication options');
     const options = await DpopFun.dpopFunFetch('/webauthn/authentication/options', { method: 'POST' });
-    cryptoLogger.debug('Authentication options received');
+    logger.debug('Authentication options received');
     return options;
   } catch (error) {
-    cryptoLogger.error('Failed to get authentication options:', error);
+    logger.error('Failed to get authentication options:', error);
     if (error.name === 'NetworkError') throw error;
     throw new AuthenticationError('Failed to get authentication options', { originalError: error.message });
   }
@@ -114,7 +114,7 @@ export async function getAuthOptions() {
 
 export async function authenticatePasskey(passedOpts) {
   try {
-    cryptoLogger.debug('Starting passkey authentication');
+    logger.debug('Starting passkey authentication');
     
     // allow caller to pass pre-fetched options
     const opts = passedOpts || await getAuthOptions();
@@ -137,13 +137,13 @@ export async function authenticatePasskey(passedOpts) {
       }));
     }
 
-    cryptoLogger.debug('Getting assertion with navigator.credentials.get');
+    logger.debug('Getting assertion with navigator.credentials.get');
     const assertion = await navigator.credentials.get({ publicKey: pub });
     if (!assertion) {
-      cryptoLogger.warn('User cancelled passkey authentication');
+      logger.warn('User cancelled passkey authentication');
       throw new AuthenticationError('authentication cancelled');
     }
-    cryptoLogger.debug('Assertion received successfully');
+    logger.debug('Assertion received successfully');
 
     const payload = {
       id: assertion.id,
@@ -157,18 +157,18 @@ export async function authenticatePasskey(passedOpts) {
       },
     };
 
-    cryptoLogger.debug('Sending assertion to server for verification');
+    logger.debug('Sending assertion to server for verification');
     const result = await DpopFun.dpopFunFetch('/webauthn/authentication/verify', {
       method: 'POST',
       body: payload,
     });
     
-    cryptoLogger.debug('Passkey authentication completed successfully');
+    logger.debug('Passkey authentication completed successfully');
     return result;
   } catch (error) {
     // Handle user cancellation gracefully first
     if (error.name === 'NotAllowedError') {
-      cryptoLogger.info('User cancelled passkey authentication');
+      logger.info('User cancelled passkey authentication');
       throw new AuthenticationError('Authentication cancelled by user', { 
         originalError: error.message,
         cancelled: true 
@@ -181,7 +181,7 @@ export async function authenticatePasskey(passedOpts) {
     
     // Handle other WebAuthn errors
     if (error.name === 'InvalidStateError' || error.name === 'SecurityError') {
-      cryptoLogger.warn('Passkey authentication failed - retryable error:', error);
+      logger.warn('Passkey authentication failed - retryable error:', error);
       throw new AuthenticationError('Authentication failed - please try again', { 
         originalError: error.message,
         retryable: true 
@@ -189,7 +189,7 @@ export async function authenticatePasskey(passedOpts) {
     }
     
     // Log other errors as errors
-    cryptoLogger.error('Passkey authentication failed:', error);
+    logger.error('Passkey authentication failed:', error);
     throw new AuthenticationError('Passkey authentication failed', { originalError: error.message });
   }
 }

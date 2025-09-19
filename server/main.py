@@ -54,15 +54,21 @@ async def validate_session_with_user(req: Request) -> Tuple[bool, Optional[str],
     
     return True, user["username"], session_data
 
-async def require_valid_session(req: Request):
-    """Raise HTTPException if session is not valid with username and DPoP binding"""
+async def require_valid_session(req: Request, require_username: bool = True):
+    """Raise HTTPException if session is not valid with DPoP binding
+    
+    Args:
+        req: FastAPI Request object
+        require_username: If True, requires username to be bound to session. 
+                         If False, only validates session and DPoP binding.
+    """
     is_valid, username, session_data = await validate_session_with_user(req)
     if not is_valid:
         if not session_data:
             raise HTTPException(status_code=401, detail="No valid session")
         elif not session_data.get("dpop_jkt"):
             raise HTTPException(status_code=401, detail="DPoP not bound to session")
-        elif not username:
+        elif require_username and not username:
             raise HTTPException(status_code=401, detail="No username bound to session")
     
     return username, session_data
@@ -1256,8 +1262,8 @@ async def get_fingerprint_data(req: Request):
 # ---------------- Demo API ----------------
 @app.post("/api/echo")
 async def api_echo(req: Request, ctx=Depends(require_dpop)):
-    # Require valid session with username and DPoP binding
-    username, session_data = await require_valid_session(req)
+    # Test endpoint - requires valid session and DPoP binding, but not username
+    username, session_data = await require_valid_session(req, require_username=False)
     
     body = await req.json()
     headers = {"DPoP-Nonce": ctx["next_nonce"]}

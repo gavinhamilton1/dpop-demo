@@ -67,5 +67,7 @@
   }
 
   // browser.ts
-  Object.defineProperty(globalThis, "AprilTagFamily", { value: AprilTagFamily });
+  if (typeof globalThis.AprilTagFamily === 'undefined') {
+    Object.defineProperty(globalThis, "AprilTagFamily", { value: AprilTagFamily });
+  }
 })();

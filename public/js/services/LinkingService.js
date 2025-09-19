@@ -20,7 +20,7 @@ export class LinkingService extends ApiService {
   async startLinking() {
     try {
       if (!this.dpopFunService) {
-        throw new Error('StrongholdService not provided');
+        throw new Error('DpopFunService not provided');
       }
       const response = await this.dpopFunService.secureRequest('/link/start', {
         method: 'POST'
@@ -40,7 +40,7 @@ export class LinkingService extends ApiService {
   async completeMobileLink(linkId) {
     try {
       if (!this.dpopFunService) {
-        throw new Error('StrongholdService not provided');
+        throw new Error('DpopFunService not provided');
       }
       const response = await this.dpopFunService.secureRequest('/link/mobile/complete', {
         method: 'POST',
@@ -62,7 +62,7 @@ export class LinkingService extends ApiService {
   async getLinkStatus(linkId) {
     try {
       if (!this.dpopFunService) {
-        throw new Error('StrongholdService not provided');
+        throw new Error('DpopFunService not provided');
       }
       const response = await this.dpopFunService.secureRequest(`/link/status/${linkId}`, {
         method: 'GET'

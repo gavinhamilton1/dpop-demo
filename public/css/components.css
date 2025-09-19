@@ -1201,3 +1201,48 @@ textarea.form-control {
     margin: 1rem;
   }
 }
+
+/* Pill Button - Generic pill-shaped button component */
+.btn-pill {
+  padding: 8px 20px;
+  background: #465263;
+  border: 1px solid #93c5fd;
+  border-radius: 50px; /* Pill shape */
+  color: #c3cce8;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  overflow: hidden;
+  min-height: 32px; /* Ensure minimum height for pill shape */
+  white-space: nowrap;
+}
+
+.btn-pill:hover:not(:disabled) {
+  background: #9aabc1;
+  border-color: #60a5fa;
+  color: #1e3a8a;
+}
+
+.btn-pill:active:not(:disabled) {
+  background: #93c5fd;
+  border-color: #3b82f6;
+}
+
+.btn-pill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #6b7280;
+}
+
+.btn-pill:disabled:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #6b7280;
+}
