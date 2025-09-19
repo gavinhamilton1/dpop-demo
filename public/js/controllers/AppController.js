@@ -8,6 +8,7 @@ import { PasskeyService } from '../services/PasskeyService.js';
 import { LinkingService } from '../services/LinkingService.js';
 import { FingerprintService } from '../services/FingerprintService.js';
 import { ErrorHandler } from '../utils/ErrorHandler.js';
+import { createQRContainer } from '../utils/qr-generator.js';
 
 export class AppController {
   constructor() {
@@ -1533,15 +1534,8 @@ export class AppController {
    * @param {string} linkId - Link ID
    */
   createQRCode(qrData, linkId) {
-    const container = document.createElement('div');
-    container.className = 'qr-container';
-    container.innerHTML = `
-      <h3>Scan QR Code with Mobile Device</h3>
-      <div class="qr-code" id="qrcode"></div>
-      <p>Link ID: ${linkId}</p>
-      <p><strong>URL:</strong> <code>${qrData}</code></p>
-      <div class="qr-status" id="qrStatus">Waiting for scan...</div>
-    `;
+    // Use shared QR container utility
+    const container = createQRContainer(qrData, linkId);
 
     // Insert after the sequence step containing the link button
     const linkBtn = document.getElementById('linkBtn');
@@ -1554,19 +1548,6 @@ export class AppController {
         // Fallback: insert after the button
         linkBtn.parentNode.insertBefore(container, linkBtn.nextSibling);
       }
-    }
-
-    // Generate QR code
-    if (window.QRCode) {
-      new QRCode(document.getElementById('qrcode'), qrData);
-      
-      // Add AprilTag overlay after QR code is generated
-      setTimeout(async () => {
-        if (window.QRGenerator) {
-          const qrGenerator = new QRGenerator();
-          await qrGenerator.generateQRWithAprilTag('qrcode', qrData);
-        }
-      }, 100); // Small delay to ensure QR code is rendered
     }
   }
 

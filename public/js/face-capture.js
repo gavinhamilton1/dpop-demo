@@ -278,8 +278,8 @@ import {
       // Recording completed successfully - check if all checks passed
       if (centered && leftOK && rightOK) {
         setStatus("All checks passed - Registering face...");
-        setPrompt("Processing face registration with enhanced quality...", "ok");
-        setBanner("Registering face with improved accuracy...");
+        setPrompt("Processing face registration...", "ok");
+        setBanner("Registering face...");
         // Automatically register the face
         setTimeout(() => {
           sendForVerification();
@@ -346,7 +346,7 @@ import {
       } else {
         setStatus("Face registered ✓"); 
         setBanner("Face registered successfully ✓"); 
-        setPrompt(`Face registered with enhanced quality! ${data.embeddings_count} embedding(s) captured.`, "ok");
+        setPrompt(`Face registered! ${data.embeddings_count} embedding(s) captured.`, "ok");
         // Stop camera after successful registration
         setTimeout(() => {
           stopCamera();

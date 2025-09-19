@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DPoP Authentication Journeys</title>
+    
+
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="/public/css/design-system.css">
+    <link rel="stylesheet" href="/public/css/components.css">
+    <link rel="stylesheet" href="/public/css/journeys.css">
+    
+    <!-- Vendor Libraries -->
+    <script src="/public/vendor/qrcode.min.js"></script>
+    
+    <!-- Core JavaScript -->
+    <script src="/public/js/browser.js"></script>
+    <script src="/public/js/apriltag.js"></script>
+</head>
+<body>
+    <div class="journey-container">
+        <!-- Header -->
+        <header class="journey-header">
+            <h1>🔐 DPoP Authentication Journeys</h1>
+            <p class="journey-subtitle">Choose your authentication method</p>
+        </header>
+
+        <!-- Session Status -->
+        <div class="session-status-section">
+            <div id="sessionStatusIndicator" class="status-indicator loading">
+                <div class="status-content">
+                    <div class="status-text">
+                        <span class="status-title">Initializing session...</span>
+                    </div>
+                    <div class="status-detail">Checking for existing browser identity and session</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Journey Selection -->
+        <div class="journey-selection" id="journeySelection">
+            <!-- New User Journey -->
+            <div class="journey-card" id="newUserJourney">
+                <div class="journey-icon">👤</div>
+                <h2>New User Registration</h2>
+                <p>Create a new account with username, passkey, face, and mobile device</p>
+                <button class="journey-btn primary" id="startNewUserBtn" disabled>
+                    Start New User Journey
+                </button>
+            </div>
+
+            <!-- Desktop Passkey Login -->
+            <div class="journey-card" id="desktopPasskeyJourney">
+                <div class="journey-icon">🔑</div>
+                <h2>Desktop Passkey Login</h2>
+                <p>Sign in using your desktop passkey</p>
+                <button class="journey-btn" id="startDesktopPasskeyBtn" disabled>
+                    Login with Passkey
+                </button>
+            </div>
+
+            <!-- Face Login -->
+            <div class="journey-card" id="faceLoginJourney">
+                <div class="journey-icon">📷</div>
+                <h2>Face Recognition Login</h2>
+                <p>Sign in using facial recognition</p>
+                <button class="journey-btn" id="startFaceLoginBtn" disabled>
+                    Login with Face
+                </button>
+            </div>
+
+            <!-- Mobile Passkey Login -->
+            <div class="journey-card" id="mobilePasskeyJourney">
+                <div class="journey-icon">📱</div>
+                <h2>Mobile Passkey Login</h2>
+                <p>Sign in using your mobile device passkey</p>
+                <button class="journey-btn" id="startMobilePasskeyBtn" disabled>
+                    Login with Mobile Passkey
+                </button>
+            </div>
+        </div>
+
+        <!-- Username Entry (for login journeys) -->
+        <div class="username-entry-section" id="usernameEntrySection" style="display: none;">
+            <div class="username-card">
+                <h3>Enter Username</h3>
+                <p>Please enter your username to continue</p>
+                <div class="username-form">
+                    <input type="text" id="usernameInput" placeholder="Enter your username" maxlength="50">
+                    <button id="continueWithUsernameBtn" class="btn primary">Continue</button>
+                    <button id="cancelUsernameBtn" class="btn secondary">Cancel</button>
+                </div>
+                <div id="usernameError" class="error-message" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- Journey Content -->
+        <div class="journey-content" id="journeyContent" style="display: none;">
+            <!-- Journey Header -->
+            <div class="journey-header-content">
+                <h2 id="journeyTitle"></h2>
+                <p id="journeyDescription"></p>
+                <button id="logoutBtn" class="btn secondary" style="display: none;">Logout</button>
+            </div>
+
+            <!-- Journey Steps -->
+            <div class="journey-steps" id="journeySteps">
+                <!-- Steps will be populated dynamically -->
+            </div>
+
+            <!-- Journey Actions -->
+            <div class="journey-actions" id="journeyActions">
+                <!-- Actions will be populated dynamically -->
+            </div>
+        </div>
+
+        <!-- Logs -->
+        <div class="logs-section">
+            <div class="logs-header">
+                <h3>Activity Log</h3>
+                <button id="clearLogsBtn" class="btn small secondary">Clear</button>
+            </div>
+            <div id="logContainer" class="log-container"></div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/public/vendor/qrcode.min.js"></script>
+    <script src="/public/js/browser.js"></script>
+    <script src="/public/js/apriltag.js"></script>
+    <script type="module" src="/public/js/journeys.js"></script>
+</body>
+</html>
