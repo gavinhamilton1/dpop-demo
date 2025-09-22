@@ -21,7 +21,9 @@ class JourneysController {
             hasDPoP: false,
             hasUsername: false,
             hasPasskey: false,
-            hasFace: false
+            hasFace: false,
+            isAuthenticated: false,
+            authenticationMethod: null
         };
         
         this.journeyDefinitions = {
@@ -29,12 +31,6 @@ class JourneysController {
                 title: 'New User Registration',
                 description: 'Create a new account with username, passkey, face, and mobile device',
                 steps: [
-                    {
-                        id: 'browserIdentity',
-                        title: 'Register Browser Identity',
-                        description: 'Create and bind your browser identity key (BIK) to this session',
-                        action: () => this.registerBrowserIdentity()
-                    },
                     {
                         id: 'username',
                         title: 'Create Username',
@@ -70,22 +66,10 @@ class JourneysController {
                 description: 'Sign in using your desktop passkey',
                 steps: [
                     {
-                        id: 'browserIdentity',
-                        title: 'Restore Browser Identity',
-                        description: 'Restore your browser identity key (BIK)',
-                        action: () => this.restoreBrowserIdentity()
-                    },
-                    {
-                        id: 'username',
-                        title: 'Enter Username',
-                        description: 'Enter your username to continue',
-                        action: () => this.enterUsername()
-                    },
-                    {
-                        id: 'passkey',
-                        title: 'Authenticate with Passkey',
-                        description: 'Use your passkey to sign in',
-                        action: () => this.authenticateWithPasskey()
+                        id: 'login',
+                        title: 'Login with Passkey',
+                        description: 'Enter your username and authenticate with your passkey',
+                        action: () => this.loginWithPasskey()
                     }
                 ]
             },
@@ -93,12 +77,6 @@ class JourneysController {
                 title: 'Face Recognition Login',
                 description: 'Sign in using facial recognition',
                 steps: [
-                    {
-                        id: 'browserIdentity',
-                        title: 'Restore Browser Identity',
-                        description: 'Restore your browser identity key (BIK)',
-                        action: () => this.restoreBrowserIdentity()
-                    },
                     {
                         id: 'username',
                         title: 'Enter Username',
@@ -117,12 +95,6 @@ class JourneysController {
                 title: 'Mobile Passkey Login',
                 description: 'Sign in using your mobile device passkey',
                 steps: [
-                    {
-                        id: 'browserIdentity',
-                        title: 'Restore Browser Identity',
-                        description: 'Restore your browser identity key (BIK)',
-                        action: () => this.restoreBrowserIdentity()
-                    },
                     {
                         id: 'username',
                         title: 'Enter Username',
@@ -184,9 +156,6 @@ class JourneysController {
         
         // Logout
         document.getElementById('logoutBtn').addEventListener('click', () => this.logout());
-        
-        // Clear logs
-        document.getElementById('clearLogsBtn').addEventListener('click', () => loggerclear());
     }
     
     async checkSessionStatus() {
@@ -204,6 +173,9 @@ class JourneysController {
             this.sessionState.hasUsername = sessionData.hasUsername;
             this.sessionState.username = sessionData.username;
             
+            // Load persisted authentication state
+            await this.loadPersistedAuthenticationState();
+            
             // Update UI status based on detailed session information
             this.updateSessionStatusWithDetails(sessionData);
             
@@ -215,6 +187,42 @@ class JourneysController {
         }
     }
     
+    async loadPersistedAuthenticationState() {
+        try {
+            const authStatus = await DpopFun.get(CONFIG.STORAGE.KEYS.AUTH_STATUS);
+            const authMethod = await DpopFun.get(CONFIG.STORAGE.KEYS.AUTH_METHOD);
+
+            if (authStatus && authStatus.value) {
+                this.sessionState.isAuthenticated = true;
+                this.sessionState.authenticationMethod = authMethod?.value || 'unknown';
+                logger.info(`Loaded persisted authentication state: ${this.sessionState.authenticationMethod}`);
+            }
+        } catch (error) {
+            logger.error('Failed to load persisted authentication state:', error);
+        }
+    }
+
+    async updateAuthenticationStatus(method) {
+        this.sessionState.isAuthenticated = true;
+        this.sessionState.authenticationMethod = method;
+
+        // Persist authentication state to IndexedDB
+        try {
+            await DpopFun.set(CONFIG.STORAGE.KEYS.AUTH_STATUS, true);
+            await DpopFun.set(CONFIG.STORAGE.KEYS.AUTH_METHOD, method);
+            logger.info(`Authentication state persisted: ${method}`);
+        } catch (error) {
+            logger.error('Failed to persist authentication state:', error);
+        }
+
+        logger.info(`User authenticated with: ${method}`);
+
+        // Show logout button after successful authentication
+        document.getElementById('logoutBtn').style.display = 'block';
+
+        // Refresh session status to show authentication
+        this.refreshSessionStatus();
+    }
     
     updateSessionStatus(status, title, detail) {
         const indicator = document.getElementById('sessionStatusIndicator');
@@ -294,13 +302,21 @@ class JourneysController {
 
         // Username status
         if (hasUsername) {
-            detail += `✅ Username: ${username}\n`;
+            const usernameStr = typeof username === 'string' ? username : (username?.username || username?.value || JSON.stringify(username));
+            detail += `✅ Username: ${usernameStr}\n`;
         } else {
             detail += '❌ Username: Not set\n';
         }
 
+        // Authentication status (displayed last)
+        if (this.sessionState.isAuthenticated && this.sessionState.authenticationMethod) {
+            detail += `🔐 Authenticated with ${this.sessionState.authenticationMethod}\n`;
+        }
+
         // Overall readiness
-        if (details.dpopWorking && hasUsername) {
+        if (this.sessionState.isAuthenticated && this.sessionState.authenticationMethod) {
+            title = `✅ Authenticated with ${this.sessionState.authenticationMethod}`;
+        } else if (details.dpopWorking && hasUsername) {
             title = 'Session Ready';
             detail += '\n🚀 Ready for onboarding';
         } else if (details.dpopWorking) {
@@ -571,6 +587,9 @@ class JourneysController {
     async completeJourney() {
         loggersuccess('Journey completed successfully!');
         
+        // Show logout button after completing any journey
+        document.getElementById('logoutBtn').style.display = 'block';
+        
         // Show completion message
         const actionsContainer = document.getElementById('journeyActions');
         actionsContainer.innerHTML = `
@@ -652,13 +671,60 @@ class JourneysController {
             <div class="username-form">
                 <input type="text" id="stepUsernameInput" placeholder="Enter your username" maxlength="50">
                 <div class="step-actions">
-                    <button class="btn primary" id="submitUsernameBtn">Create Username</button>
+                    <button class="btn primary" id="createUsernameBtn">Create New Username</button>
+                    <button class="btn secondary" id="useExistingUsernameBtn">Use Existing Username</button>
                 </div>
                 <div id="stepUsernameError" class="error-message" style="display: none;"></div>
             </div>
         `;
         
-        document.getElementById('submitUsernameBtn').addEventListener('click', async () => {
+        // Create new username
+        document.getElementById('createUsernameBtn').addEventListener('click', async () => {
+            const username = document.getElementById('stepUsernameInput').value.trim();
+            const errorEl = document.getElementById('stepUsernameError');
+
+            if (!username) {
+                errorEl.textContent = 'Username is required';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            try {
+                const response = await fetch('/onboarding/username', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username })
+                });
+
+                if (response.ok) {
+                    this.sessionState.hasUsername = true;
+                    this.sessionState.username = username;
+            
+                    contentEl.innerHTML = `
+                        <div class="step-status success">
+                            <p>✓ Username "${username}" created successfully!</p>
+                        </div>
+                    `;
+                    
+                    loggersuccess(`Username "${username}" created successfully`);
+                    loggersuccess(`Completing username step, current step: ${this.currentStep}`);
+
+                    await this.completeStep();
+                    
+                } else {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Failed to create username');
+                }
+
+            } catch (error) {
+                errorEl.textContent = error.message;
+                errorEl.style.display = 'block';
+            }
+        });
+
+        // Use existing username
+        document.getElementById('useExistingUsernameBtn').addEventListener('click', async () => {
             const username = document.getElementById('stepUsernameInput').value.trim();
             const errorEl = document.getElementById('stepUsernameError');
             
@@ -669,7 +735,7 @@ class JourneysController {
             }
             
             try {
-                const response = await fetch('/onboarding/username', {
+                const response = await fetch('/onboarding/signin', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
@@ -682,16 +748,18 @@ class JourneysController {
                     
                     contentEl.innerHTML = `
                         <div class="step-status success">
-                            <p>✓ Username "${username}" created successfully!</p>
+                            <p>✓ Username "${username}" verified!</p>
                         </div>
                     `;
                     
-                    loggersuccess(`Username "${username}" created successfully`);
+                    loggersuccess(`Username "${username}" verified`);
+                    loggersuccess(`Completing username step, current step: ${this.currentStep}`);
+
                     await this.completeStep();
                     
                 } else {
                     const errorData = await response.json();
-                    throw new Error(errorData.detail || 'Failed to create username');
+                    throw new Error(errorData.detail || 'Username not found');
                 }
                 
             } catch (error) {
@@ -1409,14 +1477,155 @@ class JourneysController {
         }
     }
     
+    async loginWithPasskey() {
+        const stepEl = document.getElementById('step-login');
+        const contentEl = stepEl.querySelector('.step-content');
+        
+        // Always show username input field, prepopulate if username exists
+        const currentUsername = this.sessionState.hasUsername ? 
+            (typeof this.sessionState.username === 'string' ? this.sessionState.username : 
+             (this.sessionState.username?.username || this.sessionState.username?.value || '')) : '';
+        
+        contentEl.innerHTML = `
+            <div class="step-status">
+            </div>
+            <div class="step-actions">
+                <div class="input-group">
+                    <input 
+                        type="text" 
+                        id="usernameInputPasskey" 
+                        placeholder="Enter username" 
+                        value="${currentUsername}"
+                        class="form-input"
+                    >
+                    <button class="btn primary" id="loginWithPasskeyBtn">Login with Passkey</button>
+                </div>
+                <div id="loginErrorPasskey" class="error-message" style="display: none;"></div>
+            </div>
+        `;
+        
+        // Add event listener for the login button
+        const loginBtn = document.getElementById('loginWithPasskeyBtn');
+        if (loginBtn) {
+            loginBtn.addEventListener('click', async () => {
+                const username = document.getElementById('usernameInputPasskey').value.trim();
+                const errorEl = document.getElementById('loginErrorPasskey');
+                
+                if (!username) {
+                    errorEl.textContent = 'Username is required';
+                    errorEl.style.display = 'block';
+                    return;
+                }
+                
+                try {
+                    // First, submit the username
+                    const response = await fetch('/onboarding/signin', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username })
+                    });
+                    
+                    if (response.ok) {
+                        const responseData = await response.json();
+                        
+                        this.sessionState.hasUsername = true;
+                        this.sessionState.username = username;
+                        
+                        // Update the step content to show username success and start passkey auth
+                        if (responseData.status === 'already_linked') {
+                            contentEl.innerHTML = `
+                                <div class="step-status success">
+                                    <p>✓ Username "${username}" already linked to session!</p>
+                                    <p>🔐 Authenticating with passkey...</p>
+                                </div>
+                            `;
+                        } else {
+                            contentEl.innerHTML = `
+                                <div class="step-status success">
+                                    <p>✓ Username "${username}" verified!</p>
+                                    <p>🔐 Authenticating with passkey...</p>
+                                </div>
+                            `;
+                        }
+                        
+                        // Update session status display without reinitializing session
+                        this.updateSessionStatus();
+                        
+                        // Now authenticate with passkey
+                        try {
+                            await this.performPasskeyAuthentication();
+                            
+                            // Update UI to show success
+                            contentEl.innerHTML = `
+                                <div class="step-status success">
+                                    <p>✓ Username "${username}" verified!</p>
+                                    <p>✓ Passkey authentication successful!</p>
+                                </div>
+                            `;
+                            
+                            // Update authentication status
+                            this.updateAuthenticationStatus('desktop passkey');
+                            
+                            // Complete the journey
+                            await this.completeJourney();
+                            
+                        } catch (passkeyError) {
+                            // Show passkey error
+                            contentEl.innerHTML = `
+                                <div class="step-status error">
+                                    <p>✓ Username "${username}" verified!</p>
+                                    <p>❌ Passkey authentication failed: ${passkeyError.message}</p>
+                                </div>
+                            `;
+                            throw passkeyError;
+                        }
+                        
+                    } else {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Username not found');
+                    }
+                    
+                } catch (error) {
+                    errorEl.textContent = error.message;
+                    errorEl.style.display = 'block';
+                }
+            });
+        }
+    }
+    
+    async performPasskeyAuthentication() {
+        // Check if passkey is registered for this user
+        let hasPasskey = false;
+        let authOptions = null;
+        try {
+            authOptions = await Passkeys.getAuthOptions();
+            hasPasskey = !!(authOptions.allowCredentials && authOptions.allowCredentials.length);
+            logger.info(`Passkey check: hasPasskey=${hasPasskey} rpId=${authOptions?.rpId}`);
+        } catch (e) {
+            logger.info(`Passkey check failed: ${e.message || e}`);
+            hasPasskey = false;
+        }
+        
+        if (!hasPasskey) {
+            throw new Error('No passkey registered for this user. You need to register a passkey first.');
+        }
+        
+        // Perform passkey authentication
+        await Passkeys.authenticatePasskey(authOptions);
+        logger.info('Passkey authentication successful');
+    }
+    
     async enterUsername() {
         const stepEl = document.getElementById('step-username');
         const contentEl = stepEl.querySelector('.step-content');
         
         if (this.sessionState.hasUsername) {
+            const usernameStr = typeof this.sessionState.username === 'string' ? this.sessionState.username : 
+                (this.sessionState.username?.username || this.sessionState.username?.value || 'Unknown');
             contentEl.innerHTML = `
                 <div class="step-status success">
-                    <p>✓ Username "${this.sessionState.username}" found!</p>
+                    <p>✓ Username "${usernameStr}" found!</p>
                 </div>
             `;
             await this.completeStep();
@@ -1687,7 +1896,9 @@ class JourneysController {
                 hasDPoP: false,
                 hasUsername: false,
                 hasPasskey: false,
-                hasFace: false
+                hasFace: false,
+                isAuthenticated: false,
+                authenticationMethod: null
             };
             
             // Reset UI
@@ -1728,6 +1939,8 @@ class JourneysController {
                 this.sessionState.hasDPoP = false;
                 this.sessionState.hasUsername = false;
                 this.sessionState.username = null;
+                this.sessionState.isAuthenticated = false;
+                this.sessionState.authenticationMethod = null;
                 
                 // Update UI
                 this.updateSessionStatus('warning', 'Server Cleared', 'Server session data has been cleared');
@@ -1783,6 +1996,8 @@ class JourneysController {
             this.sessionState.hasDPoP = false;
             this.sessionState.hasUsername = false;
             this.sessionState.username = null;
+            this.sessionState.isAuthenticated = false;
+            this.sessionState.authenticationMethod = null;
             
             // Update UI
             this.updateSessionStatus('warning', 'Client Cleared', 'Client session data and IndexedDB have been cleared');

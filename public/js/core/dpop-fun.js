@@ -12,6 +12,187 @@ export { createJwsES256, idbWipe, jwkThumbprint };
 let CSRF = null;
 let REG_NONCE = null;
 
+/**
+ * Create a session state object with default values
+ * @param {Object} overrides - Values to override defaults
+ * @returns {Object} Session state object
+ */
+function createSessionState(overrides = {}) {
+  const defaults = {
+    hasSession: false,
+    hasBIK: false,
+    hasDPoP: false,
+    hasUsername: false,
+    username: null,
+    sessionStatus: null,
+    details: {
+      serverSession: false,
+      localBIK: false,
+      localDPoP: false,
+      serverBIK: false,
+      serverDPoP: false,
+      bikMatch: false,
+      dpopMatch: false,
+      dpopWorking: false,
+        sessionType: SESSION_TYPES.NONE,
+        bikType: KEY_TYPES.NONE,
+        dpopType: KEY_TYPES.NONE
+    }
+  };
+  
+  return { ...defaults, ...overrides };
+}
+
+
+
+/**
+ * Configuration constants for session and key types
+ */
+const SESSION_TYPES = {
+  NONE: 'none',
+  NEW: 'new',
+  RESTORED: 'restored'
+};
+
+const KEY_TYPES = {
+  NONE: 'none',
+  NEW: 'new',
+  RESTORED: 'restored',
+  MISMATCH: 'mismatch',
+  LOCAL_ONLY: 'local-only',
+  SERVER_ONLY: 'server-only'
+};
+
+/**
+ * Get current origin with fallback
+ */
+function getCurrentOrigin() {
+  return globalThis.location?.origin || globalThis.self?.location?.origin || 'http://localhost';
+}
+
+/**
+ * Session restoration helper functions
+ */
+const SessionRestore = {
+  /**
+   * Check local BIK and JKT from IndexedDB
+   */
+  async checkLocalBIK() {
+    let localBIK = false;
+    let localBikJkt = null;
+    try {
+      logger.debug('Checking for BIK with key:', CONFIG.STORAGE.KEYS.BIK_CURRENT);
+      const bikRecord = await idbGet(STORES.KEYS, CONFIG.STORAGE.KEYS.BIK_CURRENT);
+      logger.debug('BIK record from IndexedDB:', bikRecord);
+      
+      const bikJktRecord = await get(CONFIG.STORAGE.KEYS.BIK_JKT);
+      logger.debug('BIK JKT record:', bikJktRecord);
+      
+      localBIK = !!bikRecord;
+      localBikJkt = bikJktRecord?.value || null;
+      
+      logger.info('Local BIK detection result:', { localBIK, localBikJkt: localBikJkt ? 'present' : 'missing' });
+    } catch (error) {
+      logger.error('Error checking local BIK:', error);
+      localBIK = false;
+    }
+    
+    return { localBIK, localBikJkt };
+  },
+  
+  /**
+   * Check local DPoP from IndexedDB
+   */
+  async checkLocalDPoP() {
+    let localDPoP = false;
+    try {
+      logger.debug('Checking for DPoP with key:', CONFIG.STORAGE.KEYS.DPOP_CURRENT);
+      const dpopRecord = await idbGet(STORES.KEYS, CONFIG.STORAGE.KEYS.DPOP_CURRENT);
+      logger.debug('DPoP record from IndexedDB:', dpopRecord);
+      
+      localDPoP = !!dpopRecord;
+      logger.info('Local DPoP detection result:', { localDPoP });
+    } catch (error) {
+      logger.error('Error checking local DPoP:', error);
+    }
+    
+    return { localDPoP };
+  },
+  
+  /**
+   * Test DPoP binding functionality
+   */
+  async testDPoPBinding() {
+    let dpopWorking = false;
+    try {
+      // Test DPoP binding by making a request to session status
+      await dpopFunFetch('/session/status');
+      dpopWorking = true;
+      logger.info('DPoP binding is working and matches');
+    } catch (error) {
+      logger.warn('DPoP binding test failed:', error.message);
+      dpopWorking = false;
+    }
+    
+    return { dpopWorking };
+  },
+  
+  /**
+   * Check for client/server mismatches and handle them
+   */
+  async checkAndHandleMismatches(localBIK, localDPoP, serverBIK, serverDPoP) {
+    logger.info('Checking for mismatches:', { localBIK, localDPoP, serverBIK, serverDPoP });
+    
+    const bikMatch = localBIK && serverBIK && localBIK;
+    const dpopMatch = localDPoP && serverDPoP;
+    
+    // Check for mismatches (server has keys but client doesn't, or vice versa)
+    const hasMismatch = (serverBIK && !localBIK) || (serverDPoP && !localDPoP) || 
+                       (!serverBIK && localBIK) || (!serverDPoP && localDPoP);
+    
+    logger.info('Mismatch detection result:', { hasMismatch, bikMatch, dpopMatch });
+    
+    if (hasMismatch) {
+      logger.warn('Client/server mismatch detected, clearing server session');
+      try {
+        await clearServerSession();
+        logger.info('Server session cleared due to mismatch');
+        
+        // Return fresh session state
+        return createSessionState({
+          details: {
+            localBIK,
+            localDPoP,
+            serverBIK: false,
+            serverDPoP: false,
+            bikMatch: false,
+            dpopMatch: false,
+            dpopWorking: false
+          }
+        });
+      } catch (error) {
+        logger.error('Failed to clear server session:', error);
+        // Continue with mismatched state if clearing fails
+      }
+    }
+    
+    return null; // No mismatch handled
+  },
+  
+  /**
+   * Get current username from server
+   */
+  async getCurrentUsername() {
+    try {
+      const username = await getCurrentUsername();
+      return { hasUsername: !!username, username };
+    } catch (error) {
+      logger.debug('Failed to get current username:', error.message);
+      return { hasUsername: false, username: null };
+    }
+  }
+};
+
 
 export function canonicalUrl(inputUrl, base) {
   try {
@@ -20,7 +201,7 @@ export function canonicalUrl(inputUrl, base) {
     
     // If no base is provided, use the current origin
     if (!base) {
-      base = globalThis.location?.origin || globalThis.self?.location?.origin || 'http://localhost';
+      base = getCurrentOrigin();
     }
     
     logger.debug('Using base URL:', base);
@@ -358,7 +539,7 @@ export async function dpopFunFetch(url, { method = 'GET', body = null } = {}) {
     const bind = await ensureBinding();
     const dpop = await ensureDPoP();
     // Use current origin for canonicalization to support multi-domain
-    const currentOrigin = globalThis.location?.origin || globalThis.self?.location?.origin || 'http://localhost';
+    const currentOrigin = getCurrentOrigin();
     const fullUrl = canonicalUrl(url, currentOrigin);
     
     const storedNonce = (await get(CONFIG.STORAGE.KEYS.DPOP_NONCE))?.value || null;
@@ -586,27 +767,7 @@ export async function restoreSession() {
     
     if (!sessionStatus || !sessionStatus.valid) {
       logger.info('No valid session found');
-      return {
-        hasSession: false,
-        hasBIK: false,
-        hasDPoP: false,
-        hasUsername: false,
-        username: null,
-        sessionStatus: null,
-        details: {
-          serverSession: false,
-          localBIK: false,
-          localDPoP: false,
-          serverBIK: false,
-          serverDPoP: false,
-          bikMatch: false,
-          dpopMatch: false,
-          dpopWorking: false,
-          sessionType: 'none',
-          bikType: 'none',
-          dpopType: 'none'
-        }
-      };
+      return createSessionState();
     }
     
     logger.info('Valid session found, restoring state');
@@ -614,57 +775,19 @@ export async function restoreSession() {
     // Step 2: Restore session tokens from IndexedDB
     await restoreSessionTokens();
     
-    // Step 3: Check local BIK in IndexedDB
-    let localBIK = false;
-    let localBikJkt = null;
-    try {
-      const bikRecord = await idbGet(STORES.KEYS, CONFIG.STORAGE.KEYS.BIK_CURRENT);
-      const bikJktRecord = await get(CONFIG.STORAGE.KEYS.BIK_JKT);
-      
-      localBIK = !!bikRecord;
-      localBikJkt = bikJktRecord?.value || null;
-      
-      logger.debug('Local BIK found:', localBIK, 'JKT:', localBikJkt ? 'present' : 'missing');
-    } catch (error) {
-      logger.debug('No local BIK found:', error.message);
-      localBIK = false;
-      localBikJkt = null;
-    }
-    
-    // Step 4: Check local DPoP in IndexedDB
-    let localDPoP = false;
-    try {
-      const dpopRecord = await idbGet(STORES.KEYS, CONFIG.STORAGE.KEYS.DPOP_CURRENT);
-      localDPoP = !!dpopRecord;
-      logger.debug('Local DPoP found:', localDPoP);
-    } catch (error) {
-      logger.debug('No local DPoP found:', error.message);
-    }
+    // Step 3: Check local keys and server status
+    const { localBIK, localBikJkt } = await SessionRestore.checkLocalBIK();
+    const { localDPoP } = await SessionRestore.checkLocalDPoP();
     
     // Step 5: Check server BIK status
     const serverBIK = sessionStatus.bik_registered;
     const serverDPoP = sessionStatus.dpop_bound;
     
-    // Step 6: Test DPoP functionality
-    let dpopWorking = false;
+    // Step 4: Test DPoP binding functionality
+    const { dpopWorking } = await SessionRestore.testDPoPBinding();
+    
+    // Step 5: Check BIK match (if both exist)
     let bikMatch = false;
-    let dpopMatch = false;
-    
-    if (serverDPoP && localDPoP) {
-      try {
-        // Test if DPoP binding is actually working
-        const testResponse = await dpopFunFetch('/session/status', { method: 'GET' });
-        dpopWorking = true;
-        dpopMatch = true;
-        logger.info('DPoP binding is working and matches');
-      } catch (error) {
-        logger.warn('DPoP binding test failed:', error.message);
-        dpopWorking = false;
-        dpopMatch = false;
-      }
-    }
-    
-    // Step 7: Check BIK match (if both exist)
     if (serverBIK && localBIK && localBikJkt) {
       // We have both server BIK and local BIK with JKT
       // For now, assume match if we have a stored JKT
@@ -680,59 +803,18 @@ export async function restoreSession() {
       bikMatch = false;
     }
     
-    // Step 8: Check for existing username
-    let hasUsername = false;
-    let username = null;
-    if (dpopWorking) {
-      // Only check username if DPoP is working (to avoid 401 errors)
-      const userData = await getCurrentUsername();
-      if (userData) {
-        hasUsername = true;
-        username = userData.username;
-        logger.info('Found existing username:', username);
-      }
-    }
+    const dpopMatch = localDPoP && serverDPoP && dpopWorking;
     
-    // Check for mismatches that require server session clearing
-    const hasMismatch = (serverBIK && !localBIK) || 
-                       (!serverBIK && localBIK) || 
-                       (serverDPoP && !localDPoP) || 
-                       (!serverDPoP && localDPoP) ||
-                       (serverBIK && localBIK && !bikMatch) ||
-                       (serverDPoP && localDPoP && !dpopMatch);
-
-    if (hasMismatch) {
-      logger.warn('Client/server mismatch detected, clearing server session');
-      try {
-        await clearServerSession();
-        logger.info('Server session cleared due to mismatch');
-        
-        // Return fresh session state
-        return {
-          hasSession: false,
-          hasBIK: false,
-          hasDPoP: false,
-          hasUsername: false,
-          username: null,
-          sessionStatus: null,
-          details: {
-            serverSession: false,
-            localBIK,
-            localDPoP,
-            serverBIK: false,
-            serverDPoP: false,
-            bikMatch: false,
-            dpopMatch: false,
-            dpopWorking: false
-          }
-        };
-      } catch (error) {
-        logger.error('Failed to clear server session:', error);
-        // Continue with mismatched state if clearing fails
-      }
+    // Step 6: Get current username
+    const { hasUsername, username } = await SessionRestore.getCurrentUsername();
+    
+    // Step 7: Check for mismatches and handle them
+    const mismatchResult = await SessionRestore.checkAndHandleMismatches(localBIK, localDPoP, serverBIK, serverDPoP);
+    if (mismatchResult) {
+      return mismatchResult;
     }
 
-    const result = {
+    const result = createSessionState({
       hasSession: true,
       hasBIK: serverBIK,
       hasDPoP: dpopWorking,
@@ -748,11 +830,11 @@ export async function restoreSession() {
         bikMatch,
         dpopMatch,
         dpopWorking,
-        sessionType: 'restored',
-        bikType: localBIK && serverBIK ? (bikMatch ? 'restored' : 'mismatch') : (localBIK ? 'local-only' : 'server-only'),
-        dpopType: localDPoP && serverDPoP ? (dpopWorking ? 'restored' : 'mismatch') : (localDPoP ? 'local-only' : 'server-only')
+        sessionType: SESSION_TYPES.RESTORED,
+        bikType: localBIK && serverBIK ? (bikMatch ? KEY_TYPES.RESTORED : KEY_TYPES.MISMATCH) : (localBIK ? KEY_TYPES.LOCAL_ONLY : KEY_TYPES.SERVER_ONLY),
+        dpopType: localDPoP && serverDPoP ? (dpopWorking ? KEY_TYPES.RESTORED : KEY_TYPES.MISMATCH) : (localDPoP ? KEY_TYPES.LOCAL_ONLY : KEY_TYPES.SERVER_ONLY)
       }
-    };
+    });
     
     logger.info('Session restoration completed:', result);
     return result;
@@ -781,7 +863,7 @@ export async function initializeFreshSession() {
     
     logger.info('Fresh session initialization completed');
     
-    return {
+    return createSessionState({
       hasSession: true,
       hasBIK: true,
       hasDPoP: true,
@@ -797,11 +879,11 @@ export async function initializeFreshSession() {
         bikMatch: true,
         dpopMatch: true,
         dpopWorking: true,
-        sessionType: 'new',
-        bikType: 'new',
-        dpopType: 'new'
+        sessionType: SESSION_TYPES.NEW,
+        bikType: KEY_TYPES.NEW,
+        dpopType: KEY_TYPES.NEW
       }
-    };
+    });
     
   } catch (error) {
     logger.error('Fresh session initialization failed:', error);
@@ -836,12 +918,12 @@ export async function setupSession() {
 }
 
 /**
- * Clear server session (admin flush)
+ * Clear server session (preserves user data)
  */
 export async function clearServerSession() {
   try {
     logger.info('Clearing server session');
-    const response = await fetch('/_admin/flush', {
+    const response = await fetch('/session/clear', {
       method: 'POST',
       credentials: 'include'
     });

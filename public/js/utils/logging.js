@@ -14,27 +14,50 @@ class Logger {
     this.level = level;
   }
 
+  _getCaller() {
+    const stack = new Error().stack;
+    const lines = stack.split('\n');
+    // Find the first line that's not from this logger class
+    for (let i = 3; i < lines.length; i++) {
+      const line = lines[i];
+      if (line && !line.includes('logging.js') && !line.includes('Logger.')) {
+        // Extract function name from stack trace
+        const match = line.match(/at\s+(.+?)\s+\(/);
+        if (match) {
+          return match[1];
+        }
+        // Fallback to just the line content
+        return line.trim().replace('at ', '');
+      }
+    }
+    return 'unknown';
+  }
+
   debug(...args) {
     if (this.level <= LOG_LEVELS.DEBUG) {
-      console.debug(`[${this.prefix}]`, ...args);
+      const caller = this._getCaller();
+      console.debug(`[${caller}]`, ...args);
     }
   }
 
   info(...args) {
     if (this.level <= LOG_LEVELS.INFO) {
-      console.info(`[${this.prefix}]`, ...args);
+      const caller = this._getCaller();
+      console.info(`[${caller}]`, ...args);
     }
   }
 
   warn(...args) {
     if (this.level <= LOG_LEVELS.WARN) {
-      console.warn(`[${this.prefix}]`, ...args);
+      const caller = this._getCaller();
+      console.warn(`[${caller}]`, ...args);
     }
   }
 
   error(...args) {
     if (this.level <= LOG_LEVELS.ERROR) {
-      console.error(`[${this.prefix}]`, ...args);
+      const caller = this._getCaller();
+      console.error(`[${caller}]`, ...args);
     }
   }
 

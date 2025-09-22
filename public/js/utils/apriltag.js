@@ -128,8 +128,6 @@ class QRGenerator {
         canvas.width = qrSize;
         canvas.height = qrSize;
         canvas.style.position = 'absolute';
-        canvas.style.top = '16px'; // Account for QR code div padding
-        canvas.style.left = '16px'; // Account for QR code div padding
         canvas.style.pointerEvents = 'none'; // Allow clicks to pass through
         canvas.style.zIndex = '10';
         

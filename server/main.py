@@ -43,6 +43,10 @@ async def validate_session_with_user(req: Request) -> Tuple[bool, Optional[str],
     if not session_data:
         return False, None, None
     
+    # Check if session is logged out or cleared
+    if session_data.get("state") in ["logged_out", "cleared"]:
+        return False, None, session_data
+    
     # Check if DPoP is bound
     if not session_data.get("dpop_jkt"):
         return False, None, session_data
@@ -525,6 +529,12 @@ async def test_pad(req: Request):
 async def favicon():
     return FileResponse("public/favicon.ico")
 
+@app.get("/mobile-login")
+async def mobile_login():
+    """Serve the mobile login page"""
+    with open(os.path.join(BASE_DIR, "..", "public", "mobile-login.html"), "r", encoding="utf-8") as f:
+        return HTMLResponse(f.read())
+
 @app.get("/manifest.json")
 async def manifest():
     return FileResponse("app/static/manifest.json")
@@ -647,6 +657,11 @@ async def signin_user(req: Request):
         session_data = await DB.get_session(sid)
         if not session_data:
             raise HTTPException(status_code=401, detail="Invalid session")
+    
+    # Check if user is already linked to current session
+    if existing_user.get("session_id") == sid:
+        log.info("User already linked to current session - sid=%s username=%s rid=%s", sid, username, req.state.request_id)
+        return JSONResponse({"username": username, "status": "already_linked"})
     
     # Update user's session_id to link to current session
     await DB.exec(
@@ -1384,6 +1399,146 @@ async def admin_flush(req: Request):
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
     
     return response
+
+@app.post("/logout")
+async def logout_user(req: Request):
+    """Logout user - clear session cookie but preserve all user data"""
+    try:
+        sid = req.session.get("sid")
+        if not sid:
+            return JSONResponse({"ok": True, "message": "No active session to logout"})
+        
+        # Mark session as logged out but preserve all data
+        await DB.update_session(sid, {"state": "logged_out", "logout_time": now()})
+        
+        # Clear session-related temporary data (nonces, jtis) but keep session record
+        await DB.exec("DELETE FROM nonces WHERE sid = ?", (sid,))
+        await DB.exec("DELETE FROM jtis WHERE sid = ?", (sid,))
+        
+        log.info(f"User logged out - session marked as logged_out for sid={sid} (all user data preserved)")
+        
+        # Return response that tells client to clear session cookie
+        response = JSONResponse({"ok": True, "message": "Logged out successfully"})
+        
+        # Clear the session cookie on the server side
+        response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+        
+        return response
+        
+    except Exception as e:
+        log.exception("Logout failed")
+        raise HTTPException(500, f"Logout failed: {e}")
+
+@app.post("/session/clear")
+async def clear_session_only(req: Request):
+    """Clear session data only - preserve all user data"""
+    try:
+        sid = req.session.get("sid")
+        if not sid:
+            return JSONResponse({"ok": True, "message": "No active session to clear"})
+        
+        # Mark session as cleared but preserve all data
+        await DB.update_session(sid, {"state": "cleared", "clear_time": now()})
+        
+        # Clear session-related temporary data (nonces, jtis) but keep session record
+        await DB.exec("DELETE FROM nonces WHERE sid = ?", (sid,))
+        await DB.exec("DELETE FROM jtis WHERE sid = ?", (sid,))
+        
+        log.info(f"Session cleared for sid={sid} (all user data preserved)")
+        
+        return JSONResponse({"ok": True, "message": "Session cleared successfully"})
+        
+    except Exception as e:
+        log.exception("Session clear failed")
+        raise HTTPException(500, f"Session clear failed: {e}")
+
+@app.post("/session/mark-authenticated")
+async def mark_user_authenticated(req: Request):
+    """Mark user as authenticated in the session"""
+    try:
+        sid = req.session.get("sid")
+        if not sid:
+            raise HTTPException(401, "No active session")
+        
+        # Get session data
+        session_data = await DB.get_session(sid)
+        if not session_data:
+            raise HTTPException(401, "Session not found")
+        
+        # Get request body
+        body = await req.json()
+        username = body.get("username")
+        if not username:
+            raise HTTPException(400, "Username is required")
+        
+        # Verify user exists
+        user = await DB.get_user_by_username(username)
+        if not user:
+            raise HTTPException(404, "User not found")
+        
+        # Mark user as authenticated in session
+        await DB.update_session(sid, {
+            "username": username,
+            "authenticated": True,
+            "auth_timestamp": now()
+        })
+        
+        log.info(f"User {username} marked as authenticated in session {sid}")
+        
+        return JSONResponse({
+            "ok": True, 
+            "message": "User authenticated successfully",
+            "username": username
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Mark user authenticated failed")
+        raise HTTPException(500, f"Mark user authenticated failed: {e}")
+
+@app.post("/session/update-auth")
+async def update_session_auth(req: Request):
+    """Update session with authentication data for mobile registration flow"""
+    try:
+        sid = req.session.get("sid")
+        if not sid:
+            raise HTTPException(401, "No active session")
+        
+        # Get session data
+        session_data = await DB.get_session(sid)
+        if not session_data:
+            raise HTTPException(401, "Session not found")
+        
+        # Get request body
+        body = await req.json()
+        passkey_auth = body.get("passkey_auth", False)
+        passkey_principal = body.get("passkey_principal")
+        mobile_auth = body.get("mobile_auth", False)
+        
+        # Update session with authentication data
+        update_data = {}
+        if passkey_auth:
+            update_data["passkey_auth"] = True
+        if passkey_principal:
+            update_data["passkey_principal"] = passkey_principal
+        if mobile_auth:
+            update_data["mobile_auth"] = True
+        
+        await DB.update_session(sid, update_data)
+        
+        log.info(f"Session {sid} updated with auth data: {update_data}")
+        
+        return JSONResponse({
+            "ok": True, 
+            "message": "Session authentication data updated successfully"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Update session auth failed")
+        raise HTTPException(500, f"Update session auth failed: {e}")
 
 # ======================================================================
 # =============== NEW: verify subdomain desktop endpoints ===============

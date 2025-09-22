@@ -187,7 +187,8 @@
 .step-status {
   font-size: var(--font-size-sm);
   opacity: 0.8;
-  margin-top: var(--spacing-1);
+  margin-top: var(--spacing-2);
+  margin-bottom: var(--spacing-4);
 }
 
 .loading-spinner {

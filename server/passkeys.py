@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding, ed25519
 from cryptography.x509.oid import ObjectIdentifier
 
 from server.config import load_settings
+from server.db import DB
 from server.utils import b64u, b64u_dec, ec_p256_thumbprint, now
 
 log = logging.getLogger("dpop-fun")
@@ -321,7 +322,13 @@ def get_router(
         if s.get("state") != "bound":
             raise HTTPException(status_code=403, detail="session must be DPoP-bound before passkey registration")
 
-        principal = _principal_from_session(s)
+        # Use username as principal instead of BIK to persist across sessions
+        user = await DB.get_user_by_session(sid)
+        if not user:
+            raise HTTPException(status_code=401, detail="No user bound to session")
+        
+        principal = user["username"]  # Use username as principal
+        username = user["username"]
         origin, _ = canonicalize_origin_and_url(req)
         rp_id = _rp_id_from_origin(origin)
 
@@ -335,8 +342,8 @@ def get_router(
             "rp": {"id": rp_id, "name": rp_name},
             "user": {
                 "id": b64u(principal.encode()),
-                "name": f"acct:{principal[:8]}",
-                "displayName": f"Acct {principal[:8]}"
+                "name": username,
+                "displayName": username
             },
             "challenge": b64u(challenge),
             "pubKeyCredParams": [
@@ -345,6 +352,7 @@ def get_router(
                 {"type": "public-key", "alg": -8},    # EdDSA (Ed25519)
             ],
             "authenticatorSelection": {
+                "authenticatorAttachment": "platform",  # Prefer platform authenticators (Touch ID, Face ID, etc.)
                 "residentKey": RESIDENT_MODE,
                 "requireResidentKey": RESIDENT_MODE == 'required',
                 "userVerification": UV_MODE,
@@ -362,7 +370,12 @@ def get_router(
         if s.get("state") != "bound":
             raise HTTPException(status_code=403, detail="session must be DPoP-bound before passkey registration")
 
-        principal = _principal_from_session(s)
+        # Use username as principal instead of BIK to persist across sessions
+        user = await DB.get_user_by_session(sid)
+        if not user:
+            raise HTTPException(status_code=401, detail="No user bound to session")
+        
+        principal = user["username"]  # Use username as principal
         origin, _ = canonicalize_origin_and_url(req)
         rp_id = _rp_id_from_origin(origin)
         chal_info = (s.get("webauthn_reg") or {})
@@ -443,7 +456,30 @@ def get_router(
         sid = req.session.get("sid"); s = await session_store.get_session(sid) if sid else None
         if not sid or not s: raise HTTPException(status_code=401, detail="no session")
 
-        principal = _principal_from_session(s)
+        # Get request body to check for username
+        try:
+            body = await req.json()
+            username = body.get("username")
+        except:
+            username = None
+        
+        if username:
+            # Username-based authentication (for mobile login)
+            # Get user by username to verify they exist
+            user = await DB.get_user_by_username(username)
+            if not user:
+                raise HTTPException(404, "User not found")
+            
+            # Use username as principal to find passkeys
+            principal = username
+        else:
+            # Session-based authentication (default)
+            # Use username as principal instead of BIK
+            user = await DB.get_user_by_session(sid)
+            if not user:
+                raise HTTPException(401, detail="No user bound to session")
+            principal = user["username"]
+        
         origin, _ = canonicalize_origin_and_url(req)
         rp_id = _rp_id_from_origin(origin)
 
@@ -477,7 +513,12 @@ def get_router(
         sid = req.session.get("sid"); s = await session_store.get_session(sid) if sid else None
         if not sid or not s: raise HTTPException(status_code=401, detail="no session")
 
-        principal = _principal_from_session(s)
+        # Use username as principal instead of BIK to persist across sessions
+        user = await DB.get_user_by_session(sid)
+        if not user:
+            raise HTTPException(status_code=401, detail="No user bound to session")
+        
+        principal = user["username"]  # Use username as principal
         origin, _ = canonicalize_origin_and_url(req)
         rp_id = _rp_id_from_origin(origin)
         chal_info = (s.get("webauthn_auth") or {})

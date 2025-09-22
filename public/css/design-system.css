@@ -29,10 +29,11 @@
   
   /* Mobile-specific colors (light theme) */
   --mobile-background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  --mobile-surface: rgba(255, 255, 255, 0.95);
-  --mobile-text: #2d3748;
-  --mobile-text-muted: #718096;
+  --mobile-surface: rgba(37, 46, 66, 0.95);
+  --mobile-text: #1a202c;
+  --mobile-text-muted: #4a5568;
   --mobile-border: #e2e8f0;
+  --mobile-border-light: #f7fafc;
   
   /* Typography */
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -102,9 +103,11 @@
   --z-popover: 1060;
   --z-tooltip: 1070;
   
+  /* Mobile-specific sizing */
+  --mobile-container-max-width: 480px;
+  
   /* Layout */
   --container-max-width: 900px;
-  --mobile-container-max-width: 400px;
   --border-width: 1px;
   --border-width-thick: 2px;
   

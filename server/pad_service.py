@@ -911,7 +911,13 @@ class PADService:
                 # If rPPG failed, use neutral confidence unless we have very strong spoof indicators
                 confidence = 0.6 if not (screen_suspect or planar_suspect) else 0.3
             else:
-                confidence = rppg_live_prob
+                # If rPPG detected valid heart rate with good SNR, be more lenient
+                if hr_bpm is not None and 40 <= hr_bpm <= 180 and rppg_snr_db > 0:
+                    # Valid heart rate detected - use higher confidence
+                    confidence = max(0.7, rppg_live_prob)  # Minimum 0.7 for valid HR
+                else:
+                    confidence = rppg_live_prob
+                
                 if screen_suspect:
                     confidence *= 0.5  # Less aggressive reduction
                 if planar_suspect:

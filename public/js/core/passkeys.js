@@ -25,7 +25,11 @@ export async function registerPasskey() {
     
     // 1) get options
     const opts = await DpopFun.dpopFunFetch('/webauthn/registration/options', { method: 'POST' });
-    logger.debug('Registration options received');
+    logger.debug('Registration options received:', { 
+      username: opts.user?.name, 
+      userId: opts.user?.id,
+      displayName: opts.user?.displayName 
+    });
 
     const pub = {
       rp: opts.rp,
@@ -115,9 +119,11 @@ export async function getAuthOptions() {
 export async function authenticatePasskey(passedOpts) {
   try {
     logger.debug('Starting passkey authentication');
+    logger.debug('Passed options:', passedOpts);
     
     // allow caller to pass pre-fetched options
     const opts = passedOpts || await getAuthOptions();
+    logger.debug('Using authentication options:', opts);
 
     const allow = Array.isArray(opts.allowCredentials) ? opts.allowCredentials : [];
     // If you want to avoid "external device" chooser when none are local,
@@ -138,12 +144,33 @@ export async function authenticatePasskey(passedOpts) {
     }
 
     logger.debug('Getting assertion with navigator.credentials.get');
+    logger.debug('Authentication options:', { 
+      allowCredentials: pub.allowCredentials?.length || 0,
+      challenge: pub.challenge ? 'present' : 'missing',
+      rpId: pub.rpId
+    });
+    
     const assertion = await navigator.credentials.get({ publicKey: pub });
+    logger.debug('Raw assertion result:', assertion);
+    
     if (!assertion) {
       logger.warn('User cancelled passkey authentication');
       throw new AuthenticationError('authentication cancelled');
     }
     logger.debug('Assertion received successfully');
+    logger.debug('Assertion object:', { 
+      hasId: 'id' in assertion, 
+      hasRawId: 'rawId' in assertion,
+      hasType: 'type' in assertion,
+      hasResponse: 'response' in assertion,
+      keys: Object.keys(assertion)
+    });
+
+    // Validate assertion object has required properties
+    if (!assertion.id || !assertion.rawId || !assertion.type || !assertion.response) {
+      logger.error('Invalid assertion object:', assertion);
+      throw new AuthenticationError('Invalid passkey assertion received');
+    }
 
     const payload = {
       id: assertion.id,

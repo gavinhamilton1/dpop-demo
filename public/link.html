@@ -50,6 +50,17 @@
       </div>
     </div>
 
+    <!-- Scribble area (hidden until linking is complete) -->
+    <section class="scribble-section" id="scribbleSection" style="display:none;">
+      <div class="scribble-header">
+        <h3>📱 Mobile Scribbles</h3>
+        <p class="scribble-description">Scribble below to see it appear in your other browser in real-time!</p>
+      </div>
+      <div class="scribble-canvas-container" id="scribbleCanvasContainer">
+        <!-- Canvas will be created by SignatureShare -->
+      </div>
+    </section>
+
     <!-- BC card (hidden until issued) -->
 <section class="bc-card" id="bcCard" style="display:none;">
   <div class="bc-url">Enter only at <code>https://dpop.fun/verify</code></div>
@@ -103,7 +114,7 @@
   </main>
 
   <script src="/public/vendor/qrcode.min.js"></script>
-  <script src="/public/js/fingerprint-service.js"></script>
+  <script type="module" src="/public/js/services/FingerprintService.js"></script>
   <script type="module" src="/public/js/link.js"></script>
 </body>
 </html>

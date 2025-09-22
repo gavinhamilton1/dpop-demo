@@ -46,6 +46,8 @@ export const CONFIG = {
       BIK_JKT: 'bik_jkt',
       CSRF: 'csrf',
       REG_NONCE: 'reg_nonce',
+      AUTH_STATUS: 'auth_status',
+      AUTH_METHOD: 'auth_method',
     }
   },
   HTTP: {

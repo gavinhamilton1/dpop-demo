@@ -10,7 +10,7 @@ body.mobile-page {
   padding: var(--spacing-4);
 }
 
-/* Mobile container overrides */
+/* Mobile page specific overrides for better contrast */
 .mobile-container {
   background: var(--mobile-surface);
   backdrop-filter: blur(10px);
@@ -23,9 +23,236 @@ body.mobile-page {
   animation: var(--animation-fade-in);
 }
 
+/* Override any conflicting styles from components.css */
+body .mobile-container {
+  background: var(--mobile-surface) !important;
+  color: var(--mobile-text) !important;
+}
+
+/* Step card styles for mobile page */
+.mobile-container .step-card {
+  background: rgba(42, 62, 95, 0.9) !important;
+  border: 1px solid var(--mobile-border) !important;
+  border-radius: var(--radius-xl) !important;
+  padding: var(--spacing-6) !important;
+  margin-bottom: var(--spacing-4) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.mobile-container .step-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--spacing-4);
+}
+
+.mobile-container .step-header h3 {
+  color: var(--mobile-text) !important;
+  font-size: var(--font-size-lg) !important;
+  font-weight: var(--font-weight-semibold) !important;
+  margin: 0 !important;
+}
+
+.mobile-container .step-header p {
+  color: var(--mobile-text-muted) !important;
+  font-size: var(--font-size-sm) !important;
+  margin: 0 !important;
+}
+
+.mobile-container .step-info {
+  flex: 1;
+  text-align: left;
+  margin-left: var(--spacing-3);
+}
+
+.mobile-container .step-info h3 {
+  color: var(--mobile-text) !important;
+  font-size: var(--font-size-lg) !important;
+  font-weight: var(--font-weight-semibold) !important;
+  margin: 0 0 var(--spacing-1) 0 !important;
+}
+
+.mobile-container .step-info p {
+  color: var(--mobile-text-muted) !important;
+  font-size: var(--font-size-sm) !important;
+  margin: 0 !important;
+}
+
+.mobile-container .step-header .step-number {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-weight: var(--font-weight-semibold) !important;
+  font-size: var(--font-size-base) !important;
+  background: var(--mobile-border-light) !important;
+  color: var(--mobile-text-muted) !important;
+  border: 2px solid var(--mobile-border) !important;
+  margin-right: var(--spacing-3) !important;
+  flex-shrink: 0 !important;
+}
+
+.mobile-container .status-message {
+  display: flex !important;
+  align-items: center !important;
+  gap: var(--spacing-3) !important;
+  color: var(--mobile-text) !important;
+  font-size: var(--font-size-sm) !important;
+  font-weight: var(--font-weight-medium) !important;
+}
+
+.mobile-container .status-message .spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--mobile-border);
+  border-top: 2px solid var(--primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.mobile-container .status-message .success-icon {
+  color: var(--success);
+  font-weight: var(--font-weight-bold);
+}
+
+.mobile-container .status-message .error-icon {
+  color: var(--danger);
+  font-weight: var(--font-weight-bold);
+}
+
+/* Success and error message styles */
+.mobile-container .success-message {
+  background: rgba(34, 197, 94, 0.1);
+  border: 2px solid var(--success);
+  border-radius: var(--radius-xl);
+  padding: var(--spacing-6);
+  margin-top: var(--spacing-6);
+  text-align: center;
+}
+
+.mobile-container .success-message h2 {
+  color: var(--success);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  margin: var(--spacing-2) 0;
+}
+
+.mobile-container .success-message p {
+  color: var(--mobile-text);
+  margin-bottom: var(--spacing-4);
+}
+
+.mobile-container .error-message {
+  background: rgba(239, 68, 68, 0.1);
+  border: 2px solid var(--danger);
+  border-radius: var(--radius-xl);
+  padding: var(--spacing-6);
+  margin-top: var(--spacing-6);
+  text-align: center;
+}
+
+.mobile-container .error-message h2 {
+  color: var(--danger);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  margin: var(--spacing-2) 0;
+}
+
+.mobile-container .error-message p {
+  color: var(--mobile-text);
+  margin-bottom: var(--spacing-4);
+}
+
+/* Button styles for mobile */
+.mobile-container .btn {
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-3) var(--spacing-6);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  min-height: 48px;
+}
+
+.mobile-container .btn:hover {
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.mobile-container .btn.secondary {
+  background: transparent;
+  color: var(--mobile-text);
+  border: 2px solid var(--mobile-border);
+}
+
+.mobile-container .btn.secondary:hover {
+  background: var(--mobile-border);
+  color: var(--mobile-text);
+}
+
+/* Spinner animation */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Scribble section */
+.scribble-section {
+  background: var(--mobile-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-6);
+  margin: var(--spacing-6) 0;
+  text-align: center;
+}
+
+.scribble-header h3 {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--mobile-text);
+  margin-bottom: var(--spacing-2);
+}
+
+.scribble-description {
+  color: var(--mobile-text-muted);
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--spacing-4);
+}
+
+.scribble-canvas-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-4);
+}
+
+.scribble-canvas-container canvas {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+
 /* Mobile header */
 .mobile-header {
   margin-bottom: var(--spacing-8);
+}
+
+.mobile-header h1 {
+  color: var(--mobile-text) !important;
+  font-size: var(--font-size-2xl) !important;
+  font-weight: var(--font-weight-semibold) !important;
+  margin: 0 0 var(--spacing-2) 0 !important;
+}
+
+.mobile-header p {
+  color: var(--mobile-text-muted) !important;
+  font-size: var(--font-size-base) !important;
+  margin: 0 !important;
 }
 
 .mobile-logo {

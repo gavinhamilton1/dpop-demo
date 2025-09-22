@@ -40,11 +40,32 @@ export class AppController {
   }
 
   /**
+   * Check for debug mode and show/hide admin controls
+   */
+  checkDebugMode() {
+    // Check for debug=1 query parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const isDebugMode = urlParams.get('debug') === '1';
+    
+    const adminSection = document.getElementById('adminSection');
+    if (adminSection) {
+      adminSection.style.display = isDebugMode ? 'block' : 'none';
+    }
+    
+    if (isDebugMode) {
+      logger.info('Debug mode enabled - admin controls visible');
+    }
+  }
+
+  /**
    * Initialize the application
    */
   async initialize() {
     try {
       logger.info('Initializing application...');
+      
+      // Check debug mode first
+      this.checkDebugMode();
       
             // Initialize button manager
       this.buttonManager.initialize([

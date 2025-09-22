@@ -1,5 +1,6 @@
 // src/signature-share.js
 // Real-time signature sharing between linked devices
+import { logger } from './utils/logging.js';
 
 class SignatureShare {
     constructor() {
@@ -27,7 +28,7 @@ class SignatureShare {
         // Connect to WebSocket for sending signature data
         this.connectWebSocket();
         
-        console.log('Scribble sharing initialized for mobile device');
+        logger.info('Scribble sharing initialized for mobile device');
     }
 
     // Initialize signature sharing for desktop device (viewing)
@@ -35,13 +36,32 @@ class SignatureShare {
         this.linkId = linkId;
         this.isMobile = false;
         
-        // Create canvas for desktop viewing
-        this.createCanvas('signature-canvas-desktop', 'Desktop - View Scribble');
+        // Use existing container instead of creating new one
+        const container = document.getElementById('scribbleCanvasContainer');
+        if (container) {
+            // Create canvas inside the existing container
+            container.innerHTML = `
+                <canvas id="signature-canvas-desktop" width="300" height="300" style="border: 2px solid #333; border-radius: 8px; background: white;"></canvas>
+            `;
+            
+            // Get the canvas and context
+            this.canvas = document.getElementById('signature-canvas-desktop');
+            this.ctx = this.canvas.getContext('2d');
+            
+            // Set canvas properties
+            this.ctx.lineWidth = 3;
+            this.ctx.strokeStyle = '#000';
+            this.ctx.lineCap = 'round';
+            this.ctx.lineJoin = 'round';
+        } else {
+            // Fallback to creating new container
+            this.createCanvas('signature-canvas-desktop', 'Desktop - View Scribble');
+        }
         
         // Connect to WebSocket for receiving signature data
         this.connectWebSocket();
         
-        console.log('Scribble sharing initialized for desktop device');
+        logger.info('Scribble sharing initialized for desktop device');
     }
 
     // Create and setup canvas
@@ -200,15 +220,17 @@ class SignatureShare {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/link/ws/${this.linkId}`;
         
-        console.log(`Connecting signature WebSocket: ${wsUrl}`);
+        logger.info(`Connecting signature WebSocket: ${wsUrl}`);
+        logger.info('LinkId:', this.linkId);
         
         this.websocket = new WebSocket(wsUrl);
         
         this.websocket.onopen = () => {
-            console.log('Signature WebSocket connected');
+            logger.info('Signature WebSocket connected successfully');
         };
         
         this.websocket.onmessage = (event) => {
+            logger.info('Signature WebSocket received message:', event.data);
             this.handleWebSocketMessage(event.data);
         };
         
@@ -216,8 +238,8 @@ class SignatureShare {
             console.error('Signature WebSocket error:', error);
         };
         
-        this.websocket.onclose = () => {
-            console.log('Signature WebSocket closed');
+        this.websocket.onclose = (event) => {
+            logger.info('Signature WebSocket closed:', event.code, event.reason);
         };
     }
 
@@ -249,24 +271,41 @@ class SignatureShare {
 
     // Handle signature data on desktop device
     handleSignatureData(data) {
-        if (!this.ctx) return;
+        logger.info('handleSignatureData called with:', data);
+        
+        if (!this.ctx) {
+            logger.error('No canvas context available for drawing');
+            return;
+        }
+        
+        // Debug canvas properties
+        logger.info('Canvas dimensions:', this.canvas.width, 'x', this.canvas.height);
+        logger.info('Canvas style:', this.canvas.style.width, 'x', this.canvas.style.height);
+        logger.info('Canvas visible:', this.canvas.offsetWidth, 'x', this.canvas.offsetHeight);
 
         switch (data.type) {
             case 'pen_down':
+                logger.info('Drawing pen_down at:', data.x, data.y);
                 this.ctx.beginPath();
                 this.ctx.moveTo(data.x, data.y);
+                // Ensure stroke style is set
+                this.ctx.strokeStyle = '#000000';
+                this.ctx.lineWidth = 3;
                 break;
                 
             case 'draw':
+                logger.info('Drawing line to:', data.x, data.y);
                 this.ctx.lineTo(data.x, data.y);
                 this.ctx.stroke();
                 break;
                 
             case 'pen_up':
+                logger.info('Pen up - ending path');
                 // End current path
                 break;
                 
             case 'reset':
+                logger.info('Resetting canvas');
                 this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
                 break;
         }

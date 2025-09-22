@@ -251,9 +251,6 @@ def get_router(
 
         async def event_gen():
             try:
-                # Send initial snapshot
-                yield f"event: status\ndata: {json.dumps(initial)}\n\n"
-                log.info("Link events - sent initial snapshot")
                 # Heartbeat every 15s if no events
                 while True:
                     try:

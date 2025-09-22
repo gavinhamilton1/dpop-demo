@@ -11,16 +11,20 @@
  * @param {Function} statusCallback - Optional callback to update status text
  */
 export function generateQRCode(containerId, qrData, linkId, statusCallback = null) {
+    console.log('generateQRCode called with:', { containerId, qrData, linkId });
     const qrCodeDiv = document.getElementById(containerId);
     if (!qrCodeDiv) {
         console.error(`QR code container with ID '${containerId}' not found`);
         return;
     }
     
+    console.log('QR code container found:', qrCodeDiv);
+    
     // Clear any existing QR code
     qrCodeDiv.innerHTML = '';
     
     // Generate QR code using the QRCode library
+    console.log('window.QRCode available:', !!window.QRCode);
     if (window.QRCode) {
         // Generate QR code with specific options to match the original implementation
         new QRCode(qrCodeDiv, {
@@ -39,9 +43,16 @@ export function generateQRCode(containerId, qrData, linkId, statusCallback = nul
         
         // Add AprilTag overlay after QR code is generated
         setTimeout(async () => {
+            console.log('Attempting to add AprilTag overlay...');
+            console.log('window.QRGenerator available:', !!window.QRGenerator);
             if (window.QRGenerator) {
+                console.log('Creating QRGenerator instance...');
                 const qrGenerator = new QRGenerator();
-                await qrGenerator.generateQRWithAprilTag(containerId, qrData);
+                console.log('Calling generateQRWithAprilTag...');
+                const result = await qrGenerator.generateQRWithAprilTag(containerId, qrData);
+                console.log('AprilTag overlay result:', result);
+            } else {
+                console.error('QRGenerator not available on window object');
             }
         }, 100); // Small delay to ensure QR code is rendered
     } else {
@@ -51,6 +62,7 @@ export function generateQRCode(containerId, qrData, linkId, statusCallback = nul
         }
     }
 }
+
 
 /**
  * Create complete QR code container with styling (for AppController)
