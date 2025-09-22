@@ -119,21 +119,36 @@ class JourneysController {
     async init() {
         try {
             logger.info('Initializing Journeys Controller...');
-            this.setupEventListeners();
+            this.setupDebugMode();
             await this.checkSessionStatus();
             this.updateJourneyAvailability();
+            this.setupEventListeners();
             logger.info('Journeys Controller initialized successfully');
         } catch (error) {
             logger.error('Failed to initialize Journeys Controller:', error);
         }
     }
     
+    setupDebugMode() {
+        // Check for debug parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const isDebugMode = urlParams.get('debug') === '1';
+        
+        const debugActions = document.getElementById('debugActions');
+        if (debugActions) {
+            debugActions.style.display = isDebugMode ? 'flex' : 'none';
+            logger.info('Debug actions container found, display set to:', isDebugMode ? 'flex' : 'none');
+        } else {
+            logger.warn('Debug actions container not found');
+        }
+        
+    }
+    
     setupEventListeners() {
-        // Admin control buttons
+ 
         document.getElementById('serverFlushBtn').addEventListener('click', () => this.handleServerFlush());
         document.getElementById('clientFlushBtn').addEventListener('click', () => this.handleClientFlush());
         
-        // Test API button
         document.getElementById('testApiBtn').addEventListener('click', () => this.handleTestAPI());
         
         // Signal details button
@@ -148,6 +163,9 @@ class JourneysController {
         document.getElementById('startFaceLoginBtn').addEventListener('click', () => this.startJourney('faceLogin'));
         document.getElementById('startMobilePasskeyBtn').addEventListener('click', () => this.startJourney('mobilePasskey'));
         
+        // Cancel journey button
+        document.getElementById('cancelJourneyBtn').addEventListener('click', () => this.cancelJourney());
+        
         // Username entry
         document.getElementById('continueWithUsernameBtn').addEventListener('click', () => this.continueWithUsername());
         document.getElementById('cancelUsernameBtn').addEventListener('click', () => this.cancelUsernameEntry());
@@ -157,6 +175,45 @@ class JourneysController {
         
         // Logout
         document.getElementById('logoutBtn').addEventListener('click', () => this.logout());
+    }
+    
+    // Method to attach debug button event listeners
+    reattachDebugButtonListeners() {
+        const serverFlushBtn = document.getElementById('serverFlushBtn');
+        const clientFlushBtn = document.getElementById('clientFlushBtn');
+        
+        logger.info('Reattaching debug button listeners - Buttons found:', {
+            serverFlushBtn: !!serverFlushBtn,
+            clientFlushBtn: !!clientFlushBtn,
+            serverAlreadyAttached: serverFlushBtn?.hasAttribute('data-listener-attached'),
+            clientAlreadyAttached: clientFlushBtn?.hasAttribute('data-listener-attached')
+        });
+        
+        if (serverFlushBtn && !serverFlushBtn.hasAttribute('data-listener-attached')) {
+            serverFlushBtn.addEventListener('click', () => {
+                logger.info('Server flush button clicked!');
+                this.handleServerFlush();
+            });
+            serverFlushBtn.setAttribute('data-listener-attached', 'true');
+            logger.info('Attached server flush button event listener');
+        } else if (serverFlushBtn) {
+            logger.info('Server flush button already has listener attached');
+        } else {
+            logger.warn('Server flush button not found');
+        }
+        
+        if (clientFlushBtn && !clientFlushBtn.hasAttribute('data-listener-attached')) {
+            clientFlushBtn.addEventListener('click', () => {
+                logger.info('Client flush button clicked!');
+                this.handleClientFlush();
+            });
+            clientFlushBtn.setAttribute('data-listener-attached', 'true');
+            logger.info('Attached client flush button event listener');
+        } else if (clientFlushBtn) {
+            logger.info('Client flush button already has listener attached');
+        } else {
+            logger.warn('Client flush button not found');
+        }
     }
     
     async checkSessionStatus() {
@@ -222,7 +279,7 @@ class JourneysController {
         document.getElementById('logoutBtn').style.display = 'block';
 
         // Refresh session status to show authentication
-        this.refreshSessionStatus();
+        await this.checkSessionStatus();
     }
     
     updateSessionStatus(status, title, detail) {
@@ -358,6 +415,7 @@ class JourneysController {
         if (sessionData.hasSession && sessionData.hasDPoP) {
             this.loadSignalSummary();
         }
+        
     }
     
     updateJourneyAvailability() {
@@ -751,6 +809,9 @@ class JourneysController {
                     logger.info(`Username "${username}" created successfully`);
                     logger.info(`Completing username step, current step: ${this.currentStep}`);
 
+                    // Update session status to show updated states
+                    await this.checkSessionStatus();
+
                     await this.completeStep();
                     
                 } else {
@@ -811,6 +872,9 @@ class JourneysController {
                     
                     logger.info(`Username "${username}" verified`);
                     logger.info(`Completing username step, current step: ${this.currentStep}`);
+
+                    // Update session status to show updated states
+                    await this.checkSessionStatus();
 
                     logger.info('About to call completeStep()');
                     await this.completeStep();
@@ -973,11 +1037,11 @@ class JourneysController {
             
             // Import and initialize face capture using the same approach as index.html
             const faceCaptureModule = await import('./face-capture.js');
-            window.faceCapture = new faceCaptureModule.FaceCaptureInline('register');
-            await window.faceCapture.init();
+            const faceCapture = new faceCaptureModule.FaceCaptureInline('register');
+            await faceCapture.init();
             
             // Auto-start the face capture process
-            await window.faceCapture.startCapture();
+            await faceCapture.startCapture();
             
             logger.info('Face registration started');
             
@@ -1428,11 +1492,11 @@ class JourneysController {
             
             // Import and initialize face capture using the same approach as index.html
             const faceCaptureModule = await import('./face-capture.js');
-            window.faceCapture = new faceCaptureModule.FaceCaptureInline('verify');
-            await window.faceCapture.init();
+            const faceCapture = new faceCaptureModule.FaceCaptureInline('verify');
+            await faceCapture.init();
             
             // Auto-start the face capture process
-            await window.faceCapture.startCapture();
+            await faceCapture.startCapture();
             
             logger.info('Face verification started');
             
@@ -1542,6 +1606,7 @@ class JourneysController {
      * Handle server flush button click
      */
     async handleServerFlush() {
+        logger.info('handleServerFlush called');
         const button = document.getElementById('serverFlushBtn');
         const originalText = button.textContent;
         
@@ -1600,6 +1665,7 @@ class JourneysController {
      * Handle client flush button click
      */
     async handleClientFlush() {
+        logger.info('handleClientFlush called');
         const button = document.getElementById('clientFlushBtn');
         const originalText = button.textContent;
         

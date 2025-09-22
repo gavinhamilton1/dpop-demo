@@ -23,16 +23,6 @@
         <header class="journey-header">
             <h1>🔐 DPoP Authentication Journeys</h1>
             <p class="journey-subtitle">Choose your authentication method</p>
-            
-            <!-- Admin Controls -->
-            <div class="admin-controls" id="adminControls" style="display: none;">
-                <button class="admin-btn server-flush" id="serverFlushBtn">
-                    🗑️ Server Flush
-                </button>
-                <button class="admin-btn client-flush" id="clientFlushBtn">
-                    🧹 Client Flush
-                </button>
-            </div>
         </header>
 
         <!-- Session Status -->
@@ -69,6 +59,14 @@
                     </div>
                     
                     <div class="session-actions" id="sessionActions" style="display: none;">
+                        <div class="debug-actions" id="debugActions" style="display: none;">
+                            <button class="btn-pill" id="serverFlushBtn">
+                                🗑️ Server Flush
+                            </button>
+                            <button class="btn-pill" id="clientFlushBtn">
+                                🧹 Client Flush
+                            </button>
+                        </div>
                         <button class="btn-pill" id="testApiBtn" disabled>
                             🧪 Test API
                         </button>
