@@ -100,7 +100,7 @@
 
 .session-actions {
     position: absolute;
-    top: var(--spacing-4);
+    top: var(--spacing-2);
     right: var(--spacing-4);
     display: flex;
     justify-content: flex-end;
@@ -1280,6 +1280,3 @@
     display: none !important;
 }
 
-canvas {
-    display: none;
-}

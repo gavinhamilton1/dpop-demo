@@ -26,6 +26,7 @@ class JourneysController {
             authenticationMethod: null
         };
         
+        
         this.journeyDefinitions = {
             newUser: {
                 title: 'New User Registration',
@@ -311,6 +312,12 @@ class JourneysController {
         // Authentication status (displayed last)
         if (this.sessionState.isAuthenticated && this.sessionState.authenticationMethod) {
             detail += `🔐 Authenticated with ${this.sessionState.authenticationMethod}\n`;
+        } else if (sessionData.user_authenticated && sessionData.username) {
+            // Server-side authentication status
+            const usernameStr = typeof sessionData.username === 'string' ? sessionData.username : (sessionData.username?.username || sessionData.username?.value || JSON.stringify(sessionData.username));
+            detail += `🔐 Server authenticated: ${usernameStr}\n`;
+        } else {
+            detail += '❌ Authentication: Not authenticated\n';
         }
 
         // Overall readiness
@@ -318,10 +325,8 @@ class JourneysController {
             title = `✅ Authenticated with ${this.sessionState.authenticationMethod}`;
         } else if (details.dpopWorking && hasUsername) {
             title = 'Session Ready';
-            detail += '\n🚀 Ready for onboarding';
         } else if (details.dpopWorking) {
             title = 'DPoP Ready';
-            detail += '\n📝 Ready for username setup';
         } else if (details.serverBIK && details.localBIK) {
             title = 'BIK Ready';
             detail += '\n🔗 Ready for DPoP binding';
@@ -337,6 +342,17 @@ class JourneysController {
         
         // Show/hide test API button based on DPoP status
         this.updateTestApiButton(sessionData.hasDPoP && sessionData.hasSession);
+        
+        // Show logout button if there's a username in the session
+        if (hasUsername) {
+            const logoutBtn = document.getElementById('logoutBtn');
+            logger.info('Showing logout button, hasUsername:', hasUsername, 'logoutBtn:', logoutBtn);
+            if (logoutBtn) {
+                logoutBtn.style.display = 'block';
+            } else {
+                logger.error('Logout button element not found!');
+            }
+        }
         
         // Load signal data when session is ready
         if (sessionData.hasSession && sessionData.hasDPoP) {
@@ -523,7 +539,10 @@ class JourneysController {
     }
     
     async executeCurrentStep() {
+        logger.info(`executeCurrentStep called, currentStep: ${this.currentStep}, total steps: ${this.currentJourney.steps.length}`);
+        
         if (this.currentStep >= this.currentJourney.steps.length) {
+            logger.info('All steps completed, calling completeJourney()');
             await this.completeJourney();
             return;
         }
@@ -532,6 +551,12 @@ class JourneysController {
         const stepEl = document.getElementById(`step-${step.id}`);
         
         logger.info(`Executing step: ${step.title}`);
+        logger.info(`Step element:`, stepEl);
+        
+        if (!stepEl) {
+            logger.error(`Step element not found for step: ${step.id}`);
+            return;
+        }
         
         try {
             await step.action();
@@ -542,15 +567,22 @@ class JourneysController {
     }
     
     async completeStep() {
+        logger.info(`Completing step ${this.currentStep}: ${this.currentJourney.steps[this.currentStep].title}`);
+        
         const stepEl = document.getElementById(`step-${this.currentJourney.steps[this.currentStep].id}`);
         stepEl.classList.remove('active');
         stepEl.classList.add('completed');
         
         this.currentStep++;
+        logger.info(`Moving to step ${this.currentStep}`);
         
         if (this.currentStep < this.currentJourney.steps.length) {
             const nextStepEl = document.getElementById(`step-${this.currentJourney.steps[this.currentStep].id}`);
+            logger.info(`Next step element found:`, nextStepEl);
             nextStepEl.classList.add('active');
+            logger.info(`Next step: ${this.currentJourney.steps[this.currentStep].title}`);
+        } else {
+            logger.info('No more steps, completing journey');
         }
         
         await this.executeCurrentStep();
@@ -585,7 +617,7 @@ class JourneysController {
     }
     
     async completeJourney() {
-        loggersuccess('Journey completed successfully!');
+        logger.info('Journey completed successfully!');
         
         // Show logout button after completing any journey
         document.getElementById('logoutBtn').style.display = 'block';
@@ -655,7 +687,7 @@ class JourneysController {
                 </div>
             `;
             
-            loggersuccess('Browser identity registered successfully');
+            logger.info('Browser identity registered successfully');
             await this.completeStep();
             
         } catch (error) {
@@ -679,7 +711,16 @@ class JourneysController {
         `;
         
         // Create new username
-        document.getElementById('createUsernameBtn').addEventListener('click', async () => {
+        const createBtn = document.getElementById('createUsernameBtn');
+        logger.info('createUsernameBtn element found:', createBtn);
+        
+        if (!createBtn) {
+            logger.error('createUsernameBtn not found!');
+            return;
+        }
+        
+        createBtn.addEventListener('click', async () => {
+            logger.info('createUsernameBtn clicked!');
             const username = document.getElementById('stepUsernameInput').value.trim();
             const errorEl = document.getElementById('stepUsernameError');
 
@@ -707,8 +748,8 @@ class JourneysController {
                         </div>
                     `;
                     
-                    loggersuccess(`Username "${username}" created successfully`);
-                    loggersuccess(`Completing username step, current step: ${this.currentStep}`);
+                    logger.info(`Username "${username}" created successfully`);
+                    logger.info(`Completing username step, current step: ${this.currentStep}`);
 
                     await this.completeStep();
                     
@@ -724,16 +765,29 @@ class JourneysController {
         });
 
         // Use existing username
-        document.getElementById('useExistingUsernameBtn').addEventListener('click', async () => {
+        const useExistingBtn = document.getElementById('useExistingUsernameBtn');
+        logger.info('useExistingUsernameBtn element found:', useExistingBtn);
+        
+        if (!useExistingBtn) {
+            logger.error('useExistingUsernameBtn not found!');
+            return;
+        }
+        
+        useExistingBtn.addEventListener('click', async () => {
+            logger.info('useExistingUsernameBtn clicked!');
             const username = document.getElementById('stepUsernameInput').value.trim();
             const errorEl = document.getElementById('stepUsernameError');
             
+            logger.info('Username value:', username);
+            
             if (!username) {
+                logger.info('No username provided');
                 errorEl.textContent = 'Username is required';
                 errorEl.style.display = 'block';
                 return;
             }
             
+            logger.info('Making request to /onboarding/signin');
             try {
                 const response = await fetch('/onboarding/signin', {
                     method: 'POST',
@@ -742,20 +796,25 @@ class JourneysController {
                     body: JSON.stringify({ username })
                 });
                 
+                logger.info('Response status:', response.status);
                 if (response.ok) {
+                    logger.info('Response OK, updating session state');
                     this.sessionState.hasUsername = true;
                     this.sessionState.username = username;
                     
+                    logger.info('Updating content HTML');
                     contentEl.innerHTML = `
                         <div class="step-status success">
                             <p>✓ Username "${username}" verified!</p>
                         </div>
                     `;
                     
-                    loggersuccess(`Username "${username}" verified`);
-                    loggersuccess(`Completing username step, current step: ${this.currentStep}`);
+                    logger.info(`Username "${username}" verified`);
+                    logger.info(`Completing username step, current step: ${this.currentStep}`);
 
+                    logger.info('About to call completeStep()');
                     await this.completeStep();
+                    logger.info('completeStep() completed');
                     
                 } else {
                     const errorData = await response.json();
@@ -763,6 +822,7 @@ class JourneysController {
                 }
                 
             } catch (error) {
+                logger.error('Error in useExistingUsernameBtn handler:', error);
                 errorEl.textContent = error.message;
                 errorEl.style.display = 'block';
             }
@@ -770,8 +830,12 @@ class JourneysController {
     }
     
     async registerPasskey() {
+        logger.info('registerPasskey() method called');
         const stepEl = document.getElementById('step-passkey');
         const contentEl = stepEl.querySelector('.step-content');
+        
+        logger.info('Step element found:', stepEl);
+        logger.info('Content element found:', contentEl);
         
         if (!this.checkPasskeySupport()) {
             contentEl.innerHTML = `
@@ -783,7 +847,7 @@ class JourneysController {
             return;
         }
         
-        contentEl.innerHTML = `
+        const passkeyHTML = `
             <div class="step-status">
                 <p>Registering passkey...</p>
                 <p>Follow the prompts on your device to create a passkey.</p>
@@ -793,6 +857,10 @@ class JourneysController {
                 <button class="btn secondary" id="skipPasskeyBtn">Skip</button>
             </div>
         `;
+        
+        logger.info('Setting passkey HTML content');
+        contentEl.innerHTML = passkeyHTML;
+        logger.info('Content set, checking if buttons exist:', document.getElementById('registerPasskeyBtn'));
         
         document.getElementById('registerPasskeyBtn').addEventListener('click', async () => {
             try {
@@ -806,7 +874,7 @@ class JourneysController {
                     </div>
                 `;
                 
-                loggersuccess('Passkey registered successfully');
+                logger.info('Passkey registered successfully');
                 await this.completeStep();
                 
             } catch (error) {
@@ -920,7 +988,7 @@ class JourneysController {
                     const statusText = statusEl.textContent || statusEl.innerText;
                     if (statusText.includes('Face registered ✓') || statusText.includes('Face verified ✓')) {
                         this.sessionState.hasFace = true;
-                        loggersuccess('Face registered successfully');
+                        logger.info('Face registered successfully');
                         this.completeStep();
                         return;
                     }
@@ -965,470 +1033,27 @@ class JourneysController {
         const stepEl = document.getElementById('step-mobile');
         const contentEl = stepEl.querySelector('.step-content');
         
-        contentEl.innerHTML = `
-            <div class="mobile-link-container">
-                <div id="qrPhase">
-                    <h3>Link Mobile Device</h3>
-                    <p>Click the button below to generate a QR code for mobile device linking.</p>
-                    <div class="step-actions" style="margin-top: 1rem;">
-                        <button class="btn primary" id="startLinkBtn">Start Mobile Linking</button>
-                        ${this.currentJourney.steps[this.currentStep].optional ? '<button class="btn secondary" id="skipMobileBtn">Skip</button>' : ''}
-                    </div>
-                    <div id="qrContainer" class="qr-container" style="display: none;">
-                        <h3>Scan QR Code with Mobile Device</h3>
-                        <div class="qr-code" id="qrcode"></div>
-                        <p id="linkIdDisplay">Link ID: <span id="linkId"></span></p>
-                        <p id="qrUrlDisplay"><strong>URL:</strong> <code id="qrUrl"></code></p>
-                        <div class="qr-status" id="qrStatus">Waiting for scan...</div>
-                    </div>
-                </div>
-                
-                <div id="verifyPhase" style="display: none;">
-                    <div class="verify-grid">
-                        <!-- Code entry -->
-                        <div class="verify-card" id="codeCard">
-                            <h2 class="verify-card-title">Enter code from mobile</h2>
-                            <form id="codeForm" autocomplete="one-time-code">
-                                <div class="codeboxes" id="codeBoxes"></div>
-                                <div class="single-input hidden" id="singleInputContainer">
-                                    <input type="text" id="singleInput" placeholder="Enter 8-character code (e.g., 8X2J-Q9K3)" maxlength="10" autocomplete="one-time-code">
-                                </div>
-                                <div class="verify-actions">
-                                    <button class="btn btn-primary" type="submit">Verify & continue</button>
-                                    <button class="btn btn-secondary" type="button" id="useCamBtn">Use camera instead</button>
-                                    <button class="btn btn-secondary" type="button" id="toggleInputBtn">Single field</button>
-                                </div>
-                                <div class="verify-status" id="codeStatus">Code expires ~60s after it appears on your phone.</div>
-                            </form>
-                        </div>
-
-                        <!-- Camera scan (jsQR) -->
-                        <div class="verify-card hidden" id="camCard">
-                            <h2 class="verify-card-title">Scan QR from your phone</h2>
-                            <div class="camera-container">
-                                <video id="video" class="verify-video" playsinline></video>
-                                <div class="privacy-overlay">
-                                    <div class="blur-overlay"></div>
-                                    <div class="scanning-blur"></div>
-                                    <div class="scanning-window">
-                                        <div class="scanning-text">Aim QR code here</div>
-                                    </div>
-                                    <div class="scanning-corners">
-                                        <div class="corner top-left"></div>
-                                        <div class="corner top-right"></div>
-                                        <div class="corner bottom-left"></div>
-                                        <div class="corner bottom-right"></div>
-                                    </div>
-                                </div>
-                            </div>
-                            <canvas id="qrCanvas"></canvas>
-                            <div class="verify-actions" style="margin-top:1rem">
-                                <button class="btn btn-secondary" id="stopCamBtn" type="button">Use code instead</button>
-                                <span class="verify-subtitle" id="camHint">Position the QR code within the scanning area.</span>
-                            </div>
-                            <div class="verify-status status" id="camStatus">Scanning…</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
+        // Create a container for the LinkingService to render into
+        contentEl.innerHTML = '<div id="mobileLinkingContainer"></div>';
         
-        // Handle start link button
-        document.getElementById('startLinkBtn').addEventListener('click', async () => {
-            await this.startMobileLinking();
-        });
+        // Use LinkingService's built-in UI rendering with camera functionality
+        const { LinkingService } = await import('./services/LinkingService.js');
+        const { DpopFunService } = await import('./services/DpopFunService.js');
         
-        // Handle skip button (only if it exists)
-        const skipBtn = document.getElementById('skipMobileBtn');
-        if (skipBtn) {
-            skipBtn.addEventListener('click', () => {
-                this.skipCurrentStep();
-            });
-        }
+        // Create DpopFunService instance
+        const dpopFunService = new DpopFunService();
+        this.linkingService = new LinkingService(dpopFunService);
+        
+        // Render the mobile linking step using LinkingService's built-in UI
+        this.linkingService.renderMobileLinkingStep(
+            'mobileLinkingContainer',
+            this.currentJourney.steps[this.currentStep].optional,
+            () => this.completeStep(), // onStepComplete
+            () => this.skipCurrentStep() // onStepSkip
+        );
     }
     
-    async startMobileLinking() {
-        try {
-            logger.info('Starting mobile linking process...');
-            
-            // Show QR code container
-            document.getElementById('qrContainer').style.display = 'block';
-            document.getElementById('qrStatus').textContent = 'Generating QR code...';
-            
-            // Disable start button
-            const startBtn = document.getElementById('startLinkBtn');
-            startBtn.disabled = true;
-            startBtn.textContent = 'Creating QR...';
-            
-            // Use LinkingService like index.html does
-            const { LinkingService } = await import('./services/LinkingService.js');
-            const { DpopFunService } = await import('./services/DpopFunService.js');
-            
-            // Create DpopFunService instance like AppController does
-            const dpopFunService = new DpopFunService();
-            const linkingService = new LinkingService(dpopFunService);
-            
-            // Start linking using the same service as index.html
-            const linkData = await linkingService.startLinking();
-            
-            loggersuccess('Cross-device linking started', linkData);
-            
-            // Display link information
-            document.getElementById('linkId').textContent = linkData.linkId;
-            document.getElementById('qrUrl').textContent = linkData.qr_url;
-            
-            // Generate QR code with AprilTag overlay (same as index.html)
-            this.createQRCode(linkData.qr_url, linkData.linkId);
-            
-            // Start monitoring using the same SSE approach as index.html
-            this.monitorLinkingStatusWithSSE(linkData.linkId, linkingService);
-            
-            // Update button to show success
-            startBtn.textContent = 'QR created!';
-            startBtn.classList.add('success');
-            
-        } catch (error) {
-            logger.error('Failed to start mobile linking:', error);
-            document.getElementById('qrStatus').textContent = `Error: ${error.message}`;
-            
-            // Re-enable start button on error
-            const startBtn = document.getElementById('startLinkBtn');
-            startBtn.disabled = false;
-            startBtn.textContent = 'Start Mobile Linking';
-            startBtn.classList.remove('success');
-        }
-    }
     
-    createQRCode(qrData, linkId) {
-        // Use shared QR generation utility
-        generateQRCode('qrcode', qrData, linkId, (status) => {
-            document.getElementById('qrStatus').textContent = status;
-        });
-    }
-    
-    /**
-     * Monitor linking status using SSE (same as index.html)
-     * @param {string} linkId - Link ID
-     * @param {LinkingService} linkingService - Linking service instance
-     */
-    monitorLinkingStatusWithSSE(linkId, linkingService) {
-        const onStatusUpdate = (status) => {
-            // Handle different message types (same as index.html)
-            if (status.type === 'status') {
-                logger.info(`Linking status: ${status.status}`, status);
-                
-                if (status.status === 'scanned') {
-                    this.updateQRStatus('scanned');
-                    // Mobile device has scanned QR, show verification UI
-                    this.showVerificationPhase(linkId);
-                } else if (status.status === 'linked' || status.status === 'completed') {
-                    this.handleLinkingComplete(linkId);
-                } else if (status.status === 'failed') {
-                    this.handleLinkingFailed(status.error);
-                }
-            } else if (status.type === 'signature') {
-                logger.info('Signature data received', status.data);
-                // Handle signature data if needed
-            } else {
-                logger.info('Unknown message type received', status);
-            }
-        };
-
-        const onError = (error) => {
-            logger.error('Linking status monitoring failed', error);
-        };
-
-        // Use SSE monitoring (same as index.html)
-        linkingService.monitorStatus(linkId, onStatusUpdate, onError, 'sse');
-    }
-
-    /**
-     * Handle linking completion (same as index.html)
-     * @param {string} linkId - Link ID
-     */
-    async handleLinkingComplete(linkId) {
-        try {
-            this.updateQRStatus('completed');
-            
-            // Remove QR code container
-            const qrContainer = document.querySelector('.qr-container');
-            if (qrContainer) {
-                qrContainer.remove();
-            }
-            
-            loggersuccess('Cross-device linking completed successfully');
-            logger.info('Redirecting to verify page to enter BC code...');
-            
-            // Redirect to verify page to enter BC code (same as index.html)
-            setTimeout(() => {
-                window.location.href = '/verify';
-            }, 1000);
-            
-        } catch (error) {
-            logger.error('Linking completion failed:', error);
-        }
-    }
-
-    /**
-     * Handle linking failure (same as index.html)
-     * @param {string} error - Error message
-     */
-    handleLinkingFailed(error) {
-        this.updateQRStatus('failed');
-        logger.error('Cross-device linking failed', error);
-    }
-
-    /**
-     * Update QR status display (same as index.html)
-     * @param {string} status - Status ('scanned', 'completed', 'failed')
-     */
-    updateQRStatus(status) {
-        const statusElement = document.getElementById('qrStatus');
-        if (!statusElement) return;
-        
-        switch (status) {
-            case 'scanned':
-                statusElement.textContent = 'QR code scanned! Enter verification code...';
-                statusElement.className = 'qr-status qr-status-scanned';
-                break;
-            case 'completed':
-                statusElement.textContent = 'Mobile device linked successfully!';
-                statusElement.className = 'qr-status qr-status-completed';
-                break;
-            case 'failed':
-                statusElement.textContent = 'Linking failed';
-                statusElement.className = 'qr-status qr-status-failed';
-                break;
-            default:
-                statusElement.textContent = 'Waiting for mobile scan...';
-                statusElement.className = 'qr-status';
-        }
-    }
-    
-    showVerificationPhase(linkId) {
-        // Hide QR phase and show verification phase
-        document.getElementById('qrPhase').style.display = 'none';
-        document.getElementById('verifyPhase').style.display = 'block';
-        
-        // Initialize verification UI (similar to verify.html)
-        this.initializeVerificationUI(linkId);
-    }
-    
-    initializeVerificationUI(linkId) {
-        logger.info('Initializing verification UI for linkId:', linkId);
-        
-        // Initialize code input boxes
-        this.initializeCodeInputs();
-        
-        // Set up form submission
-        const codeForm = document.getElementById('codeForm');
-        if (codeForm) {
-            codeForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                this.handleCodeSubmission(linkId);
-            });
-        }
-        
-        // Set up camera toggle buttons
-        const useCamBtn = document.getElementById('useCamBtn');
-        const stopCamBtn = document.getElementById('stopCamBtn');
-        const toggleInputBtn = document.getElementById('toggleInputBtn');
-        
-        if (useCamBtn) {
-            useCamBtn.addEventListener('click', () => {
-                this.switchToCamera();
-            });
-        }
-        
-        if (stopCamBtn) {
-            stopCamBtn.addEventListener('click', () => {
-                this.switchToCodeInput();
-            });
-        }
-        
-        if (toggleInputBtn) {
-            toggleInputBtn.addEventListener('click', () => {
-                this.toggleInputMode();
-            });
-        }
-        
-        logger.info('Verification UI initialized');
-    }
-    
-    initializeCodeInputs() {
-        const codeBoxesEl = document.getElementById('codeBoxes');
-        if (!codeBoxesEl) return;
-        
-        // Clear existing inputs
-        codeBoxesEl.innerHTML = '';
-        
-        // Create 8 individual input boxes (4-4 format)
-        const groups = [4, 4];
-        groups.forEach((len, gi) => {
-            for (let i = 0; i < len; i++) {
-                const inp = document.createElement('input');
-                inp.inputMode = 'latin';
-                inp.maxLength = 1;
-                inp.autocomplete = 'one-time-code';
-                inp.style.width = '3rem';
-                inp.style.height = '3rem';
-                inp.style.textAlign = 'center';
-                inp.style.fontSize = '1.25rem';
-                inp.style.fontWeight = '600';
-                inp.style.border = '2px solid var(--border)';
-                inp.style.borderRadius = 'var(--radius-lg)';
-                inp.style.background = 'var(--background)';
-                inp.style.color = 'var(--text)';
-                inp.style.transition = 'border-color var(--transition-fast)';
-                
-                // Handle individual character input
-                inp.addEventListener('input', (e) => {
-                    e.target.value = this.normalizeCode(e.target.value).slice(0, 1);
-                    if (e.target.value) {
-                        // Find next input element
-                        let nextEl = e.target.nextElementSibling;
-                        while (nextEl && nextEl.tagName !== 'INPUT') {
-                            nextEl = nextEl.nextElementSibling;
-                        }
-                        if (nextEl) nextEl.focus();
-                    }
-                });
-                
-                // Handle paste of full code
-                inp.addEventListener('paste', (e) => {
-                    e.preventDefault();
-                    const pastedText = this.normalizeCode(e.clipboardData.getData('text'));
-                    if (pastedText.length >= 8) {
-                        const inputs = codeBoxesEl.querySelectorAll('input');
-                        for (let j = 0; j < Math.min(pastedText.length, inputs.length); j++) {
-                            inputs[j].value = pastedText[j];
-                        }
-                        // Focus the last input
-                        if (inputs.length > 0) {
-                            inputs[inputs.length - 1].focus();
-                        }
-                    }
-                });
-                
-                codeBoxesEl.appendChild(inp);
-                
-                // Add spacer after 4th input
-                if (i === 3 && gi === 0) {
-                    const spacer = document.createElement('div');
-                    spacer.textContent = '-';
-                    spacer.style.fontSize = '1.5rem';
-                    spacer.style.fontWeight = '600';
-                    spacer.style.color = 'var(--text-secondary)';
-                    spacer.style.margin = '0 0.5rem';
-                    spacer.style.display = 'flex';
-                    spacer.style.alignItems = 'center';
-                    codeBoxesEl.appendChild(spacer);
-                }
-            }
-        });
-    }
-    
-    normalizeCode(str) {
-        return str.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-    }
-    
-    async handleCodeSubmission(linkId) {
-        const codeBoxesEl = document.getElementById('codeBoxes');
-        const inputs = codeBoxesEl.querySelectorAll('input');
-        const code = Array.from(inputs).map(inp => inp.value).join('');
-        
-        if (code.length !== 8) {
-            this.updateCodeStatus('Please enter the complete 8-character code', 'err');
-            return;
-        }
-        
-        this.updateCodeStatus('Verifying code...', 'status');
-        
-        try {
-            // First, redeem the bootstrap code
-            const redeemResponse = await fetch('/device/redeem', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ bc: code })
-            });
-            
-            if (!redeemResponse.ok) {
-                throw new Error(await redeemResponse.text() || 'Code rejected');
-            }
-            
-            const { dpop_nonce, link_id } = await redeemResponse.json();
-            logger.info('Bootstrap code redeemed successfully', { dpop_nonce, link_id });
-            
-            // Now finalize the link with DPoP proof
-            await DpopFun.dpopFunFetch('/link/finalize', {
-                method: 'POST',
-                body: JSON.stringify({ dpop_nonce })
-            });
-            
-            this.updateCodeStatus('Mobile device linked successfully!', 'status');
-            this.sessionState.hasMobile = true;
-            await this.completeStep();
-        } catch (error) {
-            logger.error('Code submission failed:', error);
-            this.updateCodeStatus(`Verification failed: ${error.message}`, 'err');
-        }
-    }
-    
-    updateCodeStatus(message, type = '') {
-        const statusEl = document.getElementById('codeStatus');
-        if (statusEl) {
-            statusEl.textContent = message;
-            statusEl.className = `verify-status ${type}`;
-        }
-    }
-    
-    switchToCamera() {
-        document.getElementById('codeCard').classList.add('hidden');
-        document.getElementById('camCard').classList.remove('hidden');
-        this.startCameraScan();
-    }
-    
-    switchToCodeInput() {
-        document.getElementById('camCard').classList.add('hidden');
-        document.getElementById('codeCard').classList.remove('hidden');
-        this.stopCameraScan();
-    }
-    
-    toggleInputMode() {
-        const codeBoxes = document.getElementById('codeBoxes');
-        const singleInputContainer = document.getElementById('singleInputContainer');
-        const toggleBtn = document.getElementById('toggleInputBtn');
-        
-        if (codeBoxes.classList.contains('hidden')) {
-            codeBoxes.classList.remove('hidden');
-            singleInputContainer.classList.add('hidden');
-            toggleBtn.textContent = 'Single field';
-        } else {
-            codeBoxes.classList.add('hidden');
-            singleInputContainer.classList.remove('hidden');
-            toggleBtn.textContent = 'Individual boxes';
-        }
-    }
-    
-    startCameraScan() {
-        // TODO: Implement camera scanning with jsQR
-        logger.info('Camera scanning not yet implemented');
-        this.updateCamStatus('Camera scanning not yet implemented', 'err');
-    }
-    
-    stopCameraScan() {
-        // TODO: Stop camera scanning
-        logger.info('Stopping camera scan');
-    }
-    
-    updateCamStatus(message, type = '') {
-        const statusEl = document.getElementById('camStatus');
-        if (statusEl) {
-            statusEl.textContent = message;
-            statusEl.className = `verify-status status ${type}`;
-        }
-    }
     
     async restoreBrowserIdentity() {
         const stepEl = document.getElementById('step-browserIdentity');
@@ -1469,7 +1094,7 @@ class JourneysController {
                 </div>
             `;
             
-            loggersuccess('Browser identity restored successfully');
+            logger.info('Browser identity restored successfully');
             await this.completeStep();
             
         } catch (error) {
@@ -1674,7 +1299,7 @@ class JourneysController {
                         </div>
                     `;
                     
-                    loggersuccess(`Username "${username}" verified`);
+                    logger.info(`Username "${username}" verified`);
                     this.pendingUsernameStep = false;
                     await this.completeStep();
                 }
@@ -1717,7 +1342,7 @@ class JourneysController {
                 </div>
             `;
             
-            loggersuccess('Passkey authentication successful');
+            logger.info('Passkey authentication successful');
             await this.completeStep();
             
         } catch (error) {
@@ -1817,7 +1442,7 @@ class JourneysController {
                 if (statusEl) {
                     const statusText = statusEl.textContent || statusEl.innerText;
                     if (statusText.includes('Face verified ✓') || statusText.includes('Face registered ✓')) {
-                        loggersuccess('Face authentication successful');
+                        logger.info('Face authentication successful');
                         this.completeStep();
                         return;
                     }

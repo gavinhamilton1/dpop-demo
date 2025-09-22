@@ -23,6 +23,7 @@ export class LinkingService extends ApiService {
     this.verificationPhaseShown = false;
     this.eventListenersAttached = false;
     this.hadBIKBeforeLinking = false;
+    this.bikWasAuthenticated = false;
   }
 
   /**
@@ -159,10 +160,19 @@ export class LinkingService extends ApiService {
       try {
         const sessionStatus = await DpopFun.getSessionStatus();
         this.hadBIKBeforeLinking = sessionStatus.bik_registered || false;
-        logger.info('BIK status before linking:', this.hadBIKBeforeLinking ? 'exists' : 'new');
+        
+        // Also check if the BIK was tied to an authenticated user session
+        this.bikWasAuthenticated = sessionStatus.username && sessionStatus.bik_registered && sessionStatus.user_authenticated;
+        
+        logger.info('BIK status before linking:', {
+          bikExists: this.hadBIKBeforeLinking,
+          bikWasAuthenticated: this.bikWasAuthenticated,
+          username: sessionStatus.username
+        });
       } catch (error) {
         logger.warn('Could not check BIK status before linking:', error.message);
         this.hadBIKBeforeLinking = false;
+        this.bikWasAuthenticated = false;
       }
       
       // Reset verification phase flag
@@ -432,11 +442,11 @@ export class LinkingService extends ApiService {
         statusEl.textContent = 'Mobile device linked!';
         statusEl.className = 'qr-status success';
         
-        // Only show verification phase (bootstrap code entry) if a new BIK was created
+        // Check if we need verification phase based on BIK status
         if (!this.hadBIKBeforeLinking) {
+          // New BIK was created - show verification phase
           logger.info('New BIK was created, showing verification phase');
           statusEl.textContent = 'Mobile device linked! Enter verification code below.';
-          // Only show verification phase once when status becomes linked
           if (!this.verificationPhaseShown) {
             logger.info('Showing verification phase for linked status');
             this.verificationPhaseShown = true;
@@ -444,10 +454,39 @@ export class LinkingService extends ApiService {
           } else {
             logger.info('Verification phase already shown, skipping');
           }
+        } else if (this.bikWasAuthenticated) {
+          // Existing authenticated BIK was used - show success message
+          logger.info('Existing authenticated BIK was used, showing success message');
+          statusEl.textContent = 'Mobile device linked successfully! Using existing authenticated identity.';
+          statusEl.className = 'qr-status success';
+          
+          // Hide QR phase and show success message
+          const qrPhase = document.getElementById('qrPhase');
+          if (qrPhase) {
+            qrPhase.innerHTML = `
+              <div class="step-status success">
+                <h3>✓ Mobile Device Linked Successfully</h3>
+                <p>Your mobile device has been linked using your existing authenticated identity.</p>
+                <p>No additional verification is required.</p>
+              </div>
+            `;
+          }
+          
+          // Complete the step after a short delay
+          setTimeout(() => {
+            this.completeStep();
+          }, 2000);
         } else {
-          logger.info('Existing BIK was used, skipping verification phase');
-          // Complete the step immediately since no bootstrap code is needed
-          this.completeStep();
+          // Existing BIK but not authenticated - show verification phase
+          logger.info('Existing BIK but not authenticated, showing verification phase');
+          statusEl.textContent = 'Mobile device linked! Enter verification code below.';
+          if (!this.verificationPhaseShown) {
+            logger.info('Showing verification phase for unauthenticated BIK');
+            this.verificationPhaseShown = true;
+            this.showVerificationPhase();
+          } else {
+            logger.info('Verification phase already shown, skipping');
+          }
         }
         break;
       case 'confirmed':
@@ -469,6 +508,15 @@ export class LinkingService extends ApiService {
         statusEl.textContent = 'Waiting for scan...';
         statusEl.className = 'qr-status';
     }
+  }
+
+  /**
+   * Force show verification phase (for journeys context)
+   */
+  forceShowVerificationPhase() {
+    logger.info('Force showing verification phase for journeys');
+    this.hadBIKBeforeLinking = false; // Override BIK check
+    this.showVerificationPhase();
   }
 
   /**

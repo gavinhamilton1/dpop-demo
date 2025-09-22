@@ -1206,6 +1206,7 @@ textarea.form-control {
 /* Pill Button - Generic pill-shaped button component */
 .btn-pill {
   padding: 8px 20px;
+  margin: 3px;
   background: #465263;
   border: 1px solid #93c5fd;
   border-radius: 50px; /* Pill shape */

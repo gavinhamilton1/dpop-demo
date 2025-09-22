@@ -748,11 +748,23 @@ async def session_status(req: Request):
     sid = req.session.get("sid")
     s = await DB.get_session(sid) if sid else None
     if not sid or not s:
-        return {"valid": False, "state": None, "bik_registered": False, "dpop_bound": False, "ttl_seconds": 0}
+        return {"valid": False, "state": None, "bik_registered": False, "dpop_bound": False, "ttl_seconds": 0, "username": None, "user_authenticated": False}
     
     state = s.get("state")
     bik_registered = bool(s.get("bik_jkt"))
     dpop_bound = bool(s.get("dpop_jkt"))
+    
+    # Get username from users table to check if BIK was tied to authenticated user
+    username = None
+    user_authenticated = False
+    try:
+        user = await DB.get_user_by_session(sid)
+        if user:
+            username = user["username"]
+            # Check if this user was actually authenticated in this session
+            user_authenticated = bool(s.get("authenticated"))
+    except Exception as e:
+        log.warning(f"Failed to get username for session {sid}: {e}")
     
     # Calculate TTL based on DPoP binding expiration
     ttl_seconds = 0
@@ -769,7 +781,9 @@ async def session_status(req: Request):
         "state": state, 
         "bik_registered": bik_registered, 
         "dpop_bound": dpop_bound,
-        "ttl_seconds": ttl_seconds
+        "ttl_seconds": ttl_seconds,
+        "username": username,
+        "user_authenticated": user_authenticated
     }
 
 # ---------------- DPoP gate for protected APIs (existing) ----------------
