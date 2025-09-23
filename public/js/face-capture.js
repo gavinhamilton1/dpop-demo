@@ -590,6 +590,11 @@ import {
       await startFaceCapture();
     }
 
+    stopCapture() {
+      // Stop the face capture process and camera
+      stopCamera();
+    }
+
     resetFaceCapture() {
       resetFaceCapture();
     }

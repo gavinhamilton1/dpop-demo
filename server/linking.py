@@ -9,6 +9,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from server.config import load_settings
 from server.utils import b64u, b64u_dec, jws_es256_sign, jws_es256_verify, now
+from server.db import DB
 
 log = logging.getLogger("dpop-fun")
 SETTINGS = load_settings()
@@ -30,6 +31,35 @@ def _nonce_headers(ctx: Any) -> Dict[str, str]:
 
 _LINKS: Dict[str, Dict[str, Any]] = {}
 _LINKS_LOCK = threading.RLock()
+
+async def _load_links_from_db():
+    """Load existing links from database on startup"""
+    try:
+        # Clean up expired links first
+        expired_count = await DB.cleanup_expired_links()
+        if expired_count > 0:
+            log.info("Cleaned up %d expired links", expired_count)
+        
+        # Load all active links
+        rows = await DB.fetchall("SELECT * FROM links WHERE expires_at > strftime('%s','now')")
+        with _LINKS_LOCK:
+            for row in rows:
+                _LINKS[row["id"]] = {
+                    "rid": row["id"],
+                    "desktop_sid": row["owner_sid"],
+                    "status": row["status"],
+                    "principal": row["principal"],
+                    "expires_at": row["expires_at"],
+                    "applied": bool(row["applied"])
+                }
+        log.info("Loaded %d active links from database", len(_LINKS))
+    except Exception as e:
+        log.error("Failed to load links from database: %s", e)
+
+# Public function to initialize links from database
+async def initialize_links():
+    """Initialize links from database - call this on server startup"""
+    await _load_links_from_db()
 
 # per-link async queues for SSE
 _WATCHERS: Dict[str, List[asyncio.Queue]] = {}
@@ -93,6 +123,19 @@ def _put_link(link_id: str, rec: Dict[str, Any]):
     _notify_watchers(link_id, event)
     _notify_websockets(link_id, event)
 
+async def _persist_link_to_db(link_id: str, rec: Dict[str, Any]):
+    """Persist link to database"""
+    try:
+        await DB.create_link(
+            link_id=link_id,
+            owner_sid=rec.get("desktop_sid", ""),
+            principal=rec.get("principal"),
+            expires_at=rec.get("expires_at", rec.get("exp"))
+        )
+        log.info("Link persisted to database: %s", link_id)
+    except Exception as e:
+        log.error("Failed to persist link to database: %s", e)
+
 def _public_view(rec: Dict[str, Any]) -> Dict[str, Any]:
     now_ts = now()
     return {
@@ -149,14 +192,19 @@ def get_router(
         # Get desktop session device type for logging
         desktop_device_type = s.get("device_type", "unknown")
         
-        _put_link(rid, {
+        link_data = {
             "rid": rid,
             "desktop_sid": sid,
             "status": "pending",
             "token": token,
             "created_at": iat,
             "exp": exp,
-        })
+            "expires_at": exp,
+        }
+        _put_link(rid, link_data)
+        
+        # Persist to database
+        await _persist_link_to_db(rid, link_data)
         log.info("Link created - rid=%s desktop_sid=%s desktop_device_type=%s status=pending exp=%s", 
                 rid, sid, desktop_device_type, exp)
         return JSONResponse({"linkId": rid, "exp": exp, "qr_url": qr_url}, headers=_nonce_headers(ctx))

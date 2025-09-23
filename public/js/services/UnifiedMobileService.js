@@ -13,6 +13,7 @@ export class UnifiedMobileService {
     this.currentLinkId = null;
     this.isLoginFlow = false;
     this.username = null;
+    this.desktopUsername = null;
     this.onComplete = null;
     this.onError = null;
     this.onAuthenticated = null;
@@ -33,6 +34,10 @@ export class UnifiedMobileService {
     this.onAuthenticated = onAuthenticated;
     
     logger.info('Initializing mobile registration flow');
+    
+    // Start the mobile linking process to get desktop username
+    await this.startMobileLinking();
+    
     return this.startMobileSession();
   }
 
@@ -70,10 +75,15 @@ export class UnifiedMobileService {
       // Step 2: Collect mobile device fingerprint
       await this.collectMobileFingerprint();
       
-      // Step 3: Handle passkey authentication
+      // Step 3: For registration flow, set a username first
+      if (!this.isLoginFlow) {
+        await this.setUsernameForRegistration();
+      }
+      
+      // Step 4: Handle passkey authentication
       await this.handlePasskeyAuthentication();
       
-      // Step 4: Complete mobile linking for both flows
+      // Step 5: Complete mobile linking for both flows
       await this.completeMobileLinking();
       
     } catch (error) {
@@ -101,6 +111,62 @@ export class UnifiedMobileService {
     } catch (error) {
       logger.warn(`Mobile fingerprint collection failed: ${error.message}`);
       // Continue with authentication flow even if fingerprinting fails
+    }
+  }
+
+  /**
+   * Start mobile linking process to get desktop username
+   */
+  async startMobileLinking() {
+    try {
+      logger.info('Starting mobile linking process...');
+      
+      // Call the mobile link start endpoint to get desktop username
+      const data = await DpopFun.dpopFunFetch('/link/mobile/start', {
+        method: 'POST',
+        body: { lid: this.currentLinkId }
+      });
+      
+      logger.info('Link start response data:', data);
+      this.desktopUsername = data.desktop_username;
+      
+      logger.info(`Desktop username received from linking: ${this.desktopUsername}`);
+      
+    } catch (error) {
+      logger.error('Failed to start mobile linking:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Set username for registration flow using desktop session username
+   */
+  async setUsernameForRegistration() {
+    try {
+      logger.info('Setting desktop username for mobile registration flow...');
+      
+      if (!this.desktopUsername) {
+        logger.warn('No desktop username available from linking process, generating fallback username');
+        // Generate a fallback username for mobile registration
+        const timestamp = Date.now().toString(36);
+        const random = Math.random().toString(36).substring(2, 8);
+        this.desktopUsername = `mobile_${timestamp}_${random}`;
+        logger.info(`Generated fallback username: ${this.desktopUsername}`);
+      }
+      
+      logger.info(`Using username for mobile registration: ${this.desktopUsername}`);
+      
+      // Create username and bind it to the mobile session
+      await DpopFun.dpopFunFetch('/onboarding/username', {
+        method: 'POST',
+        body: { username: this.desktopUsername }
+      });
+      
+      logger.info('Username bound successfully to mobile session');
+      
+    } catch (error) {
+      logger.error('Failed to bind username for mobile registration:', error);
+      throw error;
     }
   }
 
@@ -160,21 +226,19 @@ export class UnifiedMobileService {
     try {
       logger.info('Setting mobile authentication for registration flow...');
       
-      // For registration flow, we'll use a different approach
-      // We'll set the session data directly using the existing session mechanism
-      // This is a workaround for the registration flow
+      // Get the current session status to get the username
+      const sessionData = await DpopFun.dpopFunFetch('/session/status');
+      const username = sessionData.username;
       
-      // Get the BIK JKT from storage
-      const bikJkt = await DpopFun.get(CONFIG.STORAGE.KEYS.BIK_JKT);
-      if (!bikJkt) {
-        throw new Error('No BIK JKT available in storage');
+      if (!username) {
+        throw new Error('No username found in session for mobile registration');
       }
       
       // Store the authentication data in the session for later use
       // This will be used by the mobile linking completion
       this.registrationAuthData = {
         passkey_auth: true,
-        passkey_principal: bikJkt,
+        passkey_principal: username, // Use username as principal
         mobile_auth: true
       };
       
@@ -183,7 +247,7 @@ export class UnifiedMobileService {
         method: 'POST',
         body: {
           passkey_auth: true,
-          passkey_principal: bikJkt,
+          passkey_principal: username, // Use username as principal
           mobile_auth: true
         }
       });

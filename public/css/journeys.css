@@ -115,6 +115,93 @@
     border-right: 1px solid var(--border);
 }
 
+/* Authentication Method Selection Styles */
+.username-auth-form {
+    max-width: 500px;
+    margin: 0 auto;
+}
+
+.form-group {
+    margin-bottom: var(--spacing-4);
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: var(--spacing-2);
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.form-group input {
+    width: 100%;
+    padding: var(--spacing-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 16px;
+    background: var(--surface);
+    color: var(--text-primary);
+}
+
+.auth-methods {
+    margin-top: var(--spacing-6);
+}
+
+.auth-methods h4 {
+    margin-bottom: var(--spacing-4);
+    color: var(--text-primary);
+    text-align: left;
+    font-weight: 500;
+}
+
+.auth-options-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-4);
+    background: var(--surface-light);
+    margin-top: var(--spacing-2);
+}
+
+.auth-buttons {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-3);
+}
+
+.auth-btn {
+    background-color: var(--surface);
+    padding: var(--spacing-3) var(--spacing-5);
+    border: 2px solid var(--border);
+    border-radius: 50px; /* Pill shape */
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-3);
+    width: 100%;
+    justify-content: flex-start;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    min-height: 48px; /* Ensure consistent pill height */
+}
+
+.auth-btn:hover {
+    border-color: var(--primary);
+    background: var(--primary-light);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    border-radius: 50px; /* Maintain pill shape on hover */
+}
+
+.auth-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    border-radius: 50px; /* Maintain pill shape on active */
+}
+
+
 
 /* API Modal Styles */
 .modal {
@@ -550,12 +637,21 @@
 }
 
 .journey-header-content {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
     margin-bottom: 2rem;
     padding-bottom: 1rem;
     border-bottom: 1px solid var(--border-color);
+}
+
+.journey-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: var(--spacing-2);
+}
+
+.journey-header-actions {
+    display: flex;
+    align-items: center;
 }
 
 .journey-header-content h2 {
@@ -642,9 +738,6 @@
     margin-bottom: 1rem;
 }
 
-.step-content {
-    /* Content will be populated dynamically */
-}
 
 .step-actions {
     display: flex;
@@ -791,10 +884,14 @@
         grid-template-columns: 1fr;
     }
     
-    .journey-header-content {
+    .journey-title-row {
         flex-direction: column;
         align-items: flex-start;
         gap: 1rem;
+    }
+    
+    .journey-header-actions {
+        align-self: flex-end;
     }
     
     .step-actions,

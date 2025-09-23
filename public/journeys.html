@@ -90,33 +90,13 @@
                 </button>
             </div>
 
-            <!-- Desktop Passkey Login -->
-            <div class="journey-card" id="desktopPasskeyJourney">
-                <div class="journey-icon">🔑</div>
-                <h2>Desktop Passkey Login</h2>
-                <p>Sign in using your desktop passkey</p>
-                <button class="journey-btn" id="startDesktopPasskeyBtn" disabled>
-                    Login with Passkey
-                </button>
-            </div>
-
-            <!-- Face Login -->
-            <div class="journey-card" id="faceLoginJourney">
-                <div class="journey-icon">📷</div>
-                <h2>Face Recognition Login</h2>
-                <p>Sign in using facial recognition</p>
-                <button class="journey-btn" id="startFaceLoginBtn" disabled>
-                    Login with Face
-                </button>
-            </div>
-
-            <!-- Mobile Passkey Login -->
-            <div class="journey-card" id="mobilePasskeyJourney">
-                <div class="journey-icon">📱</div>
-                <h2>Mobile Passkey Login</h2>
-                <p>Sign in using your mobile device passkey</p>
-                <button class="journey-btn" id="startMobilePasskeyBtn" disabled>
-                    Login with Mobile Passkey
+            <!-- Existing User Login -->
+            <div class="journey-card" id="existingUserJourney">
+                <div class="journey-icon">🔐</div>
+                <h2>Existing User Login</h2>
+                <p>Sign in with your existing account using passkey, face, or mobile authentication</p>
+                <button class="journey-btn" id="startExistingUserBtn" disabled>
+                    Login with Existing Account
                 </button>
             </div>
         </div>
@@ -217,5 +197,6 @@
     <script src="/public/vendor/browser.js"></script>
     <script src="/public/js/utils/apriltag.js"></script>
     <script type="module" src="/public/js/journeys.js"></script>
+
 </body>
 </html>

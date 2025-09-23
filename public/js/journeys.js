@@ -26,6 +26,9 @@ class JourneysController {
             authenticationMethod: null
         };
         
+        // Track selected authentication method for existing user login
+        this.selectedAuthMethod = null;
+        
         
         this.journeyDefinitions = {
             newUser: {
@@ -62,51 +65,15 @@ class JourneysController {
                     }
                 ]
             },
-            desktopPasskey: {
-                title: 'Desktop Passkey Login',
-                description: 'Sign in using your desktop passkey',
+            existingUser: {
+                title: 'Existing User Login',
+                description: 'Sign in with your existing account',
                 steps: [
                     {
-                        id: 'login',
-                        title: 'Login with Passkey',
-                        description: 'Enter your username and authenticate with your passkey',
-                        action: () => this.loginWithPasskey()
-                    }
-                ]
-            },
-            faceLogin: {
-                title: 'Face Recognition Login',
-                description: 'Sign in using facial recognition',
-                steps: [
-                    {
-                        id: 'username',
-                        title: 'Enter Username',
-                        description: 'Enter your username to continue',
-                        action: () => this.enterUsername()
-                    },
-                    {
-                        id: 'face',
-                        title: 'Face Authentication',
-                        description: 'Use facial recognition to sign in',
-                        action: () => this.authenticateWithFace()
-                    }
-                ]
-            },
-            mobilePasskey: {
-                title: 'Mobile Passkey Login',
-                description: 'Sign in using your mobile device passkey',
-                steps: [
-                    {
-                        id: 'username',
-                        title: 'Enter Username',
-                        description: 'Enter your username to continue',
-                        action: () => this.enterUsername()
-                    },
-                    {
-                        id: 'mobile',
-                        title: 'Mobile Authentication',
-                        description: 'Use your mobile device passkey to sign in',
-                        action: () => this.authenticateWithMobilePasskey()
+                        id: 'Authentication',
+                        title: 'Authentication',
+                        description: 'Enter your username and choose authentication method',
+                        action: () => this.enterUsernameAndSelectAuth()
                     }
                 ]
             }
@@ -159,9 +126,7 @@ class JourneysController {
         
         // Journey selection buttons
         document.getElementById('startNewUserBtn').addEventListener('click', () => this.startJourney('newUser'));
-        document.getElementById('startDesktopPasskeyBtn').addEventListener('click', () => this.startJourney('desktopPasskey'));
-        document.getElementById('startFaceLoginBtn').addEventListener('click', () => this.startJourney('faceLogin'));
-        document.getElementById('startMobilePasskeyBtn').addEventListener('click', () => this.startJourney('mobilePasskey'));
+        document.getElementById('startExistingUserBtn').addEventListener('click', () => this.startJourney('existingUser'));
         
         // Cancel journey button
         document.getElementById('cancelJourneyBtn').addEventListener('click', () => this.cancelJourney());
@@ -368,11 +333,11 @@ class JourneysController {
 
         // Authentication status (displayed last)
         if (this.sessionState.isAuthenticated && this.sessionState.authenticationMethod) {
-            detail += `🔐 Authenticated with ${this.sessionState.authenticationMethod}\n`;
+            detail += `✅ Authenticated with ${this.sessionState.authenticationMethod}\n`;
         } else if (sessionData.user_authenticated && sessionData.username) {
             // Server-side authentication status
             const usernameStr = typeof sessionData.username === 'string' ? sessionData.username : (sessionData.username?.username || sessionData.username?.value || JSON.stringify(sessionData.username));
-            detail += `🔐 Server authenticated: ${usernameStr}\n`;
+            detail += `✅ Server authenticated: ${usernameStr}\n`;
         } else {
             detail += '❌ Authentication: Not authenticated\n';
         }
@@ -420,25 +385,13 @@ class JourneysController {
     
     updateJourneyAvailability() {
         const newUserBtn = document.getElementById('startNewUserBtn');
-        const desktopPasskeyBtn = document.getElementById('startDesktopPasskeyBtn');
-        const faceLoginBtn = document.getElementById('startFaceLoginBtn');
-        const mobilePasskeyBtn = document.getElementById('startMobilePasskeyBtn');
+        const existingUserBtn = document.getElementById('startExistingUserBtn');
         
         // New user journey - always available
         newUserBtn.disabled = false;
         
-        // Login journeys require BIK and username
-        const canLogin = this.sessionState.hasSession && this.sessionState.hasBIK && this.sessionState.hasUsername;
-        
-        desktopPasskeyBtn.disabled = !canLogin;
-        faceLoginBtn.disabled = !canLogin;
-        mobilePasskeyBtn.disabled = !canLogin;
-        
-        // Update button text for passkey support
-        if (!this.checkPasskeySupport()) {
-            desktopPasskeyBtn.textContent = 'Passkeys Not Supported';
-            mobilePasskeyBtn.textContent = 'Passkeys Not Supported';
-        }
+        // Existing user journey - always available
+        existingUserBtn.disabled = false;
     }
     
     checkPasskeySupport() {
@@ -582,9 +535,12 @@ class JourneysController {
                 stepEl.classList.add('active');
             }
             
+            // Hide step number for single-step journeys
+            const showStepNumber = this.currentJourney.steps.length > 1;
+            
             stepEl.innerHTML = `
                 <div class="step-header">
-                    <div class="step-number">${index + 1}</div>
+                    ${showStepNumber ? `<div class="step-number">${index + 1}</div>` : ''}
                     <h3 class="step-title">${step.title}</h3>
                 </div>
                 <p class="step-description">${step.description}</p>
@@ -680,7 +636,24 @@ class JourneysController {
         // Show logout button after completing any journey
         document.getElementById('logoutBtn').style.display = 'block';
         
-        // Show completion message
+        // For existing user login, just show success in the current step
+        if (this.currentJourney && this.currentJourney.title === 'Existing User Login') {
+            const stepEl = document.getElementById('step-Authentication');
+            const contentEl = stepEl.querySelector('.step-content');
+            
+            // Mark the step as completed and green
+            stepEl.classList.remove('active');
+            stepEl.classList.add('completed');
+            
+            contentEl.innerHTML = `
+                <div class="step-status success">
+                    <p>✓ Authentication successful! You are now logged in.</p>
+                </div>
+            `;
+            return;
+        }
+        
+        // For other journeys, show completion message
         const actionsContainer = document.getElementById('journeyActions');
         actionsContainer.innerHTML = `
             <div class="step completed">
@@ -1305,6 +1278,100 @@ class JourneysController {
         logger.info('Passkey authentication successful');
     }
     
+    async enterUsernameAndSelectAuth() {
+        const stepEl = document.getElementById('step-Authentication');
+        const contentEl = stepEl.querySelector('.step-content');
+        
+        contentEl.innerHTML = `
+            <div class="username-auth-form">
+                <div class="form-group">
+                    <label for="usernameInputAuth">Username</label>
+                    <input type="text" id="usernameInputAuth" placeholder="Enter your username" maxlength="50">
+                </div>
+                <div class="auth-methods">
+                    <h4>Choose Authentication Method:</h4>
+                    <div class="auth-options-card">
+                        <div class="auth-buttons">
+                            <button class="btn auth-btn" id="authPasskeyBtn" data-method="passkey">
+                                🔑 Login with Passkey
+                            </button>
+                            <button class="btn auth-btn" id="authFaceBtn" data-method="face">
+                                👤 Login with Face
+                            </button>
+                            <button class="btn auth-btn" id="authMobileBtn" data-method="mobile">
+                                📱 Login with Mobile
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div id="authError" class="error-message" style="display: none;"></div>
+            </div>
+        `;
+        
+        // Add event listeners for authentication method buttons
+        document.getElementById('authPasskeyBtn').addEventListener('click', () => this.selectAuthMethod('passkey'));
+        document.getElementById('authFaceBtn').addEventListener('click', () => this.selectAuthMethod('face'));
+        document.getElementById('authMobileBtn').addEventListener('click', () => this.selectAuthMethod('mobile'));
+    }
+    
+    async selectAuthMethod(method) {
+        const username = document.getElementById('usernameInputAuth').value.trim();
+        const errorEl = document.getElementById('authError');
+        
+        if (!username) {
+            errorEl.textContent = 'Username is required';
+            errorEl.style.display = 'block';
+            return;
+        }
+        
+        try {
+            // First, verify the username with the server
+            const response = await fetch('/onboarding/signin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ username })
+            });
+            
+            if (response.ok) {
+                // Store the username and selected auth method
+                this.sessionState.hasUsername = true;
+                this.sessionState.username = username;
+                this.selectedAuthMethod = method;
+                
+                // Update session status
+                await this.checkSessionStatus();
+                
+                // Call the authentication method directly
+                switch (method) {
+                    case 'passkey':
+                        await this.authenticateWithPasskey();
+                        break;
+                    case 'face':
+                        await this.authenticateWithFace();
+                        break;
+                    case 'mobile':
+                        await this.authenticateWithMobilePasskey();
+                        break;
+                }
+                
+            } else {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || 'Username not found');
+            }
+            
+        } catch (error) {
+            errorEl.textContent = error.message;
+            errorEl.style.display = 'block';
+        }
+    }
+    
+    async performSelectedAuthentication() {
+        // This method is no longer used since authentication happens directly in selectAuthMethod
+        // But we keep it for compatibility with the journey definition
+        await this.completeJourney();
+    }
+    
     async enterUsername() {
         const stepEl = document.getElementById('step-username');
         const contentEl = stepEl.querySelector('.step-content');
@@ -1387,7 +1454,7 @@ class JourneysController {
     }
     
     async authenticateWithPasskey() {
-        const stepEl = document.getElementById('step-passkey');
+        const stepEl = document.getElementById('step-Authentication');
         const contentEl = stepEl.querySelector('.step-content');
         
         contentEl.innerHTML = `
@@ -1400,6 +1467,9 @@ class JourneysController {
         try {
             await Passkeys.authenticatePasskey();
             
+            // Update authentication status
+            this.updateAuthenticationStatus('desktop passkey');
+            
             contentEl.innerHTML = `
                 <div class="step-status success">
                     <p>✓ Passkey authentication successful!</p>
@@ -1407,7 +1477,7 @@ class JourneysController {
             `;
             
             logger.info('Passkey authentication successful');
-            await this.completeStep();
+            await this.completeJourney();
             
         } catch (error) {
             throw new Error(`Passkey authentication failed: ${error.message}`);
@@ -1415,7 +1485,7 @@ class JourneysController {
     }
     
     async authenticateWithFace() {
-        const stepEl = document.getElementById('step-face');
+        const stepEl = document.getElementById('step-Authentication');
         const contentEl = stepEl.querySelector('.step-content');
         
         contentEl.innerHTML = `
@@ -1493,6 +1563,10 @@ class JourneysController {
             // Import and initialize face capture using the same approach as index.html
             const faceCaptureModule = await import('./face-capture.js');
             const faceCapture = new faceCaptureModule.FaceCaptureInline('verify');
+            
+            // Set global reference so the face capture logic can detect verify mode
+            window.faceCapture = faceCapture;
+            
             await faceCapture.init();
             
             // Auto-start the face capture process
@@ -1507,7 +1581,33 @@ class JourneysController {
                     const statusText = statusEl.textContent || statusEl.innerText;
                     if (statusText.includes('Face verified ✓') || statusText.includes('Face registered ✓')) {
                         logger.info('Face authentication successful');
-                        this.completeStep();
+                        faceCapture.stopCapture(); // Stop camera on success
+                        this.updateAuthenticationStatus('face verify');
+                        this.completeJourney();
+                        return;
+                    } else if (statusText.includes('Security check failed') || 
+                               statusText.includes('verification failed') ||
+                               statusText.includes('Failed to verify')) {
+                        logger.info('Face authentication failed');
+                        faceCapture.stopCapture(); // Stop camera on failure
+                        // Show error message
+                        document.getElementById('faceStartPhase').innerHTML = `
+                            <div class="step-status error">
+                                <p>Face verification failed: ${statusText}</p>
+                                <div class="step-actions">
+                                    <button class="btn primary" id="retryFaceBtn">Try Again</button>
+                                    <button class="btn secondary" id="skipFaceBtn">Skip</button>
+                                </div>
+                            </div>
+                        `;
+                        
+                        // Re-add event listeners
+                        document.getElementById('retryFaceBtn').addEventListener('click', async () => {
+                            await this.startFaceAuthentication();
+                        });
+                        document.getElementById('skipFaceBtn').addEventListener('click', () => {
+                            this.skipCurrentStep();
+                        });
                         return;
                     }
                 }
@@ -1520,6 +1620,11 @@ class JourneysController {
             
         } catch (error) {
             logger.error('Failed to initialize face capture:', error);
+            
+            // Stop camera if it was started
+            if (faceCapture) {
+                faceCapture.stopCapture();
+            }
             
             // Show error and re-enable start button
             const startBtn = document.getElementById('startFaceBtn');
@@ -1548,17 +1653,23 @@ class JourneysController {
     }
     
     async authenticateWithMobilePasskey() {
-        const stepEl = document.getElementById('step-mobile');
+        const stepEl = document.getElementById('step-Authentication');
         const contentEl = stepEl.querySelector('.step-content');
         
         contentEl.innerHTML = `
             <div class="mobile-auth-container">
                 <p>Mobile passkey authentication functionality would be implemented here...</p>
                 <div class="step-actions">
-                    <button class="btn primary" onclick="journeysController.completeStep()">Complete Authentication</button>
+                    <button class="btn primary" id="completeMobileAuthBtn">Complete Authentication</button>
                 </div>
             </div>
         `;
+        
+        // Add event listener for completion
+        document.getElementById('completeMobileAuthBtn').addEventListener('click', async () => {
+            this.updateAuthenticationStatus('mobile passkey');
+            await this.completeJourney();
+        });
         
         logger.info('Mobile passkey authentication initiated');
     }

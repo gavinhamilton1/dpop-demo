@@ -427,6 +427,97 @@ class Database:
         await self.exec("DELETE FROM face_embeddings WHERE user_id=?", (user_id,))
         return True
 
+    # --- Link management methods ---
+    
+    async def create_link(self, link_id: str, owner_sid: str, principal: str = None, expires_at: int = None) -> bool:
+        """Create a new link record"""
+        try:
+            await self.exec(
+                "INSERT INTO links(id, owner_sid, status, principal, expires_at) VALUES(?, ?, 'pending', ?, ?)",
+                (link_id, owner_sid, principal, expires_at)
+            )
+            return True
+        except Exception:
+            return False
+
+    async def get_link(self, link_id: str) -> Optional[Dict[str, Any]]:
+        """Get a link by ID"""
+        row = await self.fetchone(
+            "SELECT id, owner_sid, status, principal, expires_at, applied FROM links WHERE id = ?",
+            (link_id,)
+        )
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "owner_sid": row["owner_sid"],
+            "status": row["status"],
+            "principal": row["principal"],
+            "expires_at": row["expires_at"],
+            "applied": bool(row["applied"])
+        }
+
+    async def update_link_status(self, link_id: str, status: str) -> bool:
+        """Update link status"""
+        try:
+            await self.exec(
+                "UPDATE links SET status = ? WHERE id = ?",
+                (status, link_id)
+            )
+            return True
+        except Exception:
+            return False
+
+    async def update_link_principal(self, link_id: str, principal: str) -> bool:
+        """Update link principal"""
+        try:
+            await self.exec(
+                "UPDATE links SET principal = ? WHERE id = ?",
+                (principal, link_id)
+            )
+            return True
+        except Exception:
+            return False
+
+    async def mark_link_applied(self, link_id: str) -> bool:
+        """Mark link as applied"""
+        try:
+            await self.exec(
+                "UPDATE links SET applied = 1 WHERE id = ?",
+                (link_id,)
+            )
+            return True
+        except Exception:
+            return False
+
+    async def delete_link(self, link_id: str) -> bool:
+        """Delete a link"""
+        try:
+            await self.exec("DELETE FROM links WHERE id = ?", (link_id,))
+            return True
+        except Exception:
+            return False
+
+    async def delete_links_by_owner(self, owner_sid: str) -> bool:
+        """Delete all links for an owner"""
+        try:
+            await self.exec("DELETE FROM links WHERE owner_sid = ?", (owner_sid,))
+            return True
+        except Exception:
+            return False
+
+    async def cleanup_expired_links(self) -> int:
+        """Clean up expired links and return count of deleted links"""
+        try:
+            result = await self.exec(
+                "DELETE FROM links WHERE expires_at < strftime('%s','now')"
+            )
+            # Get count of deleted rows
+            row = await self.fetchone("SELECT changes() as count")
+            return row["count"] if row else 0
+        except Exception:
+            return 0
+
 
 # Export a singleton used by main.py
 DB = Database()  # will use config-provided path by default
