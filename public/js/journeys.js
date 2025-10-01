@@ -28,6 +28,7 @@ class JourneysController {
         
         // Track selected authentication method for existing user login
         this.selectedAuthMethod = null;
+        this.tempUsername = null;
         
         
         this.journeyDefinitions = {
@@ -200,11 +201,11 @@ class JourneysController {
             await this.loadPersistedAuthenticationState();
             
             // Update UI status based on detailed session information
-            this.updateSessionStatusWithDetails(sessionData);
+            await this.updateSessionStatusWithDetails(sessionData);
             
             logger.info('Session setup completed successfully');
             
-        } catch (error) {
+                    } catch (error) {
             logger.error('Failed to setup session:', error);
             this.updateSessionStatus('error', 'Session Setup Failed', error.message);
         }
@@ -215,17 +216,129 @@ class JourneysController {
             const authStatus = await DpopFun.get(CONFIG.STORAGE.KEYS.AUTH_STATUS);
             const authMethod = await DpopFun.get(CONFIG.STORAGE.KEYS.AUTH_METHOD);
 
-            if (authStatus && authStatus.value) {
+            // Only load authentication state if there's a username in the current session
+            if (authStatus && authStatus.value && this.sessionState.hasUsername) {
                 this.sessionState.isAuthenticated = true;
                 this.sessionState.authenticationMethod = authMethod?.value || 'unknown';
                 logger.info(`Loaded persisted authentication state: ${this.sessionState.authenticationMethod}`);
-            }
-        } catch (error) {
+            } else if (authStatus && authStatus.value && !this.sessionState.hasUsername) {
+                // Clear invalid authentication state if no username
+                logger.warn('Clearing invalid authentication state - no username in session');
+                await DpopFun.set(CONFIG.STORAGE.KEYS.AUTH_STATUS, false);
+                await DpopFun.set(CONFIG.STORAGE.KEYS.AUTH_METHOD, null);
+                this.sessionState.isAuthenticated = false;
+                this.sessionState.authenticationMethod = null;
+                    }
+                } catch (error) {
             logger.error('Failed to load persisted authentication state:', error);
         }
     }
 
+    async checkBIKSignalMatching(bikJkt) {
+        // Check if current session signals match historical data for this BIK
+        try {
+            if (!bikJkt) {
+                logger.warn('No BIK JKT provided for signal matching');
+                return null;
+            }
+
+            logger.info(`Checking BIK signal matching for JKT: ${bikJkt.substring(0, 8)}...`);
+
+            // Get current fingerprint data
+            const currentFingerprint = await this.getCurrentFingerprint();
+            logger.info('Current fingerprint data:', currentFingerprint ? Object.keys(currentFingerprint) : 'null');
+            
+            if (!currentFingerprint || Object.keys(currentFingerprint).length === 0) {
+                logger.info('No current fingerprint data available for BIK signal matching');
+                return {
+                    is_similar: true,
+                    similarity_score: 1.0,
+                    risk_level: 'low',
+                    differences: [],
+                    warnings: []
+                };
+            }
+
+            // Get historical signal data for this BIK
+            const response = await DpopFun.dpopFunFetch('/session/signal-data', {
+                method: 'GET'
+            });
+
+            logger.info('Historical signal response:', response);
+
+            if (response && response.historical_signal && response.historical_signal.fingerprint_data) {
+                logger.info('Historical signal data found, comparing signals...');
+                
+                // Validate that both fingerprints have data before comparing
+                if (!currentFingerprint || Object.keys(currentFingerprint).length === 0) {
+                    logger.info('Current fingerprint is empty, skipping comparison');
+                    return {
+                        is_similar: true,
+                        similarity_score: 1.0,
+                        risk_level: 'low',
+                        differences: [],
+                        warnings: ['Current fingerprint data is empty']
+                    };
+                }
+                
+                if (!response.historical_signal.fingerprint_data || Object.keys(response.historical_signal.fingerprint_data).length === 0) {
+                    logger.info('Historical fingerprint is empty, skipping comparison');
+                    return {
+                        is_similar: true,
+                        similarity_score: 1.0,
+                        risk_level: 'low',
+                        differences: [],
+                        warnings: ['Historical fingerprint data is empty']
+                    };
+                }
+                
+                // Compare signals using the signal service
+                const comparison = await DpopFun.dpopFunFetch('/session/compare-signals', {
+                    method: 'POST',
+                    body: {
+                        current_fingerprint: currentFingerprint,
+                        historical_fingerprint: response.historical_signal.fingerprint_data
+                    }
+                });
+
+                logger.info('Signal comparison result:', comparison);
+                logger.info('Comparison keys:', comparison ? Object.keys(comparison) : 'null');
+                logger.info('Comparison is_similar field:', comparison ? comparison.is_similar : 'null');
+                return comparison;
+            } else {
+                logger.info('No historical signal data found for this BIK');
+                return {
+                    is_similar: true,
+                    similarity_score: 1.0,
+                    risk_level: 'low',
+                    differences: [],
+                    warnings: ['No historical data available']
+                };
+            }
+        } catch (error) {
+            logger.warn('Failed to check BIK signal matching:', error);
+            return null;
+        }
+    }
+
+    async getCurrentFingerprint() {
+        // Get current fingerprint data from the session
+        try {
+            const sessionData = await DpopFun.dpopFunFetch('/session/status');
+            return sessionData.fingerprint || null;
+        } catch (error) {
+            logger.warn('Failed to get current fingerprint:', error);
+            return null;
+        }
+    }
+
     async updateAuthenticationStatus(method) {
+        // Only set authentication status if there's a username
+        if (!this.sessionState.hasUsername) {
+            logger.warn(`Cannot set authentication status without username. Method: ${method}`);
+            return;
+        }
+
         this.sessionState.isAuthenticated = true;
         this.sessionState.authenticationMethod = method;
 
@@ -258,7 +371,7 @@ class JourneysController {
         if (detailEl) detailEl.textContent = detail;
     }
 
-    updateSessionStatusWithDetails(sessionData) {
+    async updateSessionStatusWithDetails(sessionData) {
         const { details, hasUsername, username } = sessionData;
         
         if (!sessionData.hasSession) {
@@ -323,6 +436,62 @@ class JourneysController {
             detail += '❌ DPoP: Not found\n';
         }
 
+        // BIK Signal Matching status
+        if (details.serverBIK && details.localBIK && details.bikMatch) {
+            // Check if we have signal data for this BIK
+            logger.info('Session data for signal matching:', sessionData);
+            logger.info('BIK JKT from session data:', sessionData.bik_jkt);
+            logger.info('Session data keys:', sessionData ? Object.keys(sessionData) : 'null');
+            logger.info('Session data sessionStatus:', sessionData.sessionStatus);
+            
+            // Try to get BIK JKT from sessionData or sessionStatus
+            const bikJkt = sessionData.bik_jkt || (sessionData.sessionStatus && sessionData.sessionStatus.bik_jkt);
+            logger.info('BIK JKT resolved:', bikJkt);
+            
+            if (!bikJkt) {
+                logger.warn('No BIK JKT in session data, cannot check signal matching');
+                detail += 'ℹ️ BIK Signals: No BIK JKT in session\n';
+            } else {
+                try {
+                    const signalData = await this.checkBIKSignalMatching(bikJkt);
+                    if (signalData) {
+                        logger.info('Signal comparison result:', signalData);
+                        logger.info('is_similar value:', signalData.is_similar, 'type:', typeof signalData.is_similar);
+                        logger.info('is_similar strict comparison:', signalData.is_similar === true);
+                        logger.info('is_similar truthy check:', !!signalData.is_similar);
+                        if (signalData.is_similar === true || signalData.is_similar === "true") {
+                            detail += `✅ BIK Signals: Matched (${(signalData.similarity_score * 100).toFixed(1)}% similarity)\n`;
+                        } else {
+                            detail += `⚠️ BIK Signals: Mismatch (${(signalData.similarity_score * 100).toFixed(1)}% similarity)\n`;
+                            if (signalData.differences && signalData.differences.length > 0) {
+                                detail += `   Changes: ${signalData.differences.slice(0, 2).join(', ')}${signalData.differences.length > 2 ? '...' : ''}\n`;
+                            }
+                            if (signalData.warnings && signalData.warnings.length > 0) {
+                                detail += `   Warnings: ${signalData.warnings.slice(0, 2).join(', ')}${signalData.warnings.length > 2 ? '...' : ''}\n`;
+                            }
+                        }
+                    } else {
+                        detail += 'ℹ️ BIK Signals: No historical data\n';
+                    }
+                } catch (error) {
+                    logger.warn('Failed to check BIK signal matching:', error);
+                    detail += 'ℹ️ BIK Signals: Check failed\n';
+                }
+            }
+        } else {
+            detail += 'ℹ️ BIK Signals: No BIK available\n';
+        }
+
+        // BIK Authentication status
+        if (sessionData.sessionStatus && sessionData.sessionStatus.bik_authenticated) {
+            const authMethod = sessionData.sessionStatus.bik_auth_method || 'unknown';
+            detail += `✅ BIK Authentication: Previously authenticated via ${authMethod}\n`;
+        } else if (sessionData.sessionStatus && sessionData.sessionStatus.bik_registered) {
+            detail += '⚠️ BIK Authentication: Registered but never authenticated\n';
+        } else {
+            detail += 'ℹ️ BIK Authentication: No BIK registered\n';
+        }
+
         // Username status
         if (hasUsername) {
             const usernameStr = typeof username === 'string' ? username : (username?.username || username?.value || JSON.stringify(username));
@@ -331,15 +500,19 @@ class JourneysController {
             detail += '❌ Username: Not set\n';
         }
 
-        // Authentication status (displayed last)
-        if (this.sessionState.isAuthenticated && this.sessionState.authenticationMethod) {
-            detail += `✅ Authenticated with ${this.sessionState.authenticationMethod}\n`;
-        } else if (sessionData.user_authenticated && sessionData.username) {
-            // Server-side authentication status
-            const usernameStr = typeof sessionData.username === 'string' ? sessionData.username : (sessionData.username?.username || sessionData.username?.value || JSON.stringify(sessionData.username));
-            detail += `✅ Server authenticated: ${usernameStr}\n`;
+        // Authentication status (displayed last) - only show if username exists
+        if (hasUsername) {
+            if (this.sessionState.isAuthenticated && this.sessionState.authenticationMethod) {
+                detail += `✅ Authenticated with ${this.sessionState.authenticationMethod}\n`;
+            } else if (sessionData.user_authenticated && sessionData.username) {
+                // Server-side authentication status
+                const usernameStr = typeof sessionData.username === 'string' ? sessionData.username : (sessionData.username?.username || sessionData.username?.value || JSON.stringify(sessionData.username));
+                detail += `✅ Server authenticated: ${usernameStr}\n`;
+            } else {
+                detail += '❌ Authentication: Not authenticated\n';
+            }
         } else {
-            detail += '❌ Authentication: Not authenticated\n';
+            detail += '❌ Authentication: No username set\n';
         }
 
         // Overall readiness
@@ -491,6 +664,12 @@ class JourneysController {
         try {
             logger.info(`Starting ${journeyType} journey...`);
             
+            // For new user registration, logout any existing user to ensure clean session
+            if (journeyType === 'newUser' && this.sessionState.hasUsername) {
+                logger.info('Logging out existing user before starting new user registration');
+                await this.logout();
+            }
+            
             // Hide journey selection
             document.getElementById('journeySelection').style.display = 'none';
             
@@ -508,6 +687,9 @@ class JourneysController {
             if (journeyType !== 'newUser') {
                 document.getElementById('logoutBtn').style.display = 'block';
             }
+            
+            // Clear journey actions container
+            document.getElementById('journeyActions').innerHTML = '';
             
             // Render steps
             this.renderSteps();
@@ -663,11 +845,15 @@ class JourneysController {
                 </div>
                 <p class="step-description">You have successfully completed the ${this.currentJourney.title}.</p>
                 <div class="step-actions">
-                    <button class="btn primary" onclick="journeysController.startNewJourney()">Start New Journey</button>
-                    <button class="btn secondary" onclick="journeysController.returnToSelection()">Return to Selection</button>
+                    <button class="btn secondary" id="closeJourneyBtn">Close</button>
                 </div>
             </div>
         `;
+        
+        // Add event listener for the close button
+        document.getElementById('closeJourneyBtn').addEventListener('click', () => {
+            this.returnToSelection();
+        });
     }
     
     startNewJourney() {
@@ -754,13 +940,13 @@ class JourneysController {
             logger.info('createUsernameBtn clicked!');
             const username = document.getElementById('stepUsernameInput').value.trim();
             const errorEl = document.getElementById('stepUsernameError');
-
+            
             if (!username) {
                 errorEl.textContent = 'Username is required';
                 errorEl.style.display = 'block';
                 return;
             }
-
+            
             try {
                 const response = await fetch('/onboarding/username', {
                     method: 'POST',
@@ -768,11 +954,11 @@ class JourneysController {
                     credentials: 'include',
                     body: JSON.stringify({ username })
                 });
-
+                
                 if (response.ok) {
                     this.sessionState.hasUsername = true;
                     this.sessionState.username = username;
-            
+                    
                     contentEl.innerHTML = `
                         <div class="step-status success">
                             <p>✓ Username "${username}" created successfully!</p>
@@ -791,7 +977,7 @@ class JourneysController {
                     const errorData = await response.json();
                     throw new Error(errorData.detail || 'Failed to create username');
                 }
-
+                
             } catch (error) {
                 errorEl.textContent = error.message;
                 errorEl.style.display = 'block';
@@ -801,13 +987,21 @@ class JourneysController {
         // Use existing username
         const useExistingBtn = document.getElementById('useExistingUsernameBtn');
         logger.info('useExistingUsernameBtn element found:', useExistingBtn);
+        logger.info('useExistingUsernameBtn element details:', useExistingBtn ? {
+            id: useExistingBtn.id,
+            className: useExistingBtn.className,
+            textContent: useExistingBtn.textContent,
+            style: useExistingBtn.style.display
+        } : 'null');
         
         if (!useExistingBtn) {
             logger.error('useExistingUsernameBtn not found!');
             return;
         }
         
+        logger.info('Attaching event listener to useExistingUsernameBtn');
         useExistingBtn.addEventListener('click', async () => {
+            logger.info('=== USE EXISTING USERNAME BUTTON CLICKED ===');
             logger.info('useExistingUsernameBtn clicked!');
             const username = document.getElementById('stepUsernameInput').value.trim();
             const errorEl = document.getElementById('stepUsernameError');
@@ -821,7 +1015,7 @@ class JourneysController {
                 return;
             }
             
-            logger.info('Making request to /onboarding/signin');
+            logger.info('Making request to /onboarding/signin with username:', username);
             try {
                 const response = await fetch('/onboarding/signin', {
                     method: 'POST',
@@ -847,7 +1041,7 @@ class JourneysController {
                     logger.info(`Completing username step, current step: ${this.currentStep}`);
 
                     // Update session status to show updated states
-                    await this.checkSessionStatus();
+                    this.updateSessionStatus('success', 'Username Set', `Username "${username}" has been set successfully`);
 
                     logger.info('About to call completeStep()');
                     await this.completeStep();
@@ -1074,11 +1268,11 @@ class JourneysController {
         contentEl.innerHTML = '<div id="mobileLinkingContainer"></div>';
         
         // Use LinkingService's built-in UI rendering with camera functionality
-        const { LinkingService } = await import('./services/LinkingService.js');
-        const { DpopFunService } = await import('./services/DpopFunService.js');
-        
+            const { LinkingService } = await import('./services/LinkingService.js');
+            const { DpopFunService } = await import('./services/DpopFunService.js');
+            
         // Create DpopFunService instance
-        const dpopFunService = new DpopFunService();
+            const dpopFunService = new DpopFunService();
         this.linkingService = new LinkingService(dpopFunService);
         
         // Render the mobile linking step using LinkingService's built-in UI
@@ -1251,9 +1445,9 @@ class JourneysController {
                 } catch (error) {
                     errorEl.textContent = error.message;
                     errorEl.style.display = 'block';
-                }
-            });
-        }
+            }
+        });
+    }
     }
     
     async performPasskeyAuthentication() {
@@ -1279,14 +1473,29 @@ class JourneysController {
     }
     
     async enterUsernameAndSelectAuth() {
+        logger.info('=== ENTER USERNAME AND SELECT AUTH METHOD CALLED ===');
+        
+        // Force session status refresh to ensure client/server state is synchronized
+        await this.checkSessionStatus();
+        logger.info('Session status refreshed before setting up auth form');
+        
         const stepEl = document.getElementById('step-Authentication');
         const contentEl = stepEl.querySelector('.step-content');
+
+        // Get last username from IndexedDB
+        const lastUsername = await DpopFun.get('last_username') || '';
+        logger.info('Retrieved last username from IndexedDB:', lastUsername, 'type:', typeof lastUsername);
+        
+        // Ensure we have a string value for the input
+        const usernameValue = typeof lastUsername === 'string' ? lastUsername : (lastUsername?.username || lastUsername?.value || String(lastUsername));
+        logger.info('Processed username value:', usernameValue);
+        logger.info('About to set up HTML content');
         
         contentEl.innerHTML = `
             <div class="username-auth-form">
                 <div class="form-group">
                     <label for="usernameInputAuth">Username</label>
-                    <input type="text" id="usernameInputAuth" placeholder="Enter your username" maxlength="50">
+                    <input type="text" id="usernameInputAuth" placeholder="Enter your username" maxlength="50" value="${usernameValue}">
                 </div>
                 <div class="auth-methods">
                     <h4>Choose Authentication Method:</h4>
@@ -1312,6 +1521,80 @@ class JourneysController {
         document.getElementById('authPasskeyBtn').addEventListener('click', () => this.selectAuthMethod('passkey'));
         document.getElementById('authFaceBtn').addEventListener('click', () => this.selectAuthMethod('face'));
         document.getElementById('authMobileBtn').addEventListener('click', () => this.selectAuthMethod('mobile'));
+        
+        // Add "Use Existing Username" button
+        const authErrorEl = document.getElementById('authError');
+        if (authErrorEl && !document.getElementById('useExistingUsernameBtn')) {
+            const useExistingBtn = document.createElement('button');
+            useExistingBtn.id = 'useExistingUsernameBtn';
+            useExistingBtn.className = 'btn secondary';
+            useExistingBtn.textContent = 'Use Existing Username';
+            useExistingBtn.style.marginTop = '10px';
+            useExistingBtn.style.display = 'block';
+            useExistingBtn.style.width = '100%';
+            
+            authErrorEl.parentNode.insertBefore(useExistingBtn, authErrorEl.nextSibling);
+        }
+        
+        // Set up "Use Existing Username" button handler
+        const useExistingBtn = document.getElementById('useExistingUsernameBtn');
+        if (useExistingBtn) {
+            useExistingBtn.addEventListener('click', async () => {
+                logger.info('=== USE EXISTING USERNAME BUTTON CLICKED ===');
+                const username = document.getElementById('usernameInputAuth').value.trim();
+                const errorEl = document.getElementById('authError');
+                
+                if (!username) {
+                    errorEl.textContent = 'Username is required';
+                    errorEl.style.display = 'block';
+            return;
+        }
+        
+                // First logout any existing user
+                await this.logout();
+                logger.info('Existing user logged out successfully');
+                
+                // Refresh the session status
+                logger.info('Refreshing session status');
+                await this.checkSessionStatus();
+                logger.info('Session status refreshed successfully');
+                
+                try {
+                    const response = await fetch('/onboarding/signin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                        body: JSON.stringify({ username })
+                    });
+                    
+                    if (response.ok) {
+                        this.sessionState.hasUsername = true;
+                        this.sessionState.username = username;
+                        
+                        const stepEl = document.getElementById('step-Authentication');
+                        const contentEl = stepEl.querySelector('.step-content');
+                        contentEl.innerHTML = `
+                            <div class="step-status success">
+                                <p>✓ Username "${username}" verified!</p>
+                            </div>
+                        `;
+                        
+                        // Update session status to show updated states
+                        this.updateSessionStatus('success', 'Username Set', `Username "${username}" has been set successfully`);
+                        
+            await this.completeStep();
+                        
+        } else {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Username not found');
+                    }
+                    
+                } catch (error) {
+                    errorEl.textContent = error.message;
+                    errorEl.style.display = 'block';
+                }
+            });
+        }
     }
     
     async selectAuthMethod(method) {
@@ -1334,13 +1617,14 @@ class JourneysController {
             });
             
             if (response.ok) {
-                // Store the username and selected auth method
-                this.sessionState.hasUsername = true;
-                this.sessionState.username = username;
+                // Store the username temporarily for authentication (not in session yet)
+                this.tempUsername = username;
                 this.selectedAuthMethod = method;
                 
-                // Update session status
-                await this.checkSessionStatus();
+                // Store the username in IndexedDB for future use (ensure it's a string)
+                const usernameStr = typeof username === 'string' ? username : (username?.username || username?.value || String(username));
+                logger.info('Storing username in IndexedDB:', usernameStr, 'type:', typeof usernameStr);
+                await DpopFun.set('last_username', usernameStr);
                 
                 // Call the authentication method directly
                 switch (method) {
@@ -1467,6 +1751,10 @@ class JourneysController {
         try {
             await Passkeys.authenticatePasskey();
             
+            // Set username in session only after successful authentication
+            this.sessionState.hasUsername = true;
+            this.sessionState.username = typeof this.tempUsername === 'string' ? this.tempUsername : (this.tempUsername?.username || this.tempUsername?.value || String(this.tempUsername));
+            
             // Update authentication status
             this.updateAuthenticationStatus('desktop passkey');
             
@@ -1477,6 +1765,10 @@ class JourneysController {
             `;
             
             logger.info('Passkey authentication successful');
+            
+            // Refresh session status to get updated BIK authentication status
+            await this.checkSessionStatus();
+            
             await this.completeJourney();
             
         } catch (error) {
@@ -1575,19 +1867,47 @@ class JourneysController {
             logger.info('Face verification started');
             
             // Listen for completion by checking the status element periodically
-            const checkCompletion = () => {
+            const checkCompletion = async () => {
                 const statusEl = document.getElementById('status');
                 if (statusEl) {
                     const statusText = statusEl.textContent || statusEl.innerText;
                     if (statusText.includes('Face verified ✓') || statusText.includes('Face registered ✓')) {
                         logger.info('Face authentication successful');
                         faceCapture.stopCapture(); // Stop camera on success
+                        
+                        // Set username in session only after successful authentication
+                        this.sessionState.hasUsername = true;
+                        this.sessionState.username = typeof this.tempUsername === 'string' ? this.tempUsername : (this.tempUsername?.username || this.tempUsername?.value || String(this.tempUsername));
+                        
                         this.updateAuthenticationStatus('face verify');
-                        this.completeJourney();
+                        
+                        // Refresh session status to get updated BIK authentication status
+                        await this.checkSessionStatus();
+                        
+                        // Mark the step as completed with green border
+                        const stepEl = document.getElementById('step-Authentication');
+                        if (stepEl) {
+                            stepEl.classList.remove('active');
+                            stepEl.classList.add('completed');
+                        }
+                        
+                        // Show success message with continue button that goes to home page
+                        document.getElementById('faceStartPhase').innerHTML = `
+                            <div class="step-status success">
+                                <p>Face verification successful! ✓</p>
+                                <div class="step-actions">
+                                    <button class="btn primary" id="continueFaceBtn">Continue to Home</button>
+                                </div>
+                            </div>
+                        `;
+                        
+                        // Add event listener for continue button that goes to home page
+                        document.getElementById('continueFaceBtn').addEventListener('click', () => {
+                            // Navigate back to home page
+                            window.location.href = '/public/journeys.html';
+                        });
                         return;
-                    } else if (statusText.includes('Security check failed') || 
-                               statusText.includes('verification failed') ||
-                               statusText.includes('Failed to verify')) {
+                    } else if (statusText.toUpperCase().includes('FAILED')) {
                         logger.info('Face authentication failed');
                         faceCapture.stopCapture(); // Stop camera on failure
                         // Show error message
@@ -1658,20 +1978,86 @@ class JourneysController {
         
         contentEl.innerHTML = `
             <div class="mobile-auth-container">
-                <p>Mobile passkey authentication functionality would be implemented here...</p>
+                <h3>Mobile Authentication</h3>
+                <p>Scan the QR code with your mobile device to complete authentication.</p>
+                <div id="mobileLinkingContainer">
+                    <div id="qrCodeContainer" class="qr-container">
+                        <div class="qr-placeholder">
+                            <p>Generating QR code...</p>
+                        </div>
+                    </div>
+                    <div id="mobileStatus" class="mobile-status">
+                        <p>Waiting for mobile device...</p>
+                    </div>
+                </div>
                 <div class="step-actions">
-                    <button class="btn primary" id="completeMobileAuthBtn">Complete Authentication</button>
+                    <button class="btn secondary" id="cancelMobileAuthBtn">Cancel</button>
                 </div>
             </div>
         `;
         
-        // Add event listener for completion
-        document.getElementById('completeMobileAuthBtn').addEventListener('click', async () => {
-            this.updateAuthenticationStatus('mobile passkey');
-            await this.completeJourney();
+        // Start the mobile linking process
+        try {
+            await this.startMobileLinking();
+        } catch (error) {
+            logger.error('Failed to start mobile linking:', error);
+            document.getElementById('mobileStatus').innerHTML = `
+                <p class="error">Failed to start mobile linking: ${error.message}</p>
+            `;
+        }
+        
+        // Add cancel button handler
+        document.getElementById('cancelMobileAuthBtn').addEventListener('click', () => {
+            this.cancelJourney();
         });
         
         logger.info('Mobile passkey authentication initiated');
+    }
+    
+    async startMobileLinking() {
+        try {
+            // Import LinkingService
+            const { LinkingService } = await import('./services/LinkingService.js');
+            const { DpopFunService } = await import('./services/DpopFunService.js');
+            
+            // Create DpopFunService instance
+            const dpopFunService = new DpopFunService();
+            this.linkingService = new LinkingService(dpopFunService);
+            
+            // Set flow type to login for existing user authentication
+            this.linkingService.flowType = 'login';
+            
+            // Render the mobile linking step using LinkingService's built-in UI
+            this.linkingService.renderMobileLinkingStep(
+                'mobileLinkingContainer',
+                false, // not optional for authentication
+                () => this.onMobileLinkingComplete(), // onStepComplete
+                () => this.cancelJourney() // onStepSkip
+            );
+            
+            logger.info('Mobile linking process started for login flow');
+        } catch (error) {
+            logger.error('Failed to start mobile linking:', error);
+            throw error;
+        }
+    }
+    
+    async onMobileLinkingComplete() {
+        try {
+            // Set username in session only after successful authentication
+            this.sessionState.hasUsername = true;
+            this.sessionState.username = typeof this.tempUsername === 'string' ? this.tempUsername : (this.tempUsername?.username || this.tempUsername?.value || String(this.tempUsername));
+            
+            this.updateAuthenticationStatus('mobile passkey');
+            await this.completeJourney();
+            
+            logger.info('Mobile linking completed successfully');
+        } catch (error) {
+            logger.error('Failed to complete mobile linking:', error);
+            document.getElementById('mobileStatus').innerHTML = `
+                <p class="error">Authentication failed: ${error.message}</p>
+            `;
+        }
     }
     
     async skipCurrentStep() {
@@ -1686,6 +2072,18 @@ class JourneysController {
     
     async logout() {
         try {
+            // Clear server-side session first
+            try {
+                await fetch('/logout', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                logger.info('Server logout successful');
+            } catch (error) {
+                logger.warn('Server logout failed:', error);
+                // Continue with client-side cleanup
+            }
+            
             // Clear client-side data
             await DpopFun.clientFlush();
             

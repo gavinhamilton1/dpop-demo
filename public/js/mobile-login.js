@@ -17,17 +17,17 @@ class MobileLoginController {
     try {
       logger.info('Initializing Mobile Login Controller...');
       
-      // Get username from URL parameters
-      this.username = this.getUsernameFromUrl();
-      if (!this.username) {
-        this.showError('Username is required for mobile login');
-        return;
-      }
-      
       // Get link ID from URL parameters
       this.linkId = this.getLinkIdFromUrl();
       if (!this.linkId) {
         this.showError('Link ID is required for mobile login');
+        return;
+      }
+      
+      // Get username from desktop session via linking process
+      this.username = await this.getUsernameFromDesktopSession();
+      if (!this.username) {
+        this.showError('Username not found in desktop session');
         return;
       }
       
@@ -43,7 +43,33 @@ class MobileLoginController {
   }
 
   /**
-   * Get username from URL parameters
+   * Get username from desktop session via linking process
+   */
+  async getUsernameFromDesktopSession() {
+    try {
+      // Use the mobile linking process to get the desktop username
+      const response = await fetch('/link/mobile/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lid: this.linkId })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        logger.info('Desktop session data received:', data);
+        return data.desktop_username;
+      } else {
+        logger.warn('Failed to get desktop session data:', response.status);
+        return null;
+      }
+    } catch (error) {
+      logger.error('Error getting desktop session data:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get username from URL parameters (fallback)
    */
   getUsernameFromUrl() {
     const urlParams = new URLSearchParams(window.location.search);
@@ -55,7 +81,7 @@ class MobileLoginController {
    */
   getLinkIdFromUrl() {
     const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get('linkId');
+    return urlParams.get('lid') || urlParams.get('linkId');
   }
 
   /**

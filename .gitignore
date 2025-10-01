@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 *.pyo
 stronghold.db*
+sms_gateway.py

@@ -193,10 +193,17 @@ export class LinkingService extends ApiService {
       
       // Start linking using DPoP-authenticated request
       const linkData = await DpopFun.dpopFunFetch('/link/start', {
-        method: 'POST'
+        method: 'POST',
+        body: {
+          flow_type: this.flowType || 'registration'
+        }
       });
       
       this.currentLinkId = linkData.linkId;
+      
+      // Store the flow type from server response
+      this.flowType = linkData.flow_type || 'registration';
+      logger.info('Flow type received from server:', this.flowType);
       
       // Render the linking UI
       this.renderLinkingUI(linkData);
@@ -442,10 +449,32 @@ export class LinkingService extends ApiService {
         statusEl.textContent = 'Mobile device linked!';
         statusEl.className = 'qr-status success';
         
-        // Check if we need verification phase based on BIK status
-        if (!this.hadBIKBeforeLinking) {
-          // New BIK was created - show verification phase
-          logger.info('New BIK was created, showing verification phase');
+        // Check if we need verification phase based on flow type and BIK status
+        if (this.flowType === 'login') {
+          // Login flow - show success message (no verification needed)
+          logger.info('Login flow - showing success message');
+          statusEl.textContent = 'Mobile device linked successfully! Authentication completed.';
+          statusEl.className = 'qr-status success';
+          
+          // Hide QR phase and show success message
+          const qrPhase = document.getElementById('qrPhase');
+          if (qrPhase) {
+            qrPhase.innerHTML = `
+              <div class="step-status success">
+                <h3>✓ Mobile Device Linked Successfully</h3>
+                <p>Your mobile device has been linked and authenticated successfully.</p>
+                <p>Authentication completed - no additional verification required.</p>
+              </div>
+            `;
+          }
+          
+          // Complete the step after a short delay
+          setTimeout(() => {
+            this.completeStep();
+          }, 1000);
+        } else if (!this.hadBIKBeforeLinking) {
+          // Registration flow with new BIK - show verification phase
+          logger.info('Registration flow with new BIK, showing verification phase');
           statusEl.textContent = 'Mobile device linked! Enter verification code below.';
           if (!this.verificationPhaseShown) {
             logger.info('Showing verification phase for linked status');
@@ -455,8 +484,8 @@ export class LinkingService extends ApiService {
             logger.info('Verification phase already shown, skipping');
           }
         } else if (this.bikWasAuthenticated) {
-          // Existing authenticated BIK was used - show success message
-          logger.info('Existing authenticated BIK was used, showing success message');
+          // Registration flow with existing authenticated BIK - show success message
+          logger.info('Registration flow with existing authenticated BIK, showing success message');
           statusEl.textContent = 'Mobile device linked successfully! Using existing authenticated identity.';
           statusEl.className = 'qr-status success';
           
@@ -690,12 +719,10 @@ export class LinkingService extends ApiService {
         logger.info('BC code validation successful, response:', response);
         this.updateCodeStatus('Code verified successfully!', 'success');
         
-        // Verification phase should already be shown when status became 'linked'
-        
-        // The scribble receiver will be shown by updateMobileLinkingStepStatus when the step completes
-        
-        // Don't complete step immediately - wait for SSE confirmation
-        // The step will be completed when SSE status is 'linked' or 'completed'
+        // Complete the step after successful verification
+        setTimeout(() => {
+          this.completeStep();
+        }, 1000);
       } else {
         this.updateCodeStatus('Invalid code. Please try again.', 'error');
         }

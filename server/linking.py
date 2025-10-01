@@ -172,6 +172,13 @@ def get_router(
         if not sid or not s:
             raise HTTPException(status_code=401, detail="no session")
 
+        # Get flow type from request body (default to registration for backward compatibility)
+        try:
+            body = await req.json()
+            flow_type = body.get("flow_type", "registration")
+        except:
+            flow_type = "registration"
+
         rid = secrets.token_urlsafe(12)
         iat = now_fn()
         exp = iat + _LINK_TTL
@@ -184,10 +191,14 @@ def get_router(
         # This ensures the mobile device accesses the same domain as the desktop
         qr_origin = origin
         
+        # Generate different QR URLs based on flow type
+        if flow_type == "login":
+            qr_url = f"{qr_origin}/public/mobile-login.html?lid={rid}"
+        else:
+            qr_url = f"{qr_origin}/public/link.html?lid={rid}"
+        
         # Log the QR generation for debugging
-        log.info("QR generation - desktop_origin=%s qr_origin=%s", origin, qr_origin)
-            
-        qr_url = f"{qr_origin}/public/link.html?lid={rid}"
+        log.info("QR generation - desktop_origin=%s qr_origin=%s flow_type=%s qr_url=%s", origin, qr_origin, flow_type, qr_url)
 
         # Get desktop session device type for logging
         desktop_device_type = s.get("device_type", "unknown")
@@ -207,7 +218,7 @@ def get_router(
         await _persist_link_to_db(rid, link_data)
         log.info("Link created - rid=%s desktop_sid=%s desktop_device_type=%s status=pending exp=%s", 
                 rid, sid, desktop_device_type, exp)
-        return JSONResponse({"linkId": rid, "exp": exp, "qr_url": qr_url}, headers=_nonce_headers(ctx))
+        return JSONResponse({"linkId": rid, "exp": exp, "qr_url": qr_url, "flow_type": flow_type}, headers=_nonce_headers(ctx))
 
     @router.get("/link/status/{link_id}")
     async def link_status(link_id: str, req: Request):
@@ -486,7 +497,29 @@ def get_router(
         _notify_watchers(lid, {"type":"status", **_public_view(_LINKS[lid])})
         _notify_websockets(lid, {"type":"status", **_public_view(_LINKS[lid])})
         log.info("Mobile link start - notified watchers and websockets for lid=%s", lid)
-        return {"ok": True, "link_id": lid}
+        
+        # Get desktop session data to return username
+        desktop_sid = rec.get("desktop_sid")
+        desktop_username = None
+        if desktop_sid:
+            try:
+                desktop_session = await store.get_session(desktop_sid)
+                if desktop_session:
+                    # Get username from desktop session
+                    user = await DB.get_user_by_session(desktop_sid)
+                    if user:
+                        desktop_username = user.get("username")
+                        log.info("Desktop username found for mobile link - lid=%s desktop_sid=%s username=%s", 
+                                lid, desktop_sid, desktop_username)
+                    else:
+                        log.warning("No user found for desktop session - lid=%s desktop_sid=%s", lid, desktop_sid)
+                else:
+                    log.warning("Desktop session not found - lid=%s desktop_sid=%s", lid, desktop_sid)
+            except Exception as e:
+                log.error("Failed to get desktop session data - lid=%s desktop_sid=%s error=%s", 
+                         lid, desktop_sid, str(e))
+        
+        return {"ok": True, "link_id": lid, "desktop_username": desktop_username}
 
     @router.post("/link/mobile/complete")
     async def link_mobile_complete(body: Dict[str, Any], req: Request, ctx=Depends(require_dpop)):

@@ -22,6 +22,7 @@ from server.geolocation import GeolocationService
 from server.passkeys import get_router as get_passkeys_router
 from server.linking import get_router as get_linking_router
 from server.utils import ec_p256_thumbprint, now, b64u
+from server.signal_service import signal_service
 from typing import Tuple, Optional, Dict
 from server.face_service import face_service
 
@@ -562,7 +563,56 @@ async def session_init(req: Request):
     csrf = secrets.token_urlsafe(18)
     reg_nonce = _new_nonce()
     req.session.update({"sid": sid})
-    await DB.set_session(sid, {"state":"pending-bind","csrf":csrf,"reg_nonce":reg_nonce,"browser_uuid":body.get("browser_uuid")})
+    
+    # Check for existing BIK and compare signals if present
+    browser_uuid = body.get("browser_uuid")
+    if browser_uuid:
+        # Look for existing sessions with same browser UUID to get BIK
+        existing_sessions = await DB.fetchall(
+            "SELECT sid, data FROM sessions WHERE json_extract(data, '$.browser_uuid') = ? AND json_extract(data, '$.bik_jkt') IS NOT NULL",
+            (browser_uuid,)
+        )
+        
+        if existing_sessions:
+            # Get the most recent session with BIK
+            latest_session = None
+            latest_bik = None
+            for session_row in existing_sessions:
+                session_data = json.loads(session_row["data"])
+                bik_jkt = session_data.get("bik_jkt")
+                if bik_jkt:
+                    latest_session = session_data
+                    latest_bik = bik_jkt
+                    break
+            
+            if latest_bik:
+                # Get historical signal data for this BIK
+                historical_signal = await DB.get_latest_signal_data_by_bik(latest_bik)
+                
+                if historical_signal:
+                    # Get current fingerprint data from request
+                    current_fingerprint = body.get("fingerprint", {})
+                    
+                    if current_fingerprint:
+                        # Compare signals
+                        comparison = signal_service.compare_signals(
+                            current_fingerprint, 
+                            historical_signal["fingerprint_data"]
+                        )
+                        
+                        # Check if session should be allowed
+                        allowed, reason = signal_service.should_allow_session(comparison)
+                        
+                        if not allowed:
+                            log.warning("Session blocked due to signal mismatch: %s", reason)
+                            raise HTTPException(
+                                status_code=403, 
+                                detail=f"Session blocked: {reason}"
+                            )
+                        else:
+                            log.info("Session allowed with signal comparison: %s", reason)
+    
+    await DB.set_session(sid, {"state":"pending-bind","csrf":csrf,"reg_nonce":reg_nonce,"browser_uuid":browser_uuid})
     log.info("session_init sid=%s rid=%s", sid, req.state.request_id)
     log.info("session_init - session cookie set: %s", req.cookies.get("dpop-fun_session"))
     
@@ -707,6 +757,40 @@ async def browser_register(req: Request):
             raise HTTPException(status_code=400, detail="bad jwk")
         bik_jkt = ec_p256_thumbprint(jwk)
         await DB.update_session(sid, {"bik_jkt": bik_jkt, "state": "bound-bik", "reg_nonce": None})
+        
+        # Store signal data for this BIK if fingerprint data exists
+        updated_session = await DB.get_session(sid)
+        if updated_session and updated_session.get("fingerprint"):
+            fingerprint_data = updated_session.get("fingerprint", {})
+            device_type = updated_session.get("device_type", "unknown")
+            
+            # Get client IP for geolocation
+            client_ip = req.client.host
+            if req.headers.get("x-forwarded-for"):
+                client_ip = req.headers.get("x-forwarded-for").split(",")[0].strip()
+            elif req.headers.get("x-real-ip"):
+                client_ip = req.headers.get("x-real-ip")
+            
+            # Get geolocation data
+            geolocation_data = fingerprint_data.get("geolocation")
+            
+            # Store signal data linked to BIK
+            signal_stored = await DB.store_signal_data(
+                bik_jkt=bik_jkt,
+                session_id=sid,
+                device_type=device_type,
+                fingerprint_data=fingerprint_data,
+                ip_address=client_ip,
+                geolocation_data=geolocation_data
+            )
+            
+            if signal_stored:
+                # Mark that signal data has been stored for this session
+                await DB.update_session(sid, {"signal_data_stored": True})
+                log.info("Signal data stored for new BIK %s session %s", bik_jkt[:8], sid[:8])
+            else:
+                log.warning("Failed to store signal data for new BIK %s", bik_jkt[:8])
+        
         log.info("bik_register sid=%s jkt=%s rid=%s", sid, bik_jkt[:8], req.state.request_id)
         return {"bik_jkt": bik_jkt, "state": "bound-bik"}
     except HTTPException: raise
@@ -746,8 +830,11 @@ async def dpop_bind(req: Request):
 @app.get("/session/status")
 async def session_status(req: Request):
     sid = req.session.get("sid")
+    log.info(f"Session status request - SID: {sid}")
     s = await DB.get_session(sid) if sid else None
+    log.info(f"Session status request - Session data: {s is not None}")
     if not sid or not s:
+        log.warning(f"Session status request failed - SID: {sid}, Session data exists: {s is not None}")
         return {"valid": False, "state": None, "bik_registered": False, "dpop_bound": False, "ttl_seconds": 0, "username": None, "user_authenticated": False}
     
     state = s.get("state")
@@ -776,6 +863,25 @@ async def session_status(req: Request):
         bind_expires_at = session_updated + BIND_TTL
         ttl_seconds = max(0, bind_expires_at - current_time)
     
+    # Check BIK authentication status
+    bik_authenticated = False
+    bik_auth_method = None
+    if bik_registered and s.get("bik_jkt"):
+        try:
+            bik_jkt = s.get("bik_jkt")
+            log.info(f"Checking BIK authentication status for BIK: {bik_jkt[:8] if bik_jkt else 'None'}")
+            bik_authenticated = await DB.is_bik_authenticated(bik_jkt)
+            log.info(f"BIK authentication result: {bik_authenticated}")
+            if bik_authenticated:
+                # Get the latest authentication method
+                auth_history = await DB.get_bik_authentication_history(bik_jkt)
+                log.info(f"BIK authentication history: {len(auth_history) if auth_history else 0} records")
+                if auth_history:
+                    bik_auth_method = auth_history[0].get("authentication_method")
+                    log.info(f"BIK authentication method: {bik_auth_method}")
+        except Exception as e:
+            log.error(f"Failed to check BIK authentication status: {e}", exc_info=True)
+    
     return {
         "valid": True, 
         "state": state, 
@@ -783,8 +889,15 @@ async def session_status(req: Request):
         "dpop_bound": dpop_bound,
         "ttl_seconds": ttl_seconds,
         "username": username,
-        "user_authenticated": user_authenticated
+        "user_authenticated": user_authenticated,
+        "bik_jkt": s.get("bik_jkt"),  # Include BIK JKT for signal data storage
+        "fingerprint": s.get("fingerprint"),  # Include fingerprint data for signal comparison
+        "bik_authenticated": bik_authenticated,  # Whether BIK has ever been authenticated
+        "bik_auth_method": bik_auth_method  # Method used for BIK authentication
     }
+
+# ---------------- Post-Authentication Tracking ----------------
+# Moved to server/auth_tracking.py to avoid circular imports
 
 # ---------------- DPoP gate for protected APIs (existing) ----------------
 def _nonce_fail_response(sid: str, detail: str) -> None:
@@ -1044,12 +1157,144 @@ async def collect_fingerprint(req: Request):
         log.info("Fingerprint data successfully stored sid=%s device_type=%s fingerprint_keys=%s", 
                 sid, stored_device_type, list(stored_fingerprint.keys()))
         
+        # Store signal data linked to BIK if available
+        bik_jkt = stored_session.get("bik_jkt")
+        if bik_jkt:
+            # Check if signal data has already been stored for this session
+            signal_data_stored = stored_session.get("signal_data_stored", False)
+            
+            if not signal_data_stored:
+                # Only store signal data if it hasn't been stored for this session yet
+                signal_stored = await DB.store_signal_data(
+                    bik_jkt=bik_jkt,
+                    session_id=sid,
+                    device_type=device_type,
+                    fingerprint_data=fingerprint_data,
+                    ip_address=client_ip,
+                    geolocation_data=geolocation_data
+                )
+                
+                if signal_stored:
+                    # Mark that signal data has been stored for this session
+                    await DB.update_session(sid, {"signal_data_stored": True})
+                    log.info("Signal data stored for BIK %s session %s", bik_jkt[:8], sid[:8])
+                else:
+                    log.warning("Failed to store signal data for BIK %s", bik_jkt[:8])
+            else:
+                log.info("Signal data already stored for session %s, skipping duplicate storage", sid[:8])
+        else:
+            log.info("No BIK available yet for signal storage - will be stored after BIK registration")
+        
         log.info("Fingerprint collected sid=%s device_type=%s ip=%s", 
                 sid, fingerprint_data.get("deviceType", "unknown"), client_ip)
         return JSONResponse({"ok": True, "message": "Fingerprint collected successfully"})
     except Exception as e:
         log.exception("Failed to collect fingerprint sid=%s", sid)
         raise HTTPException(500, f"Failed to collect fingerprint: {e}")
+
+@app.get("/session/signal-data")
+async def get_signal_data(req: Request):
+    """Get historical signal data for the current session's BIK"""
+    sid = req.session.get("sid")
+    if not sid:
+        raise HTTPException(401, "no session")
+    
+    try:
+        session_data = await DB.get_session(sid)
+        if not session_data:
+            raise HTTPException(404, "session not found")
+        
+        bik_jkt = session_data.get("bik_jkt")
+        if not bik_jkt:
+            return JSONResponse({"historical_signal": None})
+        
+        # Get historical signal data for this BIK
+        historical_signal = await DB.get_latest_signal_data_by_bik(bik_jkt)
+        
+        log.info("Signal data request - BIK JKT: %s, Historical signal found: %s", 
+                bik_jkt[:8] if bik_jkt else "None", 
+                "Yes" if historical_signal else "No")
+        
+        return JSONResponse({"historical_signal": historical_signal})
+        
+    except Exception as e:
+        log.exception("Failed to get signal data sid=%s", sid)
+        raise HTTPException(500, f"Failed to get signal data: {e}")
+
+@app.get("/session/bik-authentication-status")
+async def get_bik_authentication_status(req: Request):
+    """Get BIK authentication status and history"""
+    sid = req.session.get("sid")
+    if not sid:
+        raise HTTPException(401, "no session")
+    
+    try:
+        session_data = await DB.get_session(sid)
+        if not session_data:
+            raise HTTPException(404, "session not found")
+        
+        bik_jkt = session_data.get("bik_jkt")
+        if not bik_jkt:
+            return JSONResponse({
+                "bik_jkt": None,
+                "is_authenticated": False,
+                "authentication_history": []
+            })
+        
+        # Check if BIK has ever been authenticated
+        is_authenticated = await DB.is_bik_authenticated(bik_jkt)
+        
+        # Get authentication history
+        auth_history = await DB.get_bik_authentication_history(bik_jkt)
+        
+        log.info("BIK authentication status - BIK: %s, Authenticated: %s, History entries: %d", 
+                bik_jkt[:8] if bik_jkt else "None", 
+                is_authenticated, 
+                len(auth_history))
+        
+        return JSONResponse({
+            "bik_jkt": bik_jkt,
+            "is_authenticated": is_authenticated,
+            "authentication_history": auth_history
+        })
+        
+    except Exception as e:
+        log.exception("Failed to get BIK authentication status sid=%s", sid)
+        raise HTTPException(500, f"Failed to get BIK authentication status: {e}")
+
+@app.post("/session/compare-signals")
+async def compare_signals(req: Request):
+    """Compare current fingerprint with historical data"""
+    sid = req.session.get("sid")
+    if not sid:
+        raise HTTPException(401, "no session")
+    
+    try:
+        body = await req.json()
+        current_fingerprint = body.get("current_fingerprint", {})
+        historical_fingerprint = body.get("historical_fingerprint", {})
+        
+        if not current_fingerprint or not historical_fingerprint:
+            raise HTTPException(400, "Missing fingerprint data")
+        
+        # Use signal service to compare
+        comparison = signal_service.compare_signals(current_fingerprint, historical_fingerprint)
+        
+        log.info(f"Signal comparison result: is_similar={comparison.is_similar}, similarity_score={comparison.similarity_score}, risk_level={comparison.risk_level}")
+        log.info(f"Differences: {comparison.differences}")
+        log.info(f"Warnings: {comparison.warnings}")
+        
+        return JSONResponse({
+            "is_similar": comparison.is_similar,
+            "similarity_score": comparison.similarity_score,
+            "risk_level": comparison.risk_level,
+            "differences": comparison.differences,
+            "warnings": comparison.warnings
+        })
+        
+    except Exception as e:
+        log.exception("Failed to compare signals sid=%s", sid)
+        raise HTTPException(500, f"Failed to compare signals: {e}")
 
 @app.get("/debug/test-mobile-fingerprint")
 async def test_mobile_fingerprint():
@@ -1490,12 +1735,27 @@ async def mark_user_authenticated(req: Request):
         if not user:
             raise HTTPException(404, "User not found")
         
+        # Get additional authentication parameters
+        passkey_auth = body.get("passkey_auth", False)
+        passkey_principal = body.get("passkey_principal")
+        mobile_auth = body.get("mobile_auth", False)
+        
         # Mark user as authenticated in session
-        await DB.update_session(sid, {
+        update_data = {
             "username": username,
             "authenticated": True,
             "auth_timestamp": now()
-        })
+        }
+        
+        # Add passkey authentication data if provided
+        if passkey_auth:
+            update_data["passkey_auth"] = True
+        if passkey_principal:
+            update_data["passkey_principal"] = passkey_principal
+        if mobile_auth:
+            update_data["mobile_auth"] = True
+        
+        await DB.update_session(sid, update_data)
         
         log.info(f"User {username} marked as authenticated in session {sid}")
         
@@ -1924,6 +2184,12 @@ async def verify_face(req: Request):
             
             log.info(f"Face verification for user {username}: verified={verified}, similarity={best_similarity:.3f}, threshold={threshold}")
             log.info(f"Debug: best_match={best_match is not None}, best_similarity={best_similarity:.3f}, threshold={threshold}")
+            
+            # Mark user as authenticated if verification successful
+            if verified:
+                sid = req.session.get("sid")
+                from server.auth_tracking import mark_user_authenticated
+                await mark_user_authenticated(sid, username, "face verify")
             
             return JSONResponse({
                 "verified": bool(verified),

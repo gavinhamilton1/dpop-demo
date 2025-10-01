@@ -61,6 +61,13 @@ class Logger {
     }
   }
 
+  success(...args) {
+    if (this.level <= LOG_LEVELS.INFO) {
+      const caller = this._getCaller();
+      console.info(`[${caller}]`, ...args);
+    }
+  }
+
   setLevel(level) {
     this.level = level;
   }

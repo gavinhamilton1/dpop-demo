@@ -75,8 +75,10 @@ export class UnifiedMobileService {
       // Step 2: Collect mobile device fingerprint
       await this.collectMobileFingerprint();
       
-      // Step 3: For registration flow, set a username first
-      if (!this.isLoginFlow) {
+      // Step 3: Set username for both flows
+      if (this.isLoginFlow) {
+        await this.setUsernameForLogin();
+      } else {
         await this.setUsernameForRegistration();
       }
       
@@ -139,6 +141,36 @@ export class UnifiedMobileService {
   }
 
   /**
+   * Set username for login flow using provided username
+   */
+  async setUsernameForLogin() {
+    try {
+      logger.info(`Setting username for mobile login flow: ${this.username}`);
+      
+      if (!this.username) {
+        throw new Error('No username provided for login flow');
+      }
+      
+      // For login flow, we need to set the username in the session for passkey authentication
+      // We'll use the existing username for authentication without creating a new user record
+      logger.info('Using existing username for mobile login flow authentication');
+      
+      // Store the username in the mobile session for passkey authentication
+      // This doesn't create a new user record, just sets the username in the session
+      await DpopFun.dpopFunFetch('/onboarding/signin', {
+        method: 'POST',
+        body: { username: this.username }
+      });
+      
+      logger.info('Username set in mobile session for authentication');
+      
+    } catch (error) {
+      logger.error('Failed to set username for mobile login:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Set username for registration flow using desktop session username
    */
   async setUsernameForRegistration() {
@@ -156,13 +188,27 @@ export class UnifiedMobileService {
       
       logger.info(`Using username for mobile registration: ${this.desktopUsername}`);
       
-      // Create username and bind it to the mobile session
-      await DpopFun.dpopFunFetch('/onboarding/username', {
-        method: 'POST',
-        body: { username: this.desktopUsername }
-      });
-      
-      logger.info('Username bound successfully to mobile session');
+      // For registration flow, try to create a new username first
+      // If it already exists, use the existing one
+      try {
+        await DpopFun.dpopFunFetch('/onboarding/username', {
+          method: 'POST',
+          body: { username: this.desktopUsername }
+        });
+        logger.info('New username created successfully for mobile registration');
+      } catch (error) {
+        if (error.message && error.message.includes('Username already taken')) {
+          logger.info('Username already exists, using existing username for mobile registration');
+          // Use the existing username by signing in
+          await DpopFun.dpopFunFetch('/onboarding/signin', {
+            method: 'POST',
+            body: { username: this.desktopUsername }
+          });
+          logger.info('Existing username linked to mobile session');
+        } else {
+          throw error;
+        }
+      }
       
     } catch (error) {
       logger.error('Failed to bind username for mobile registration:', error);
@@ -176,7 +222,11 @@ export class UnifiedMobileService {
   async handlePasskeyAuthentication() {
     try {
       if (this.isLoginFlow) {
-        await this.authenticateWithExistingPasskey();
+        // For login flow, create a new passkey on the mobile device
+        // This allows cross-device authentication by creating a new passkey
+        // linked to the existing user account
+        logger.info('Login flow - creating new passkey for cross-device authentication...');
+        await this.createNewPasskeyForLogin();
       } else {
         // For registration flow, create new passkey with platform authenticator
         logger.info('Registration flow - creating new passkey with platform authenticator...');
@@ -192,6 +242,40 @@ export class UnifiedMobileService {
   }
 
   /**
+   * Create new passkey for login flow (cross-device authentication)
+   */
+  async createNewPasskeyForLogin() {
+    try {
+      logger.info('Creating new passkey for login flow (cross-device authentication)...');
+      
+      // Register new passkey using platform authenticator
+      // The registerPasskey function will get options from server and handle registration
+      logger.info('Calling Passkeys.registerPasskey() for login flow...');
+      const result = await Passkeys.registerPasskey();
+      logger.info('Passkeys.registerPasskey() completed successfully for login flow:', result);
+      
+      logger.info('New passkey created successfully for login flow');
+      
+      // Mark user as authenticated in session
+      await this.markUserAsAuthenticated();
+      
+      // Notify about authentication
+      if (this.onAuthenticated) {
+        this.onAuthenticated('mobile passkey');
+      }
+      
+    } catch (error) {
+      logger.error('Failed to create new passkey for login:', error);
+      logger.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Create new passkey for registration flow using platform authenticator
    */
   async createNewPasskeyForRegistration() {
@@ -200,7 +284,9 @@ export class UnifiedMobileService {
       
       // Register new passkey using platform authenticator
       // The registerPasskey function will get options from server and handle registration
-      await Passkeys.registerPasskey();
+      logger.info('Calling Passkeys.registerPasskey()...');
+      const result = await Passkeys.registerPasskey();
+      logger.info('Passkeys.registerPasskey() completed successfully:', result);
       
       logger.info('New passkey created successfully for registration flow');
       
@@ -214,6 +300,11 @@ export class UnifiedMobileService {
       
     } catch (error) {
       logger.error('Failed to create new passkey for registration:', error);
+      logger.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
       // If passkey creation fails, fall back to setting session values
       await this.setMobileAuthForRegistration();
     }
@@ -363,7 +454,11 @@ export class UnifiedMobileService {
       
       const response = await DpopFun.dpopFunFetch('/session/mark-authenticated', {
         method: 'POST',
-        body: { username: this.username }
+        body: { 
+          username: this.username,
+          passkey_auth: true,
+          passkey_principal: this.username
+        }
       });
       
       logger.info('User marked as authenticated successfully');
@@ -381,6 +476,19 @@ export class UnifiedMobileService {
   async completeMobileLinking() {
     try {
       logger.info(`Completing mobile linking for link ID: ${this.currentLinkId}`);
+      
+      // Check session status before completing
+      try {
+        const sessionStatus = await DpopFun.getSessionStatus();
+        logger.info('Session status before mobile linking completion:', {
+          hasSession: sessionStatus.valid,
+          passkey_auth: sessionStatus.passkey_auth,
+          passkey_principal: sessionStatus.passkey_principal,
+          username: sessionStatus.username
+        });
+      } catch (error) {
+        logger.warn('Could not check session status before mobile linking completion:', error);
+      }
       
       // Complete the mobile linking process
       const completeData = await DpopFun.dpopFunFetch('/link/mobile/complete', {

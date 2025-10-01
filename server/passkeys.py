@@ -574,6 +574,11 @@ def get_router(
             pass  # soft policy
         await _maybe_await(repo.update_sign_count(cred_id, info["signCount"]))
         await session_store.update_session(sid, {"passkey_auth": True, "passkey_principal": principal})
+        
+        # Mark user as authenticated using centralized method
+        from server.auth_tracking import mark_user_authenticated
+        await mark_user_authenticated(sid, principal, "desktop passkey")
+        
         return JSONResponse({"ok": True, "principal": principal}, headers=_nonce_headers(ctx))
 
     return router

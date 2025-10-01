@@ -6,6 +6,7 @@ import { logger } from '../utils/logging.js';
 import { AuthenticationError, NetworkError, StorageError, CryptoError } from '../utils/errors.js';
 import { CONFIG } from '../utils/config.js';
 import { validateUrl, validateMethod, validateKeyPair, validateNonce } from '../utils/validation.js';
+import { FingerprintService } from '../services/FingerprintService.js';
 
 export { createJwsES256, idbWipe, jwkThumbprint };
 
@@ -189,6 +190,44 @@ const SessionRestore = {
     } catch (error) {
       logger.debug('Failed to get current username:', error.message);
       return { hasUsername: false, username: null };
+    }
+  },
+
+  /**
+   * Store signal data for restored BIK to build historical baseline
+   */
+  async storeSignalDataForRestoredBIK() {
+    try {
+      logger.info('Storing signal data for restored BIK...');
+      
+      // Get current session status to get BIK JKT
+      const sessionStatus = await getSessionStatus();
+      if (!sessionStatus || !sessionStatus.bik_jkt) {
+        logger.warn('No BIK JKT available for signal data storage');
+        return;
+      }
+
+      logger.info(`BIK JKT found: ${sessionStatus.bik_jkt.substring(0, 8)}...`);
+
+      // Check if we already have signal data for this BIK
+      const response = await dpopFunFetch('/session/signal-data', { method: 'GET' });
+      if (response && response.historical_signal) {
+        logger.info('Signal data already exists for this BIK, skipping duplicate collection');
+        return; // Don't collect fingerprint again if signal data already exists
+      } else {
+        logger.info('No historical signal data found, this will be the baseline');
+      }
+
+      // Collect and send current fingerprint data only if no signal data exists
+      const fingerprint = await FingerprintService.collectFingerprint('desktop');
+      if (fingerprint && Object.keys(fingerprint).length > 0) {
+        await FingerprintService.sendFingerprintToServer(fingerprint);
+        logger.info('Signal data stored for restored BIK');
+      } else {
+        logger.warn('No fingerprint data available for restored BIK');
+      }
+    } catch (error) {
+      logger.error('Failed to store signal data for restored BIK:', error);
     }
   }
 };
@@ -805,7 +844,12 @@ export async function restoreSession() {
     
     const dpopMatch = localDPoP && serverDPoP && dpopWorking;
     
-    // Step 6: Get current username
+    // Step 6: Store signal data for restored BIK if available
+    if (bikMatch && serverBIK) {
+      await SessionRestore.storeSignalDataForRestoredBIK();
+    }
+    
+    // Step 7: Get current username
     const { hasUsername, username } = await SessionRestore.getCurrentUsername();
     
     // Step 7: Check for mismatches and handle them
@@ -820,6 +864,7 @@ export async function restoreSession() {
       hasDPoP: dpopWorking,
       hasUsername,
       username,
+      bik_jkt: sessionStatus.bik_jkt, // Include BIK JKT for signal matching
       sessionStatus,
       details: {
         serverSession: true,

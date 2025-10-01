@@ -895,33 +895,34 @@ class PADService:
             
             # Live face criteria - be more conservative
             # If rPPG failed completely (hr_bpm is None), don't penalize
-            rppg_failed = hr_bpm is None or rppg_snr_db <= -500
-            live_ok = rppg_failed or ((rppg_live_prob >= 0.6) and (40 <= (hr_bpm or 0) <= 180))
+            rppg_failed = hr_bpm is None or rppg_snr_db <= -600  # More lenient SNR threshold
+            live_ok = rppg_failed or ((rppg_live_prob >= 0.2) and (40 <= (hr_bpm or 0) <= 180))  # Reduced from 0.4 to 0.2
             
-            # Spoof indicators - be very conservative to avoid false negatives
-            screen_suspect = flicker_score >= 0.95  # Even higher threshold to avoid false positives
-            planar_suspect = planarity_score >= 0.9  # Higher threshold for stronger evidence
+            # Spoof indicators - more lenient thresholds to reduce false negatives
+            screen_suspect = flicker_score >= 0.98  # Much higher threshold to reduce false positives
+            planar_suspect = planarity_score >= 0.95  # Much higher threshold for stronger evidence
             
-            # Final decision: live if rPPG is good OR failed (conservative), AND no strong spoof indicators
-            # Flag as spoof if EITHER screen OR planar indicators are detected (proper spoof detection)
-            is_live = live_ok and not (screen_suspect or planar_suspect)
+            # Final decision: be more lenient - only flag as spoof if BOTH indicators are very strong
+            # OR if we have extremely strong evidence of spoofing
+            is_live = live_ok and not (screen_suspect and planar_suspect)  # Changed from OR to AND
             
-            # Calculate overall confidence - be more lenient
+            # Calculate overall confidence - be much more lenient
             if rppg_failed:
-                # If rPPG failed, use neutral confidence unless we have very strong spoof indicators
-                confidence = 0.6 if not (screen_suspect or planar_suspect) else 0.3
+                # If rPPG failed, be more lenient unless we have very strong spoof indicators
+                confidence = 0.9 if not (screen_suspect and planar_suspect) else 0.4  # Increased from 0.8 to 0.9
             else:
                 # If rPPG detected valid heart rate with good SNR, be more lenient
                 if hr_bpm is not None and 40 <= hr_bpm <= 180 and rppg_snr_db > 0:
                     # Valid heart rate detected - use higher confidence
-                    confidence = max(0.7, rppg_live_prob)  # Minimum 0.7 for valid HR
+                    confidence = max(0.9, rppg_live_prob)  # Increased from 0.8 to 0.9
                 else:
                     confidence = rppg_live_prob
                 
-                if screen_suspect:
-                    confidence *= 0.5  # Less aggressive reduction
-                if planar_suspect:
-                    confidence *= 0.5  # Less aggressive reduction
+                # Only reduce confidence if BOTH indicators are present
+                if screen_suspect and planar_suspect:
+                    confidence *= 0.3  # More aggressive reduction only when both indicators present
+                elif screen_suspect or planar_suspect:
+                    confidence *= 0.7  # Less aggressive reduction for single indicator
             
             attack_detected = not is_live
             
