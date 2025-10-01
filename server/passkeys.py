@@ -352,10 +352,10 @@ def get_router(
                 {"type": "public-key", "alg": -8},    # EdDSA (Ed25519)
             ],
             "authenticatorSelection": {
-                "authenticatorAttachment": "platform",  # Prefer platform authenticators (Touch ID, Face ID, etc.)
-                "residentKey": RESIDENT_MODE,
-                "requireResidentKey": RESIDENT_MODE == 'required',
-                "userVerification": UV_MODE,
+                "authenticatorAttachment": "platform",  # Force platform authenticators (Touch ID, Face ID, etc.)
+                "residentKey": "required",  # Force resident keys for better platform authenticator support
+                "requireResidentKey": True,
+                "userVerification": "required",  # Force user verification for platform authenticators
             },
             "attestation": ATTESTATION_MODE,
             "excludeCredentials": exclude,

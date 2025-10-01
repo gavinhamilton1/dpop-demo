@@ -72,6 +72,9 @@ export class UnifiedMobileService {
       const sessionData = await DpopFun.initializeFreshSession();
       logger.info('Mobile session setup completed');
       
+      // Step 1.5: Set device type for mobile session
+      await this.setMobileDeviceType();
+      
       // Step 2: Collect mobile device fingerprint
       await this.collectMobileFingerprint();
       
@@ -98,6 +101,26 @@ export class UnifiedMobileService {
   }
 
   /**
+   * Set device type for mobile session
+   */
+  async setMobileDeviceType() {
+    try {
+      logger.info('Setting device type for mobile session...');
+      
+      await DpopFun.dpopFunFetch('/session/update', {
+        method: 'POST',
+        body: { device_type: 'mobile' }
+      });
+      
+      logger.info('Mobile device type set successfully');
+      
+    } catch (error) {
+      logger.warn(`Failed to set mobile device type: ${error.message}`);
+      // Continue with flow even if device type setting fails
+    }
+  }
+
+  /**
    * Collect mobile device fingerprint
    */
   async collectMobileFingerprint() {
@@ -107,8 +130,9 @@ export class UnifiedMobileService {
       // Small delay to ensure session is established
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      await FingerprintService.collectFingerprint('mobile');
-      logger.info('Mobile fingerprint collection completed successfully');
+      // Use collectAndSendFingerprint to both collect and send the data
+      await FingerprintService.collectAndSendFingerprint('mobile');
+      logger.info('Mobile fingerprint collection and sending completed successfully');
       
     } catch (error) {
       logger.warn(`Mobile fingerprint collection failed: ${error.message}`);

@@ -24,6 +24,8 @@ export class LinkingService extends ApiService {
     this.eventListenersAttached = false;
     this.hadBIKBeforeLinking = false;
     this.bikWasAuthenticated = false;
+    this.cameraStream = null;
+    this.stopQRDetection = false;
   }
 
   /**
@@ -32,8 +34,9 @@ export class LinkingService extends ApiService {
    * @param {boolean} isOptional - Whether this step can be skipped
    * @param {Function} onStepComplete - Callback when step completes
    * @param {Function} onStepSkip - Callback when step is skipped
+   * @param {string} flowType - Type of flow ('registration' or 'authentication')
    */
-  renderMobileLinkingStep(containerId, isOptional = false, onStepComplete = null, onStepSkip = null) {
+  renderMobileLinkingStep(containerId, isOptional = false, onStepComplete = null, onStepSkip = null, flowType = 'registration') {
     this.containerElement = document.getElementById(containerId);
     if (!this.containerElement) {
       throw new Error(`Container element with ID '${containerId}' not found`);
@@ -43,13 +46,31 @@ export class LinkingService extends ApiService {
     this.onStepComplete = onStepComplete;
     this.onStepSkip = onStepSkip;
 
+    // Check if the HTML already exists to avoid recreating elements
+    const existingQrPhase = document.getElementById('qrPhase');
+    const existingVerifyPhase = document.getElementById('verifyPhase');
+    
+    if (existingQrPhase && existingVerifyPhase) {
+      logger.info('Mobile linking HTML already exists, reusing existing elements');
+      this.attachEventListeners();
+      return;
+    }
+
+    // Determine text based on flow type
+    const isAuthentication = flowType === 'authentication';
+    const title = isAuthentication ? 'Mobile Authentication' : 'Link Mobile Device';
+    const description = isAuthentication ? 
+      'Scan the QR code with your mobile device to complete authentication.' : 
+      'Click the button below to generate a QR code for mobile device linking.';
+    const buttonText = isAuthentication ? 'Start Mobile Authentication' : 'Start Mobile Linking';
+
     this.containerElement.innerHTML = `
       <div class="mobile-link-container">
         <div id="qrPhase">
-          <h3>Link Mobile Device</h3>
-          <p>Click the button below to generate a QR code for mobile device linking.</p>
+          <h3>${title}</h3>
+          <p>${description}</p>
           <div class="step-actions" style="margin-top: 1rem;">
-            <button class="btn primary" id="startLinkBtn">Start Mobile Linking</button>
+            <button class="btn primary" id="startLinkBtn">${buttonText}</button>
             ${isOptional ? '<button class="btn secondary" id="skipMobileBtn">Skip</button>' : ''}
           </div>
           <div id="qrContainer" class="qr-container" style="display: none;">
@@ -792,6 +813,9 @@ export class LinkingService extends ApiService {
       // Update the mobile linking step UI to show completion
       this.updateMobileLinkingStepStatus('completed');
       
+      // Clean up resources (including camera)
+      this.cleanup();
+      
       // Call the journey's completeStep method
       this.onStepComplete();
     }
@@ -925,6 +949,9 @@ export class LinkingService extends ApiService {
    */
   async startCamera() {
     try {
+      // Wait a bit for DOM to be ready
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       const codeCard = document.getElementById('codeCard');
       const camCard = document.getElementById('camCard');
       const video = document.getElementById('qrVideo');
@@ -937,22 +964,38 @@ export class LinkingService extends ApiService {
         camStatus: !!camStatus
       });
       
+      // If video element is not found, wait a bit more and try again
+      if (!video) {
+        logger.warn('Video element not found, waiting and retrying...');
+        await new Promise(resolve => setTimeout(resolve, 200));
+        const retryVideo = document.getElementById('qrVideo');
+        if (!retryVideo) {
+          throw new Error('Video element qrVideo not found in DOM');
+        }
+        logger.info('Video element found on retry');
+      }
+      
+      // Use the video element (either original or retry)
+      const videoElement = video || document.getElementById('qrVideo');
+      
       // Debug video element properties
-      if (video) {
+      if (videoElement) {
         logger.info('Video element properties:', {
-          tagName: video.tagName,
-          id: video.id,
-          className: video.className,
-          style: video.style.cssText,
-          offsetWidth: video.offsetWidth,
-          offsetHeight: video.offsetHeight,
-          clientWidth: video.clientWidth,
-          clientHeight: video.clientHeight,
-          getComputedStyle: window.getComputedStyle(video).display
+          tagName: videoElement.tagName,
+          id: videoElement.id,
+          className: videoElement.className,
+          style: videoElement.style.cssText,
+          offsetWidth: videoElement.offsetWidth,
+          offsetHeight: videoElement.offsetHeight,
+          clientWidth: videoElement.clientWidth,
+          clientHeight: videoElement.clientHeight,
+          getComputedStyle: window.getComputedStyle(videoElement).display,
+          parentElement: videoElement.parentElement?.tagName,
+          parentDisplay: videoElement.parentElement ? window.getComputedStyle(videoElement.parentElement).display : 'no parent'
         });
       }
       
-      if (!codeCard || !camCard || !video || !camStatus) {
+      if (!codeCard || !camCard || !videoElement || !camStatus) {
         throw new Error('Camera elements not found');
       }
 
@@ -960,6 +1003,14 @@ export class LinkingService extends ApiService {
       codeCard.classList.add('hidden');
       camCard.classList.remove('hidden');
       logger.info('Switched to camera view');
+      
+      // Debug camera card visibility
+      logger.info('Camera card visibility:', {
+        hasHiddenClass: camCard.classList.contains('hidden'),
+        display: window.getComputedStyle(camCard).display,
+        visibility: window.getComputedStyle(camCard).visibility,
+        opacity: window.getComputedStyle(camCard).opacity
+      });
 
       // Request camera access
       logger.info('Requesting camera access...');
@@ -972,47 +1023,113 @@ export class LinkingService extends ApiService {
       });
 
       logger.info('Camera stream obtained:', this.cameraStream);
-      video.srcObject = this.cameraStream;
+      logger.info('Camera stream tracks:', this.cameraStream.getTracks().map(track => ({
+        kind: track.kind,
+        enabled: track.enabled,
+        readyState: track.readyState,
+        label: track.label
+      })));
+      
+      // Ensure video element is clean before setting new stream
+      videoElement.srcObject = null;
+      videoElement.load();
+      
+      // Small delay to ensure video element is reset
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Set the new camera stream
+      videoElement.srcObject = this.cameraStream;
+      logger.info('Video srcObject set to camera stream');
+      
+      // Ensure video has proper attributes for autoplay
+      videoElement.setAttribute('autoplay', '');
+      videoElement.setAttribute('playsinline', '');
+      videoElement.setAttribute('muted', '');
+      
+      // Force video to play
+      try {
+        await videoElement.play();
+        logger.info('Video play() successful');
+      } catch (playError) {
+        logger.warn('Video play() failed:', playError);
+      }
       
       // Add event listeners to debug video loading
-      video.addEventListener('loadedmetadata', () => {
+      videoElement.addEventListener('loadedmetadata', () => {
         logger.info('Video metadata loaded:', {
-          videoWidth: video.videoWidth,
-          videoHeight: video.videoHeight,
-          duration: video.duration
+          videoWidth: videoElement.videoWidth,
+          videoHeight: videoElement.videoHeight,
+          duration: videoElement.duration,
+          readyState: videoElement.readyState,
+          paused: videoElement.paused,
+          ended: videoElement.ended,
+          srcObject: !!videoElement.srcObject,
+          currentTime: videoElement.currentTime
         });
       });
       
-      video.addEventListener('canplay', () => {
+      videoElement.addEventListener('loadeddata', () => {
+        logger.info('Video data loaded');
+      });
+      
+      videoElement.addEventListener('canplay', () => {
         logger.info('Video can play');
       });
       
-      video.addEventListener('error', (e) => {
+      videoElement.addEventListener('playing', () => {
+        logger.info('Video playing event fired');
+      });
+      
+      // Check video state after a short delay
+      setTimeout(() => {
+        logger.info('Video state check:', {
+          srcObject: !!videoElement.srcObject,
+          readyState: videoElement.readyState,
+          paused: videoElement.paused,
+          ended: videoElement.ended,
+          currentTime: videoElement.currentTime,
+          videoWidth: videoElement.videoWidth,
+          videoHeight: videoElement.videoHeight,
+          style: {
+            display: window.getComputedStyle(videoElement).display,
+            visibility: window.getComputedStyle(videoElement).visibility,
+            opacity: window.getComputedStyle(videoElement).opacity
+          }
+        });
+        
+        // Force video to play again if it's not playing
+        if (videoElement.paused) {
+          logger.warn('Video is paused, attempting to play again');
+          videoElement.play().catch(e => logger.error('Failed to play video:', e));
+        }
+      }, 500);
+      
+      videoElement.addEventListener('error', (e) => {
         logger.error('Video error:', e);
       });
       
-      await video.play();
+      await videoElement.play();
       logger.info('Video started playing');
       
       // Check video properties after play
       setTimeout(() => {
         logger.info('Video properties after play:', {
-          videoWidth: video.videoWidth,
-          videoHeight: video.videoHeight,
-          currentTime: video.currentTime,
-          paused: video.paused,
-          readyState: video.readyState,
-          srcObject: !!video.srcObject,
-          offsetWidth: video.offsetWidth,
-          offsetHeight: video.offsetHeight,
-          clientWidth: video.clientWidth,
-          clientHeight: video.clientHeight,
-          style: video.style.cssText,
+          videoWidth: videoElement.videoWidth,
+          videoHeight: videoElement.videoHeight,
+          currentTime: videoElement.currentTime,
+          paused: videoElement.paused,
+          readyState: videoElement.readyState,
+          srcObject: !!videoElement.srcObject,
+          offsetWidth: videoElement.offsetWidth,
+          offsetHeight: videoElement.offsetHeight,
+          clientWidth: videoElement.clientWidth,
+          clientHeight: videoElement.clientHeight,
+          style: videoElement.style.cssText,
           computedStyle: {
-            display: window.getComputedStyle(video).display,
-            width: window.getComputedStyle(video).width,
-            height: window.getComputedStyle(video).height,
-            visibility: window.getComputedStyle(video).visibility
+            display: window.getComputedStyle(videoElement).display,
+            width: window.getComputedStyle(videoElement).width,
+            height: window.getComputedStyle(videoElement).height,
+            visibility: window.getComputedStyle(videoElement).visibility
           }
         });
       }, 1000);
@@ -1042,6 +1159,14 @@ export class LinkingService extends ApiService {
     if (this.cameraStream) {
       this.cameraStream.getTracks().forEach(track => track.stop());
       this.cameraStream = null;
+    }
+
+    // Clear video element srcObject to disconnect from old stream
+    const video = document.getElementById('qrVideo');
+    if (video) {
+      video.srcObject = null;
+      video.load(); // Reset video element state
+      logger.info('Video element cleared and reset');
     }
 
     const codeCard = document.getElementById('codeCard');
@@ -1164,10 +1289,25 @@ export class LinkingService extends ApiService {
    */
   cleanup() {
     this.stopStatusMonitoring();
+    this.stopCamera(); // Stop camera stream to release resources
     this.currentLinkId = null;
+    
+    // Clear the container HTML to allow fresh rendering next time
+    if (this.containerElement) {
+      this.containerElement.innerHTML = '';
+    }
+    
     this.containerElement = null;
     this.onStepComplete = null;
     this.onStepSkip = null;
+  }
+
+  /**
+   * Force cleanup of all resources (destructor-like method)
+   */
+  destroy() {
+    logger.info('Destroying LinkingService - cleaning up all resources');
+    this.cleanup();
   }
 
   /**

@@ -81,7 +81,7 @@
         <!-- Journey Selection -->
         <div class="journey-selection" id="journeySelection">
             <!-- New User Journey -->
-            <div class="journey-card" id="newUserJourney">
+            <div class="journey-card clickable" id="newUserJourney" data-journey="newUser">
                 <div class="journey-icon">👤</div>
                 <h2>New User Registration</h2>
                 <p>Create a new account with username, passkey, face, and mobile device</p>
@@ -91,11 +91,11 @@
             </div>
 
             <!-- Existing User Login -->
-            <div class="journey-card" id="existingUserJourney">
+            <div class="journey-card clickable" id="existingUserJourney" data-journey="existingUser">
                 <div class="journey-icon">🔐</div>
                 <h2>Existing User Login</h2>
                 <p>Sign in with your existing account using passkey, face, or mobile authentication</p>
-                <button class="journey-btn" id="startExistingUserBtn" disabled>
+                <button class="journey-btn primary" id="startExistingUserBtn" disabled>
                     Login with Existing Account
                 </button>
             </div>

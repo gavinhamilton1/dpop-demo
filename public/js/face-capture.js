@@ -1,3 +1,5 @@
+import { logger } from '../js/utils/logging.js';
+
 import {
     FilesetResolver,
     FaceLandmarker,
@@ -16,28 +18,32 @@ import {
   };
   
   const el = (id)=>document.getElementById(id);
-  const video = el("video");
-  const canvas = el("canvas");
-  const banner = el("banner"); // May be null if banner was removed
-  const statusEl = el("status");
-  const promptEl = el("prompt");
-  const chipFace = el("chipFace");
-  const chipCenter = el("chipCenter");
-  const chipLeft = el("chipLeft");
-  const chipRight = el("chipRight");
-  const resultBox = el("resultBox");
-  const pillDuration = el("pillDuration");
-  const pillSize = el("pillSize");
-  const btnStartEl = el("btnStart");
+  
+  // Lazy getters to avoid stale DOM references
+  const getVideo = () => el("video");
+  const getCanvas = () => el("canvas");
+  const getBanner = () => el("banner"); // May be null if banner was removed
+  const getStatusEl = () => el("status");
+  const getPromptEl = () => el("prompt");
+  const getChipFace = () => el("chipFace");
+  const getChipCenter = () => el("chipCenter");
+  const getChipLeft = () => el("chipLeft");
+  const getChipRight = () => el("chipRight");
+  const getResultBox = () => el("resultBox");
+  const getPillDuration = () => el("pillDuration");
+  const getPillSize = () => el("pillSize");
+  const getBtnStartEl = () => el("btnStart");
   // Removed button references since we're auto-registering
   
   // Check if elements exist, if not, create fallback functions
   const safeSetStatus = (text) => {
+    const statusEl = getStatusEl();
     if (statusEl) statusEl.textContent = text;
     else console.log('Status:', text);
   };
   
   const safeSetPrompt = (text, cls) => {
+    const promptEl = getPromptEl();
     if (promptEl) {
       promptEl.textContent = text;
       promptEl.className = "face-prompt " + (cls || "");
@@ -47,6 +53,7 @@ import {
   };
   
   const safeSetBanner = (text) => {
+    const banner = getBanner();
     if (banner) banner.textContent = text;
   };
   
@@ -74,12 +81,34 @@ import {
   const mark = safeMark;
   
   function resetState() {
+    // Stop any existing camera
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(track => track.stop());
+      mediaStream = null;
+    }
+    
+    resetFaceCapture();
+    // Clear video element
+    const video = getVideo();
+    if (video) {
+      video.srcObject = null;
+    }
+    
+    // Stop any running loop
+    stopLoop();
+    
+    // Reset state variables
     faced = centered = leftOK = rightOK = recording = false;
     recordingTimedOut = false;
-    mark(chipFace); mark(chipCenter); mark(chipLeft); mark(chipRight);
+    chunks = [];
+    
+    // Reset UI elements
+    mark(getChipFace()); mark(getChipCenter()); mark(getChipLeft()); mark(getChipRight());
     updateOverlayCentered(false);
+    const resultBox = getResultBox();
     if (resultBox) resultBox.classList.remove("show");
     setPrompt("Ready."); setBanner("Press \"Start onboarding\"");
+    logger.info('Reset face capture state');
   }
 
   function resetFaceCapture() {
@@ -94,23 +123,23 @@ import {
     }
     
     // Clear video source
+    const video = getVideo();
     if (video) {
       video.srcObject = null;
     }
     
     // Clear canvas
+    const canvas = getCanvas();
     if (canvas) {
       const ctx = canvas.getContext("2d");
       if (ctx) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
       }
     }
-    
-    // Reset all state
-    resetState();
+
     
     // Reset status
-    setStatus("Initializing camera...");
+    setStatus("Initializing camera... resetFaceCapture...");
   }
   
   function yawRatio(landmarks) {
@@ -125,7 +154,6 @@ import {
   function getFaceCenter(lm) {
     // Use nose tip as face center
     const nose = lm[1];
-    console.log('Nose landmark:', nose);
     return { x: nose.x, y: nose.y };
   }
 
@@ -146,9 +174,6 @@ import {
     const faceWidth = Math.max(...xCoords) - Math.min(...xCoords);
     const faceHeight2 = Math.max(...yCoords) - Math.min(...yCoords);
     
-    console.log('Eye landmarks:', { leftEye, rightEye, eyeDistance });
-    console.log('Face height landmarks:', { topFace, bottomFace, faceHeight });
-    console.log('Face bounding box:', { faceWidth, faceHeight2 });
     
     // Use the larger of the two measurements for more reliable detection
     return { 
@@ -165,7 +190,6 @@ import {
     const xDiff = Math.abs(faceCenter.x - centerX);
     const yDiff = Math.abs(faceCenter.y - centerY);
     
-    console.log(`Centering check: x=${faceCenter.x.toFixed(2)} (diff: ${xDiff.toFixed(2)}), y=${faceCenter.y.toFixed(2)} (diff: ${yDiff.toFixed(2)}), tolerance: ${tolerance}`);
     
     return xDiff < tolerance && yDiff < tolerance;
   }
@@ -176,7 +200,6 @@ import {
     const minFaceWidth = 0.40;  // Increased from 0.35 to require much closer face
     const maxFaceWidth = 0.80;  // Increased from 0.65 to allow closer maximum
     
-    console.log(`Size check: faceWidth=${faceSize.width.toFixed(3)}, min=${minFaceWidth}, max=${maxFaceWidth}`);
     
     return faceSize.width >= minFaceWidth && faceSize.width <= maxFaceWidth;
   }
@@ -206,6 +229,16 @@ import {
   }
   
   async function startCamera() {
+    // Get fresh video element reference
+    const video = getVideo();
+    
+    // Ensure video element is clean before starting new stream
+    video.srcObject = null;
+    video.load();
+    
+    // Small delay to ensure video element is reset
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
     mediaStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "user", width: {ideal: 720}, height: {ideal: 960} },
       audio: true
@@ -213,6 +246,7 @@ import {
     video.srcObject = mediaStream;
     await video.play();
     
+    logger.info('Starting camera...');
     // Wait for video metadata to load with timeout
     await new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -232,8 +266,10 @@ import {
     });
     
     // Size canvas to match the video's actual dimensions for proper face detection
+    const canvas = getCanvas();
     canvas.width = video.videoWidth || 720;
     canvas.height = video.videoHeight || 960;
+    logger.info('Camera started successfully');
   }
   
   function startRecording() {
@@ -367,7 +403,11 @@ import {
   function stopCamera() {
     console.log('Stopping camera...');
     stopLoop();
-    stopRecording();
+    
+    // Try to call stopRecording if it exists
+    if (typeof stopRecording === 'function') {
+      stopRecording();
+    }
     
     // Clear media stream
     if (mediaStream) {
@@ -376,7 +416,7 @@ import {
     }
     
     // Clear video element
-    const video = el("video");
+    const video = getVideo();
     if (video) {
       video.srcObject = null;
     }
@@ -384,14 +424,19 @@ import {
     console.log('Camera stopped');
   }
   
+  // Export functions for use in other modules
+  export { stopCamera };
+  
   async function loop() {
     running = true;
+    const canvas = getCanvas();
     const ctx = canvas.getContext("2d");
     const drawer = new DrawingUtils(ctx);
   
     const step = async () => {
       if (!running) return;
       const now = performance.now();
+      const video = getVideo();
       const res = faceLM.detectForVideo(video, now);
   
       ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -423,8 +468,6 @@ import {
           const faceSize = getFaceSize(originalLm);
           
           // Debug logging
-          console.log('Face center:', faceCenter, 'Face size:', faceSize);
-          console.log('Is centered:', isFaceCentered(faceCenter), 'Is good size:', isFaceGoodSize(faceSize));
           
           // For now, let's be more lenient with centering to test
           const isCentered = isFaceCentered(faceCenter);
@@ -525,21 +568,26 @@ import {
     updatePageContext();
   }
 
+
   // Function to start face capture (reusable)
   async function startFaceCapture() {
-    resetState(); setStatus("Initializing…");
+    resetState(); 
+    setStatus("Initializing…");
     try {
       await initFaceLandmarker();
       await startCamera();
-      setStatus("Preview running"); setBanner("Looking for your face…");
+      setStatus("Preview running"); 
+      setBanner("Looking for your face…");
       loop();
     } catch (e) {
-      setStatus("Camera/model init failed"); setPrompt("Camera or model failed to load.", "danger-txt");
+      setStatus("Camera/model init failed"); 
+      setPrompt("Camera or model failed to load.", "danger-txt");
       throw e;
     }
   }
 
   // Wire up buttons (only if btnStart exists - for backward compatibility)
+  const btnStartEl = getBtnStartEl();
   if (btnStartEl) {
     btnStartEl.addEventListener("click", async () => {
       btnStartEl.disabled = true;
@@ -553,12 +601,13 @@ import {
   
   function redo() {
     stopRecording(); chunks = [];
-    resultBox.classList.remove("show");
+    const resultBox = getResultBox();
+    if (resultBox) resultBox.classList.remove("show");
     
     faced = centered = leftOK = rightOK = recording = false;
     updateOverlayCentered(false);
         
-    mark(chipFace, false, true); mark(chipCenter, false, true); mark(chipLeft, false, true); mark(chipRight, false, true);
+    mark(getChipFace(), false, true); mark(getChipCenter(), false, true); mark(getChipLeft(), false, true); mark(getChipRight(), false, true);
     
     setPrompt("Ready. Face the camera to start.", ""); setBanner("Looking for your face…");
   }
@@ -586,17 +635,16 @@ import {
     }
 
     async startCapture() {
+      // Reset state before starting new capture
+      resetState();
       // Auto-start the face capture process
+      logger.info('Starting face capture process...');
       await startFaceCapture();
     }
 
     stopCapture() {
       // Stop the face capture process and camera
       stopCamera();
-    }
-
-    resetFaceCapture() {
-      resetFaceCapture();
     }
 
     setMode(mode) {

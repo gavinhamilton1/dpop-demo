@@ -125,9 +125,19 @@ class JourneysController {
         // Modal event listeners
         this.setupModalHandlers();
         
-        // Journey selection buttons
-        document.getElementById('startNewUserBtn').addEventListener('click', () => this.startJourney('newUser'));
-        document.getElementById('startExistingUserBtn').addEventListener('click', () => this.startJourney('existingUser'));
+        // Journey selection buttons and cards
+        document.getElementById('startNewUserBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.startJourney('newUser');
+        });
+        document.getElementById('startExistingUserBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.startJourney('existingUser');
+        });
+        
+        // Journey card clicks
+        document.getElementById('newUserJourney').addEventListener('click', () => this.startJourney('newUser'));
+        document.getElementById('existingUserJourney').addEventListener('click', () => this.startJourney('existingUser'));
         
         // Cancel journey button
         document.getElementById('cancelJourneyBtn').addEventListener('click', () => this.cancelJourney());
@@ -559,12 +569,16 @@ class JourneysController {
     updateJourneyAvailability() {
         const newUserBtn = document.getElementById('startNewUserBtn');
         const existingUserBtn = document.getElementById('startExistingUserBtn');
+        const newUserCard = document.getElementById('newUserJourney');
+        const existingUserCard = document.getElementById('existingUserJourney');
         
         // New user journey - always available
         newUserBtn.disabled = false;
+        newUserCard.classList.remove('disabled');
         
         // Existing user journey - always available
         existingUserBtn.disabled = false;
+        existingUserCard.classList.remove('disabled');
     }
     
     checkPasskeySupport() {
@@ -801,7 +815,10 @@ class JourneysController {
         await this.executeCurrentStep();
     }
     
-    cancelJourney() {
+    async cancelJourney() {
+        // Clean up any running services
+        await this.cleanupServices();
+        
         this.currentJourney = null;
         this.currentStep = 0;
         
@@ -812,8 +829,42 @@ class JourneysController {
         logger.info('Journey cancelled');
     }
     
+    /**
+     * Clean up all running services (camera, linking, etc.)
+     */
+    async cleanupServices() {
+        logger.info('Starting service cleanup...');
+        
+        // Stop face capture camera if running
+        try {
+            const { stopCamera } = await import('./face-capture.js');
+            logger.info('Calling stopCamera()...');
+            stopCamera();
+            logger.info('Face capture camera stopped');
+        } catch (error) {
+            logger.warn('Failed to stop face capture camera:', error);
+        }
+        
+        // Clean up linking service if running
+        if (this.linkingService) {
+            try {
+                this.linkingService.destroy();
+                this.linkingService = null;
+                logger.info('Linking service cleaned up');
+            } catch (error) {
+                logger.warn('Failed to clean up linking service:', error);
+            }
+        }
+        
+        // Stop any other running services
+        logger.info('All services cleaned up');
+    }
+    
     async completeJourney() {
         logger.info('Journey completed successfully!');
+        
+        // Clean up any running services
+        await this.cleanupServices();
         
         // Show logout button after completing any journey
         document.getElementById('logoutBtn').style.display = 'block';
@@ -1143,7 +1194,7 @@ class JourneysController {
                 
                 <div id="faceCapturePhase" style="display: none;">
                     <div class="face-capture-status">
-                        <span class="face-status-text" id="status">Initializing camera...</span>
+                        <span class="face-status-text" id="status">Initializing camera for registration...</span>
                     </div>
 
                     <div class="face-capture-row">
@@ -1271,6 +1322,11 @@ class JourneysController {
             const { LinkingService } = await import('./services/LinkingService.js');
             const { DpopFunService } = await import('./services/DpopFunService.js');
             
+        // Clean up any existing linking service
+        if (this.linkingService) {
+            this.linkingService.destroy();
+        }
+        
         // Create DpopFunService instance
             const dpopFunService = new DpopFunService();
         this.linkingService = new LinkingService(dpopFunService);
@@ -1793,7 +1849,7 @@ class JourneysController {
                 
                 <div id="faceCapturePhase" style="display: none;">
                     <div class="face-capture-status">
-                        <span class="face-status-text" id="status">Initializing camera...</span>
+                        <span class="face-status-text" id="status">Initializing camera for verification...</span>
                     </div>
 
                     <div class="face-capture-row">
@@ -1942,8 +1998,8 @@ class JourneysController {
             logger.error('Failed to initialize face capture:', error);
             
             // Stop camera if it was started
-            if (faceCapture) {
-                faceCapture.stopCapture();
+            if (window.faceCapture) {
+                window.faceCapture.stopCapture();
             }
             
             // Show error and re-enable start button
@@ -1976,40 +2032,16 @@ class JourneysController {
         const stepEl = document.getElementById('step-Authentication');
         const contentEl = stepEl.querySelector('.step-content');
         
-        contentEl.innerHTML = `
-            <div class="mobile-auth-container">
-                <h3>Mobile Authentication</h3>
-                <p>Scan the QR code with your mobile device to complete authentication.</p>
-                <div id="mobileLinkingContainer">
-                    <div id="qrCodeContainer" class="qr-container">
-                        <div class="qr-placeholder">
-                            <p>Generating QR code...</p>
-                        </div>
-                    </div>
-                    <div id="mobileStatus" class="mobile-status">
-                        <p>Waiting for mobile device...</p>
-                    </div>
-                </div>
-                <div class="step-actions">
-                    <button class="btn secondary" id="cancelMobileAuthBtn">Cancel</button>
-                </div>
-            </div>
-        `;
+        // Create a container for the LinkingService to render into
+        contentEl.innerHTML = '<div id="mobileLinkingContainer"></div>';
         
         // Start the mobile linking process
         try {
             await this.startMobileLinking();
         } catch (error) {
             logger.error('Failed to start mobile linking:', error);
-            document.getElementById('mobileStatus').innerHTML = `
-                <p class="error">Failed to start mobile linking: ${error.message}</p>
-            `;
+            throw error;
         }
-        
-        // Add cancel button handler
-        document.getElementById('cancelMobileAuthBtn').addEventListener('click', () => {
-            this.cancelJourney();
-        });
         
         logger.info('Mobile passkey authentication initiated');
     }
@@ -2020,6 +2052,11 @@ class JourneysController {
             const { LinkingService } = await import('./services/LinkingService.js');
             const { DpopFunService } = await import('./services/DpopFunService.js');
             
+            // Clean up any existing linking service
+            if (this.linkingService) {
+                this.linkingService.destroy();
+            }
+            
             // Create DpopFunService instance
             const dpopFunService = new DpopFunService();
             this.linkingService = new LinkingService(dpopFunService);
@@ -2027,13 +2064,14 @@ class JourneysController {
             // Set flow type to login for existing user authentication
             this.linkingService.flowType = 'login';
             
-            // Render the mobile linking step using LinkingService's built-in UI
-            this.linkingService.renderMobileLinkingStep(
-                'mobileLinkingContainer',
-                false, // not optional for authentication
-                () => this.onMobileLinkingComplete(), // onStepComplete
-                () => this.cancelJourney() // onStepSkip
-            );
+        // Render the mobile linking step using LinkingService's built-in UI
+        this.linkingService.renderMobileLinkingStep(
+            'mobileLinkingContainer',
+            false, // not optional for authentication
+            () => this.onMobileLinkingComplete(), // onStepComplete
+            () => this.cancelJourney(), // onStepSkip
+            'authentication' // flow type for existing user authentication
+        );
             
             logger.info('Mobile linking process started for login flow');
         } catch (error) {

@@ -672,6 +672,9 @@ async def submit_username(req: Request):
     if not user_created:
         raise HTTPException(status_code=500, detail="Failed to create user record")
     
+    # Update session state to include username
+    await DB.update_session(sid, {"username": username})
+    
     log.info("Username submitted - sid=%s username=%s rid=%s", sid, username, req.state.request_id)
     return JSONResponse({"username": username, "status": "success"})
 
@@ -718,6 +721,9 @@ async def signin_user(req: Request):
         "UPDATE users SET session_id = ? WHERE username = ?",
         (sid, username)
     )
+    
+    # Update session state to include username
+    await DB.update_session(sid, {"username": username})
     
     log.info("User signed in - sid=%s username=%s rid=%s", sid, username, req.state.request_id)
     return JSONResponse({"username": username, "status": "success"})
@@ -1710,6 +1716,38 @@ async def clear_session_only(req: Request):
     except Exception as e:
         log.exception("Session clear failed")
         raise HTTPException(500, f"Session clear failed: {e}")
+
+@app.post("/session/update")
+async def update_session(req: Request):
+    """Update session with provided data"""
+    try:
+        sid = req.session.get("sid")
+        if not sid:
+            raise HTTPException(401, "No active session")
+        
+        # Get session data
+        session_data = await DB.get_session(sid)
+        if not session_data:
+            raise HTTPException(401, "Session not found")
+        
+        # Get request body
+        body = await req.json()
+        
+        # Update session with provided data
+        await DB.update_session(sid, body)
+        
+        log.info(f"Session {sid} updated with data: {body}")
+        
+        return JSONResponse({
+            "ok": True, 
+            "message": "Session updated successfully"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Session update failed")
+        raise HTTPException(500, f"Session update failed: {e}")
 
 @app.post("/session/mark-authenticated")
 async def mark_user_authenticated(req: Request):
