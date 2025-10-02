@@ -403,17 +403,20 @@ async function createJwsWithDefaults({ typ, payload, privateKey, publicJwk }) {
 
 export async function sessionInit({ sessionInitUrl = CONFIG.ENDPOINTS.SESSION_INIT, browserUuid = null } = {}) {
   try {
+    logger.info('sessionInit: Starting session initialization');
     logger.debug('Initializing session');
     const existing = (await get(CONFIG.STORAGE.KEYS.BROWSER_UUID))?.value;
     const uuid = browserUuid || existing || crypto.randomUUID();
     if (!existing) await set(CONFIG.STORAGE.KEYS.BROWSER_UUID, uuid);
 
+    logger.info('sessionInit: Making fetch request to', sessionInitUrl);
     const r = await fetch(sessionInitUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({ browser_uuid: uuid })
     });
+    logger.info('sessionInit: Fetch request completed, status:', r.status);
     
     if (!r.ok) {
       throw new NetworkError(`session/init failed: ${r.status}`, r.status, { url: sessionInitUrl });
@@ -898,13 +901,19 @@ export async function initializeFreshSession() {
     logger.info('Initializing fresh session');
     
     // Step 1: Initialize session
+    logger.info('Step 1: Calling sessionInit...');
     await sessionInit();
+    logger.info('Step 1: sessionInit completed');
     
     // Step 2: Register BIK
+    logger.info('Step 2: Calling bikRegisterStep...');
     await bikRegisterStep();
+    logger.info('Step 2: bikRegisterStep completed');
     
     // Step 3: Bind DPoP
+    logger.info('Step 3: Calling dpopBindStep...');
     await dpopBindStep();
+    logger.info('Step 3: dpopBindStep completed');
     
     logger.info('Fresh session initialization completed');
     

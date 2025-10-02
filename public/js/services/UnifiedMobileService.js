@@ -82,6 +82,7 @@ export class UnifiedMobileService {
       }
       
       // Step 1: Setup fresh mobile session
+      logger.info('About to call initializeFreshSession...');
       const sessionData = await DpopFun.initializeFreshSession();
       logger.info('Mobile session setup completed');
       
