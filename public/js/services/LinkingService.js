@@ -813,7 +813,7 @@ export class LinkingService extends ApiService {
       
       // Call the journey's completeStep method if defined
       if (this.onStepComplete && typeof this.onStepComplete === 'function') {
-        //this.onStepComplete();
+        this.onStepComplete();
       } else {
         logger.info('Link completion successful, no callback defined');
       }
