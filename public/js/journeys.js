@@ -43,6 +43,13 @@ class JourneysController {
                         action: () => this.createUsername()
                     },
                     {
+                        id: 'mobile',
+                        title: 'Link Mobile Device',
+                        description: 'Connect your mobile device for cross-device authentication',
+                        action: () => this.linkMobileDevice(),
+                        optional: true
+                    },
+                    {
                         id: 'passkey',
                         title: 'Register Passkey',
                         description: 'Set up a passkey for secure authentication (if supported)',
@@ -55,13 +62,6 @@ class JourneysController {
                         title: 'Register Face',
                         description: 'Set up facial recognition for authentication',
                         action: () => this.registerFace(),
-                        optional: true
-                    },
-                    {
-                        id: 'mobile',
-                        title: 'Link Mobile Device',
-                        description: 'Connect your mobile device for cross-device authentication',
-                        action: () => this.linkMobileDevice(),
                         optional: true
                     }
                 ]
@@ -845,12 +845,20 @@ class JourneysController {
             logger.warn('Failed to stop face capture camera:', error);
         }
         
-        // Clean up linking service if running
+        // Clean up linking service if running (but don't destroy if it has scribble receiver)
         if (this.linkingService) {
             try {
-                this.linkingService.destroy();
-                this.linkingService = null;
-                logger.info('Linking service cleaned up');
+                // Check if linking service has scribble receiver active
+                const hasScribbleReceiver = this.linkingService.signatureShare && this.linkingService.signatureShare.isConnected;
+                
+                if (hasScribbleReceiver) {
+                    logger.info('Linking service has active scribble receiver, keeping it alive');
+                    // Don't destroy the linking service if it has an active scribble receiver
+                } else {
+                    this.linkingService.destroy();
+                    this.linkingService = null;
+                    logger.info('Linking service cleaned up');
+                }
             } catch (error) {
                 logger.warn('Failed to clean up linking service:', error);
             }

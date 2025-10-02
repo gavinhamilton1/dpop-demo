@@ -35,10 +35,14 @@ export class UnifiedMobileService {
     
     logger.info('Initializing mobile registration flow');
     
-    // Start the mobile linking process to get desktop username
-    await this.startMobileLinking();
+    // Step 1: Establish mobile session (BIK + DPoP)
+    await this.startMobileSession();
     
-    return this.startMobileSession();
+    // Step 2: Link mobile session to desktop session and get desktop username
+    await this.linkMobileToDesktop();
+    
+    // Step 3: Continue registration using desktop username
+    await this.continueRegistrationWithDesktopUsername();
   }
 
   /**
@@ -68,12 +72,12 @@ export class UnifiedMobileService {
     try {
       logger.info('Setting up mobile session...');
       
-      // Step 0: Clear any existing session data to ensure fresh start
+      // Step 0: Clear any existing client-side session data to ensure fresh start
       try {
-        await DpopFun.resetSession();
-        logger.info('Cleared existing session data');
+        await DpopFun.clientFlush();
+        logger.info('Cleared existing client-side session data');
       } catch (error) {
-        logger.warn('Failed to clear existing session data:', error);
+        logger.warn('Failed to clear existing client-side session data:', error);
         // Continue anyway - this might be expected if no session exists
       }
       
@@ -87,18 +91,13 @@ export class UnifiedMobileService {
       // Step 2: Collect mobile device fingerprint
       await this.collectMobileFingerprint();
       
-      // Step 3: Set username for both flows
+      // Step 3: Set username and handle authentication (only for login flows)
       if (this.isLoginFlow) {
         await this.setUsernameForLogin();
-      } else {
-        await this.setUsernameForRegistration();
+        await this.handlePasskeyAuthentication();
+        await this.completeMobileLinking();
       }
-      
-      // Step 4: Handle passkey authentication
-      await this.handlePasskeyAuthentication();
-      
-      // Step 5: Complete mobile linking for both flows
-      await this.completeMobileLinking();
+      // For registration flows, username and authentication are handled separately
       
     } catch (error) {
       logger.error('Mobile session setup failed:', error);
@@ -116,10 +115,17 @@ export class UnifiedMobileService {
     try {
       logger.info('Setting device type for mobile session...');
       
-      await DpopFun.dpopFunFetch('/session/update', {
+      // Use regular fetch since session might not be fully ready for dpopFunFetch
+      const response = await fetch('/session/update', {
         method: 'POST',
-        body: { device_type: 'mobile' }
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ device_type: 'mobile' })
       });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to set device type: ${response.status}`);
+      }
       
       logger.info('Mobile device type set successfully');
       
@@ -156,12 +162,19 @@ export class UnifiedMobileService {
     try {
       logger.info('Starting mobile linking process...');
       
-      // Call the mobile link start endpoint to get desktop username
-      const data = await DpopFun.dpopFunFetch('/link/mobile/start', {
+      // Use regular fetch since session might not be fully ready for dpopFunFetch
+      const response = await fetch('/link/mobile/start', {
         method: 'POST',
-        body: { lid: this.currentLinkId }
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ lid: this.currentLinkId })
       });
       
+      if (!response.ok) {
+        throw new Error(`Failed to start mobile linking: ${response.status}`);
+      }
+      
+      const data = await response.json();
       logger.info('Link start response data:', data);
       this.desktopUsername = data.desktop_username;
       
@@ -204,47 +217,47 @@ export class UnifiedMobileService {
   }
 
   /**
-   * Set username for registration flow using desktop session username
+   * Set username for registration flow - mobile creates its own username
    */
   async setUsernameForRegistration() {
     try {
-      logger.info('Setting desktop username for mobile registration flow...');
+      logger.info('Setting username for mobile registration flow...');
       
-      if (!this.desktopUsername) {
-        logger.warn('No desktop username available from linking process, generating fallback username');
-        // Generate a fallback username for mobile registration
-        const timestamp = Date.now().toString(36);
-        const random = Math.random().toString(36).substring(2, 8);
-        this.desktopUsername = `mobile_${timestamp}_${random}`;
-        logger.info(`Generated fallback username: ${this.desktopUsername}`);
-      }
+      // Generate a unique username for mobile registration
+      const timestamp = Date.now().toString(36);
+      const random = Math.random().toString(36).substring(2, 8);
+      this.username = `mobile_${timestamp}_${random}`;
+      logger.info(`Generated mobile username: ${this.username}`);
       
-      logger.info(`Using username for mobile registration: ${this.desktopUsername}`);
-      
-      // For registration flow, try to create a new username first
-      // If it already exists, use the existing one
+      // Create the new username
       try {
         await DpopFun.dpopFunFetch('/onboarding/username', {
           method: 'POST',
-          body: { username: this.desktopUsername }
+          body: { username: this.username }
         });
-        logger.info('New username created successfully for mobile registration');
+        logger.info('New mobile username created successfully');
       } catch (error) {
         if (error.message && error.message.includes('Username already taken')) {
-          logger.info('Username already exists, using existing username for mobile registration');
-          // Use the existing username by signing in
-          await DpopFun.dpopFunFetch('/onboarding/signin', {
+          logger.warn('Generated username already exists, generating new one');
+          // Generate a new username if collision occurs
+          const timestamp2 = Date.now().toString(36);
+          const random2 = Math.random().toString(36).substring(2, 8);
+          this.username = `mobile_${timestamp2}_${random2}`;
+          
+          await DpopFun.dpopFunFetch('/onboarding/username', {
             method: 'POST',
-            body: { username: this.desktopUsername }
+            body: { username: this.username }
           });
-          logger.info('Existing username linked to mobile session');
+          logger.info('New mobile username created after collision');
         } else {
           throw error;
         }
       }
       
+      logger.info(`Username set for mobile registration: ${this.username}`);
+      
     } catch (error) {
-      logger.error('Failed to bind username for mobile registration:', error);
+      logger.error('Failed to set username for mobile registration:', error);
       throw error;
     }
   }
@@ -560,7 +573,7 @@ export class UnifiedMobileService {
       
       const response = await DpopFun.dpopFunFetch('/link/mobile/issue-bc', {
         method: 'POST',
-        body: { link_id: this.currentLinkId }
+        body: { lid: this.currentLinkId }
       });
       
       logger.info('Bootstrap code issued successfully');
@@ -568,6 +581,63 @@ export class UnifiedMobileService {
       
     } catch (error) {
       logger.error('Failed to issue bootstrap code:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Link mobile session to desktop session via link ID and get desktop username
+   */
+  async linkMobileToDesktop() {
+    try {
+      logger.info('Linking mobile session to desktop session...');
+      
+      // Use the mobile session's authenticated request to link to desktop
+      const response = await DpopFun.dpopFunFetch('/link/mobile/start', {
+        method: 'POST',
+        body: { lid: this.currentLinkId }
+      });
+      
+      // Extract desktop username from the response
+      this.desktopUsername = response.desktop_username;
+      logger.info(`Desktop username received: ${this.desktopUsername}`);
+      
+      logger.info('Mobile session linked to desktop session');
+      return response;
+      
+    } catch (error) {
+      logger.error('Failed to link mobile session to desktop:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Continue registration using desktop username
+   */
+  async continueRegistrationWithDesktopUsername() {
+    try {
+      logger.info('Continuing registration with desktop username...');
+      
+      // Use the desktop username for registration
+      this.username = this.desktopUsername;
+      
+      // Set username in session
+      await DpopFun.dpopFunFetch('/onboarding/signin', {
+        method: 'POST',
+        body: { username: this.username }
+      });
+      
+      logger.info(`Username set for mobile registration: ${this.username}`);
+      
+      // Continue with passkey authentication
+      await this.handlePasskeyAuthentication();
+      
+      // Complete mobile linking
+      await this.completeMobileLinking();
+      
+      
+    } catch (error) {
+      logger.error('Failed to continue registration with desktop username:', error);
       throw error;
     }
   }

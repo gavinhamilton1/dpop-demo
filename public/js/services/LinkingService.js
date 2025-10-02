@@ -794,8 +794,6 @@ export class LinkingService extends ApiService {
       this.signatureShare = new SignatureShare();
       logger.info('Initializing SignatureShare with linkId:', this.currentLinkId);
       this.signatureShare.initDesktop(this.currentLinkId);
-      logger.info('Scribble receiver initialized successfully', 'success');
-      
       logger.info('Scribble receiver initialized successfully');
       
     } catch (error) {
@@ -807,17 +805,18 @@ export class LinkingService extends ApiService {
    * Complete the mobile linking step
    */
   completeStep() {
-    if (this.onStepComplete && !this.stepCompleted) {
+    if (!this.stepCompleted) {
       this.stepCompleted = true; // Prevent multiple calls
       
       // Update the mobile linking step UI to show completion
       this.updateMobileLinkingStepStatus('completed');
       
-      // Clean up resources (including camera)
-      this.cleanup();
-      
-      // Call the journey's completeStep method
-      this.onStepComplete();
+      // Call the journey's completeStep method if defined
+      if (this.onStepComplete && typeof this.onStepComplete === 'function') {
+        //this.onStepComplete();
+      } else {
+        logger.info('Link completion successful, no callback defined');
+      }
     }
   }
 

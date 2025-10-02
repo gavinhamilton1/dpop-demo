@@ -41,7 +41,7 @@ class SignatureShare {
         if (container) {
             // Create canvas inside the existing container
             container.innerHTML = `
-                <canvas id="signature-canvas-desktop" width="300" height="300" style="border: 2px solid #333; border-radius: 8px; background: white;"></canvas>
+                <canvas id="signature-canvas-desktop" width="300" height="300" style="border: 2px solid #333; border-radius: 8px; background: white; display: block; margin: 0 auto;"></canvas>
             `;
             
             // Get the canvas and context
@@ -74,7 +74,7 @@ class SignatureShare {
             container.className = 'signature-container';
             container.innerHTML = `
                 <h3>${title}</h3>
-                <canvas id="${containerId}-canvas" width="300" height="300" style="border: 2px solid #333; border-radius: 8px; background: white;"></canvas><br>
+                <canvas id="${containerId}-canvas" width="300" height="300" style="border: 2px solid #333; border-radius: 8px; background: white; display: block; margin: 0 auto;"></canvas><br>
                 ${this.isMobile ? '<button id="reset-signature" style="margin-top: 10px; padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Clear Scribble</button>' : ''}
             `;
             

@@ -912,6 +912,12 @@ async def require_dpop(req: Request) -> Dict[str, Any]:
     s = await DB.get_session(sid) if sid else None
     if not sid or not s:
         raise HTTPException(status_code=401, detail="no session")
+    
+    # Check if session was killed by user
+    session_state = s.get("state")
+    if session_state == "USER_KILLED":
+        log.warning("Session access denied - session was killed by user sid=%s", sid)
+        raise HTTPException(status_code=401, detail="session killed by user - please relogin")
 
     dpop_hdr = req.headers.get("DPoP"); bind_hdr = req.headers.get("DPoP-Bind")
     if not dpop_hdr or not bind_hdr:
@@ -1058,20 +1064,41 @@ async def resume_confirm(req: Request):
 
 @app.post("/session/kill")
 async def kill_session(req: Request):
-    """Kill the current session completely"""
+    """Kill the current session completely - mark as USER_KILLED for auditing"""
     sid = req.session.get("sid")
     if not sid:
         raise HTTPException(401, "no session")
     
     try:
-        # Delete the session from database
-        await DB.delete_session(sid)
+        # Get session data for auditing
+        session_data = await DB.get_session(sid)
+        username = session_data.get("username") if session_data else None
+        
+        # Mark session as USER_KILLED for auditing purposes
+        await DB.update_session(sid, {
+            "state": "USER_KILLED",
+            "kill_time": now(),
+            "kill_reason": "user_requested"
+        })
+        
+        # Invalidate all links owned by this session (mark as killed, don't delete)
+        await DB.exec("UPDATE links SET status = 'killed' WHERE owner_sid = ?", (sid,))
+        
+        # Clear in-memory link storage for this session
+        from server.linking import _LINKS, _LINKS_LOCK, _WATCHERS
+        with _LINKS_LOCK:
+            # Mark links as killed in memory
+            for link_id, link_data in _LINKS.items():
+                if link_data.get("owner_sid") == sid:
+                    link_data["status"] = "killed"
+                    # Notify watchers that link was killed
+                    _notify_watchers(link_id, {"type": "status", "status": "killed", "reason": "session_killed"})
         
         # Clear the session cookie
         req.session.clear()
         
-        log.info("Session killed successfully sid=%s", sid)
-        return JSONResponse({"ok": True, "message": "Session killed successfully"})
+        log.warning("Session killed by user - sid=%s username=%s (all clients will need to relogin)", sid, username)
+        return JSONResponse({"ok": True, "message": "Session killed successfully - all clients invalidated"})
     except Exception as e:
         log.exception("Failed to kill session sid=%s", sid)
         raise HTTPException(500, f"Failed to kill session: {e}")
