@@ -137,14 +137,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
             
             # Set permissions policy based on path
-            if path == "/onboarding" or path == "/face-verify" or path == "/" or path == "/journeys" or path.startswith("/public/vendor/tasks-vision"):
+            if path == "/onboarding" or path == "/face-verify" or path == "/" or path.startswith("/public/vendor/tasks-vision"):
                 resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(self), camera=(self)")
             else:
                 resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=(self)")
             return resp
 
         # Path-based CSP: face capture pages (onboarding, verification, and main page with inline face capture)
-        if path == "/onboarding" or path == "/face-verify" or path == "/" or path == "/journeys" or path.startswith("/public/vendor/tasks-vision") or path == "/pad-test.html":
+        if path == "/onboarding" or path == "/face-verify" or path == "/" or path.startswith("/public/vendor/tasks-vision") or path == "/pad-test.html":
             csp = self.CSP_FACE_CAPTURE
             permissions_policy = "geolocation=(), microphone=(self), camera=(self)"
         else:
@@ -374,7 +374,7 @@ async def _init_db():
 # ---------------- Basic routes ----------------
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    with open(os.path.join(BASE_DIR, "..", "public", "index.html"), "r", encoding="utf-8") as f:
+    with open(os.path.join(BASE_DIR, "..", "public", "journeys.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
 @app.get("/face-verify", response_class=HTMLResponse)
@@ -550,10 +550,6 @@ async def index():
     with open(os.path.join(BASE_DIR, "..", "public", "onboarding.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
-@app.get("/journeys", response_class=HTMLResponse)
-async def journeys():
-    with open(os.path.join(BASE_DIR, "..", "public", "journeys.html"), "r", encoding="utf-8") as f:
-        return HTMLResponse(f.read())
 
 # ---------------- Session + Bind endpoints (existing) ----------------
 @app.post("/session/init")

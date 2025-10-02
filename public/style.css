@@ -365,6 +365,9 @@ body {
 .qr-code-container {
     text-align: center;
     margin: 1rem 0;
+    display: inline-block;
+    width: auto;
+    max-width: 100%;
 }
 
 .qr-code {

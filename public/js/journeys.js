@@ -1960,7 +1960,7 @@ class JourneysController {
                         // Add event listener for continue button that goes to home page
                         document.getElementById('continueFaceBtn').addEventListener('click', () => {
                             // Navigate back to home page
-                            window.location.href = '/public/journeys.html';
+                            window.location.href = '/';
                         });
                         return;
                     } else if (statusText.toUpperCase().includes('FAILED')) {

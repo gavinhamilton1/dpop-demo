@@ -896,11 +896,11 @@ class PADService:
             # Live face criteria - be more conservative
             # If rPPG failed completely (hr_bpm is None), don't penalize
             rppg_failed = hr_bpm is None or rppg_snr_db <= -600  # More lenient SNR threshold
-            live_ok = rppg_failed or ((rppg_live_prob >= 0.2) and (40 <= (hr_bpm or 0) <= 180))  # Reduced from 0.4 to 0.2
+            live_ok = rppg_failed or ((rppg_live_prob >= 0.1) and (40 <= (hr_bpm or 0) <= 180))  # Further reduced from 0.2 to 0.1
             
             # Spoof indicators - more lenient thresholds to reduce false negatives
-            screen_suspect = flicker_score >= 0.98  # Much higher threshold to reduce false positives
-            planar_suspect = planarity_score >= 0.95  # Much higher threshold for stronger evidence
+            screen_suspect = flicker_score >= 0.99  # Even higher threshold to reduce false positives
+            planar_suspect = planarity_score >= 0.98  # Even higher threshold for stronger evidence
             
             # Final decision: be more lenient - only flag as spoof if BOTH indicators are very strong
             # OR if we have extremely strong evidence of spoofing
@@ -909,28 +909,28 @@ class PADService:
             # Calculate overall confidence - be much more lenient
             if rppg_failed:
                 # If rPPG failed, be more lenient unless we have very strong spoof indicators
-                confidence = 0.9 if not (screen_suspect and planar_suspect) else 0.4  # Increased from 0.8 to 0.9
+                confidence = 0.95 if not (screen_suspect and planar_suspect) else 0.4  # Further increased from 0.9 to 0.95
             else:
                 # If rPPG detected valid heart rate with good SNR, be more lenient
                 if hr_bpm is not None and 40 <= hr_bpm <= 180 and rppg_snr_db > 0:
                     # Valid heart rate detected - use higher confidence
-                    confidence = max(0.9, rppg_live_prob)  # Increased from 0.8 to 0.9
+                    confidence = max(0.95, rppg_live_prob)  # Further increased from 0.9 to 0.95
                 else:
                     confidence = rppg_live_prob
                 
                 # Only reduce confidence if BOTH indicators are present
                 if screen_suspect and planar_suspect:
-                    confidence *= 0.3  # More aggressive reduction only when both indicators present
+                    confidence *= 0.4  # Less aggressive reduction (was 0.3)
                 elif screen_suspect or planar_suspect:
-                    confidence *= 0.7  # Less aggressive reduction for single indicator
+                    confidence *= 0.8  # Less aggressive reduction for single indicator (was 0.7)
             
             attack_detected = not is_live
             
             log.info(f"Advanced PAD Analysis Results:")
             hr_display = f"{hr_bpm:.1f}" if hr_bpm is not None else "N/A"
             log.info(f"  rPPG HR: {hr_display} BPM, SNR: {rppg_snr_db:.1f} dB, Live Prob: {rppg_live_prob:.3f}")
-            log.info(f"  Display Flicker Score: {flicker_score:.3f} (threshold: 0.95)")
-            log.info(f"  Planarity Score: {planarity_score:.3f} (threshold: 0.9)")
+            log.info(f"  Display Flicker Score: {flicker_score:.3f} (threshold: 0.99)")
+            log.info(f"  Planarity Score: {planarity_score:.3f} (threshold: 0.98)")
             log.info(f"  rPPG Failed: {rppg_failed}, Live OK: {live_ok}")
             log.info(f"  Screen Suspect: {screen_suspect}, Planar Suspect: {planar_suspect}")
             log.info(f"  Final Decision: {'LIVE' if is_live else 'SPOOF'} (confidence: {confidence:.3f})")
