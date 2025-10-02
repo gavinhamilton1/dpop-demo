@@ -68,6 +68,15 @@ export class UnifiedMobileService {
     try {
       logger.info('Setting up mobile session...');
       
+      // Step 0: Clear any existing session data to ensure fresh start
+      try {
+        await DpopFun.resetSession();
+        logger.info('Cleared existing session data');
+      } catch (error) {
+        logger.warn('Failed to clear existing session data:', error);
+        // Continue anyway - this might be expected if no session exists
+      }
+      
       // Step 1: Setup fresh mobile session
       const sessionData = await DpopFun.initializeFreshSession();
       logger.info('Mobile session setup completed');
