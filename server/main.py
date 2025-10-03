@@ -664,12 +664,19 @@ async def submit_username(req: Request):
             raise HTTPException(status_code=401, detail="Invalid session")
     
     # Create user record in users table
+    log.info(f"Creating user with username: {username}, session_id: {sid}")
     user_created = await DB.create_user(username, sid)
     if not user_created:
         raise HTTPException(status_code=500, detail="Failed to create user record")
     
     # Update session state to include username
+    log.info(f"Session state before username update: {session_data.get('state')}")
     await DB.update_session(sid, {"username": username})
+    log.info(f"User created and session updated successfully for username: {username}, session_id: {sid}")
+    
+    # Check session state after update
+    updated_session = await DB.get_session(sid)
+    log.info(f"Session state after username update: {updated_session.get('state')}")
     
     log.info("Username submitted - sid=%s username=%s rid=%s", sid, username, req.state.request_id)
     return JSONResponse({"username": username, "status": "success"})

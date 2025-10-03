@@ -319,13 +319,18 @@ def get_router(
         sid = req.session.get("sid"); s = await session_store.get_session(sid) if sid else None
         if not sid or not s:
             raise HTTPException(status_code=401, detail="no session")
+        log.info(f"Passkey registration - session state: {s.get('state')}")
         if s.get("state") != "bound":
+            log.warning(f"Session state is not 'bound': {s.get('state')}")
             raise HTTPException(status_code=403, detail="session must be DPoP-bound before passkey registration")
 
         # Use username as principal instead of BIK to persist across sessions
+        log.info(f"Passkey registration options - checking for user with session_id: {sid}")
         user = await DB.get_user_by_session(sid)
         if not user:
+            log.warning(f"No user found for session_id: {sid}")
             raise HTTPException(status_code=401, detail="No user bound to session")
+        log.info(f"User found for passkey registration: {user['username']}")
         
         principal = user["username"]  # Use username as principal
         username = user["username"]

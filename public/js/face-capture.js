@@ -241,7 +241,7 @@ import {
     
     mediaStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "user", width: {ideal: 720}, height: {ideal: 960} },
-      audio: true
+      audio: false
     });
     video.srcObject = mediaStream;
     await video.play();

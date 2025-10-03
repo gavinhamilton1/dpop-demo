@@ -103,7 +103,7 @@ export class LinkingService extends ApiService {
             <div class="verify-card hidden" id="camCard">
               <h2 class="verify-card-title">Scan QR from your phone</h2>
               <div class="camera-container">
-                <video id="qrVideo" class="verify-video" playsinline muted></video>
+                <video id="qrVideo" class="verify-video" playsinline muted style="transform: scaleX(-1);"></video>
                 <div class="privacy-overlay">
                   <div class="blur-overlay"></div>
                   <div class="scanning-blur"></div>
@@ -118,7 +118,7 @@ export class LinkingService extends ApiService {
                   </div>
                 </div>
               </div>
-              <canvas id="qrCanvas"></canvas>
+              <canvas id="qrCanvas" style="display: none;"></canvas>
               <div class="verify-actions" style="margin-top:1rem">
                 <button class="btn btn-secondary" id="stopCamBtn" type="button">Use code instead</button>
                 <span class="verify-subtitle" id="camHint">Position the QR code within the scanning area.</span>
