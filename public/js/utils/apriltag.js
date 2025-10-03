@@ -3,6 +3,7 @@
  * Provides rotating AprilTag overlay functionality for existing QR codes
  */
 
+if (typeof QRGenerator === 'undefined') {
 class QRGenerator {
     constructor() {
         this.canvasSize = 200;
@@ -23,7 +24,7 @@ class QRGenerator {
     async initializeAprilTagFamily() {
         try {
             // Load the 36h11 family configuration from local file
-            const response = await fetch('/public/families/36h11.json');
+            const response = await fetch('/public/apriltag-families/36h11.json');
             const tagConfig = await response.json();
             
             // Create AprilTag family instance
@@ -127,8 +128,6 @@ class QRGenerator {
         canvas.width = qrSize;
         canvas.height = qrSize;
         canvas.style.position = 'absolute';
-        canvas.style.top = '16px'; // Account for QR code div padding
-        canvas.style.left = '16px'; // Account for QR code div padding
         canvas.style.pointerEvents = 'none'; // Allow clicks to pass through
         canvas.style.zIndex = '10';
         
@@ -465,3 +464,4 @@ class QRGenerator {
 
 // Export for use
 window.QRGenerator = QRGenerator;
+}

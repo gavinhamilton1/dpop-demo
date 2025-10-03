@@ -1,6 +1,6 @@
 # server/db.py
 from __future__ import annotations
-import json, asyncio
+import json, asyncio, time, logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
 
@@ -11,6 +11,9 @@ from server.config import load_settings
 _SETTINGS = load_settings()
 # Use config-provided path (fallback to /tmp for Render compatibility)
 _DEFAULT_DB_PATH = Path(_SETTINGS.db_path if _SETTINGS.db_path else "/tmp/dpop-fun.db")
+
+# Logger instance
+log = logging.getLogger(__name__)
 print(f"DEBUG: Using database path: {_DEFAULT_DB_PATH}")
 
 class Database:
@@ -104,6 +107,27 @@ class Database:
           expires_at INTEGER NOT NULL,
           applied INTEGER NOT NULL DEFAULT 0
         );
+
+        -- Signal/Fingerprint data linked to BIK for cross-session comparison
+        CREATE TABLE IF NOT EXISTS signal_data (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          bik_jkt TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          device_type TEXT NOT NULL,
+          fingerprint_data TEXT NOT NULL,  -- JSON
+          ip_address TEXT,
+          geolocation_data TEXT,          -- JSON
+          bik_authenticated INTEGER DEFAULT 0,  -- 0 = not authenticated, 1 = authenticated
+          authenticated_user TEXT,        -- username when authenticated
+          authentication_method TEXT,     -- 'desktop passkey', 'face verify', 'mobile passkey'
+          authentication_timestamp INTEGER, -- when authentication occurred
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        -- Index for efficient BIK-based lookups
+        CREATE INDEX IF NOT EXISTS idx_signal_data_bik ON signal_data(bik_jkt);
+        CREATE INDEX IF NOT EXISTS idx_signal_data_session ON signal_data(session_id);
         """)
 
     async def close(self):
@@ -426,6 +450,272 @@ class Database:
         """Delete all face embeddings for a user"""
         await self.exec("DELETE FROM face_embeddings WHERE user_id=?", (user_id,))
         return True
+
+    # --- Link management methods ---
+    
+    async def create_link(self, link_id: str, owner_sid: str, principal: str = None, expires_at: int = None) -> bool:
+        """Create a new link record"""
+        try:
+            await self.exec(
+                "INSERT INTO links(id, owner_sid, status, principal, expires_at) VALUES(?, ?, 'pending', ?, ?)",
+                (link_id, owner_sid, principal, expires_at)
+            )
+            return True
+        except Exception:
+            return False
+
+    async def get_link(self, link_id: str) -> Optional[Dict[str, Any]]:
+        """Get a link by ID"""
+        row = await self.fetchone(
+            "SELECT id, owner_sid, status, principal, expires_at, applied FROM links WHERE id = ?",
+            (link_id,)
+        )
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "owner_sid": row["owner_sid"],
+            "status": row["status"],
+            "principal": row["principal"],
+            "expires_at": row["expires_at"],
+            "applied": bool(row["applied"])
+        }
+
+    async def update_link_status(self, link_id: str, status: str) -> bool:
+        """Update link status"""
+        try:
+            await self.exec(
+                "UPDATE links SET status = ? WHERE id = ?",
+                (status, link_id)
+            )
+            return True
+        except Exception:
+            return False
+
+    async def update_link_principal(self, link_id: str, principal: str) -> bool:
+        """Update link principal"""
+        try:
+            await self.exec(
+                "UPDATE links SET principal = ? WHERE id = ?",
+                (principal, link_id)
+            )
+            return True
+        except Exception:
+            return False
+
+    async def mark_link_applied(self, link_id: str) -> bool:
+        """Mark link as applied"""
+        try:
+            await self.exec(
+                "UPDATE links SET applied = 1 WHERE id = ?",
+                (link_id,)
+            )
+            return True
+        except Exception:
+            return False
+
+    async def delete_link(self, link_id: str) -> bool:
+        """Delete a link"""
+        try:
+            await self.exec("DELETE FROM links WHERE id = ?", (link_id,))
+            return True
+        except Exception:
+            return False
+
+    async def delete_links_by_owner(self, owner_sid: str) -> bool:
+        """Delete all links for an owner"""
+        try:
+            await self.exec("DELETE FROM links WHERE owner_sid = ?", (owner_sid,))
+            return True
+        except Exception:
+            return False
+
+    async def cleanup_expired_links(self) -> int:
+        """Clean up expired links and return count of deleted links"""
+        try:
+            result = await self.exec(
+                "DELETE FROM links WHERE expires_at < strftime('%s','now')"
+            )
+            # Get count of deleted rows
+            row = await self.fetchone("SELECT changes() as count")
+            return row["count"] if row else 0
+        except Exception:
+            return 0
+
+    # --- Signal Data management methods ---
+    
+    async def store_signal_data(self, bik_jkt: str, session_id: str, device_type: str, 
+                               fingerprint_data: dict, ip_address: str = None, 
+                               geolocation_data: dict = None) -> bool:
+        """Store signal/fingerprint data linked to BIK"""
+        try:
+            await self.exec(
+                """INSERT INTO signal_data(bik_jkt, session_id, device_type, fingerprint_data, 
+                   ip_address, geolocation_data, created_at, updated_at) 
+                   VALUES(?, ?, ?, ?, ?, ?, strftime('%s','now'), strftime('%s','now'))""",
+                (bik_jkt, session_id, device_type, json.dumps(fingerprint_data, separators=(",", ":")),
+                 ip_address, json.dumps(geolocation_data or {}, separators=(",", ":")),)
+            )
+            return True
+        except Exception:
+            return False
+
+    async def get_signal_data_by_bik(self, bik_jkt: str) -> List[Dict[str, Any]]:
+        """Get all signal data for a BIK"""
+        rows = await self.fetchall(
+            "SELECT * FROM signal_data WHERE bik_jkt = ? ORDER BY created_at DESC",
+            (bik_jkt,)
+        )
+        signal_data = []
+        for r in rows:
+            signal_data.append({
+                "id": r["id"],
+                "bik_jkt": r["bik_jkt"],
+                "session_id": r["session_id"],
+                "device_type": r["device_type"],
+                "fingerprint_data": json.loads(r["fingerprint_data"]),
+                "ip_address": r["ip_address"],
+                "geolocation_data": json.loads(r["geolocation_data"]) if r["geolocation_data"] else {},
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"]
+            })
+        return signal_data
+
+    async def get_latest_signal_data_by_bik(self, bik_jkt: str) -> Optional[Dict[str, Any]]:
+        """Get the most recent signal data for a BIK"""
+        row = await self.fetchone(
+            "SELECT * FROM signal_data WHERE bik_jkt = ? ORDER BY created_at DESC LIMIT 1",
+            (bik_jkt,)
+        )
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "bik_jkt": row["bik_jkt"],
+            "session_id": row["session_id"],
+            "device_type": row["device_type"],
+            "fingerprint_data": json.loads(row["fingerprint_data"]),
+            "ip_address": row["ip_address"],
+            "geolocation_data": json.loads(row["geolocation_data"]) if row["geolocation_data"] else {},
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"]
+        }
+
+    async def update_signal_data(self, signal_id: int, fingerprint_data: dict, 
+                                ip_address: str = None, geolocation_data: dict = None) -> bool:
+        """Update existing signal data"""
+        try:
+            await self.exec(
+                """UPDATE signal_data SET fingerprint_data = ?, ip_address = ?, 
+                   geolocation_data = ?, updated_at = strftime('%s','now') WHERE id = ?""",
+                (json.dumps(fingerprint_data, separators=(",", ":")), ip_address,
+                 json.dumps(geolocation_data or {}, separators=(",", ":")), signal_id)
+            )
+            return True
+        except Exception:
+            return False
+
+    async def delete_signal_data_by_session(self, session_id: str) -> bool:
+        """Delete signal data for a specific session"""
+        try:
+            await self.exec("DELETE FROM signal_data WHERE session_id = ?", (session_id,))
+            return True
+        except Exception:
+            return False
+
+    async def cleanup_old_signal_data(self, days_old: int = 30) -> int:
+        """Clean up signal data older than specified days"""
+        try:
+            result = await self.exec(
+                "DELETE FROM signal_data WHERE created_at < strftime('%s','now') - ?",
+                (days_old * 24 * 60 * 60,)
+            )
+            row = await self.fetchone("SELECT changes() as count")
+            return row["count"] if row else 0
+        except Exception:
+            return 0
+
+    async def mark_bik_authenticated(self, bik_jkt: str, session_id: str, username: str, method: str):
+        """Mark a BIK as authenticated in the latest signal_data record, or create one if none exists"""
+        timestamp = int(time.time())
+        
+        # First, try to update the most recent record for this BIK
+        result = await self.exec("""
+            UPDATE signal_data 
+            SET bik_authenticated = 1,
+                authenticated_user = ?,
+                authentication_method = ?,
+                authentication_timestamp = ?,
+                updated_at = ?
+            WHERE bik_jkt = ? 
+            AND id = (
+                SELECT id FROM signal_data 
+                WHERE bik_jkt = ? 
+                ORDER BY created_at DESC 
+                LIMIT 1
+            )
+        """, (username, method, timestamp, timestamp, bik_jkt, bik_jkt))
+        
+        # Check if any rows were updated
+        rows_updated = result.rowcount if hasattr(result, 'rowcount') else 0
+        log.info(f"UPDATE query affected {rows_updated} rows for BIK {bik_jkt[:8]}")
+        
+        if rows_updated == 0:
+            # No existing record found, create a new one
+            log.info("No existing signal_data record found for BIK %s, creating new authentication record", bik_jkt[:8])
+            try:
+                await self.exec("""
+                    INSERT INTO signal_data (
+                        bik_jkt, session_id, device_type, fingerprint_data,
+                        ip_address, geolocation_data, created_at, updated_at,
+                        bik_authenticated, authenticated_user, authentication_method, authentication_timestamp
+                    ) VALUES (?, ?, 'authentication', '{}', NULL, NULL, ?, ?, 1, ?, ?, ?)
+                """, (bik_jkt, session_id, timestamp, timestamp, username, method, timestamp))
+                log.info("Successfully created new signal_data record for BIK %s authentication", bik_jkt[:8])
+            except Exception as e:
+                log.error(f"Failed to create signal_data record for BIK {bik_jkt[:8]}: {e}", exc_info=True)
+        else:
+            log.info("Updated existing signal_data record for BIK %s authentication", bik_jkt[:8])
+        
+        log.info("Marked BIK %s as authenticated for user %s via %s", bik_jkt[:8], username, method)
+
+    async def is_bik_authenticated(self, bik_jkt: str) -> bool:
+        """Check if a BIK has ever been authenticated"""
+        log.info(f"Checking if BIK {bik_jkt[:8] if bik_jkt else 'None'} is authenticated")
+        result = await self.fetchone("""
+            SELECT 1 FROM signal_data 
+            WHERE bik_jkt = ? AND bik_authenticated = 1
+            LIMIT 1
+        """, (bik_jkt,))
+        log.info(f"BIK authentication query result: {result}")
+        return result is not None
+
+    async def get_bik_authentication_history(self, bik_jkt: str):
+        """Get authentication history for a BIK"""
+        rows = await self.fetchall("""
+            SELECT bik_authenticated, authenticated_user, authentication_method, 
+                   authentication_timestamp, created_at, session_id
+            FROM signal_data 
+            WHERE bik_jkt = ?
+            ORDER BY created_at DESC
+        """, (bik_jkt,))
+        
+        # Convert rows to dictionaries
+        return [dict(row) for row in rows]
+
+    async def get_authenticated_biks(self):
+        """Get all BIKs that have been authenticated"""
+        rows = await self.fetchall("""
+            SELECT DISTINCT bik_jkt, authenticated_user, authentication_method, 
+                   MAX(authentication_timestamp) as last_authenticated
+            FROM signal_data 
+            WHERE bik_authenticated = 1
+            GROUP BY bik_jkt
+            ORDER BY last_authenticated DESC
+        """)
+        
+        # Convert rows to dictionaries
+        return [dict(row) for row in rows]
 
 
 # Export a singleton used by main.py

@@ -2,7 +2,7 @@
 // WebAuthn/Passkey service
 
 import { ApiService } from './ApiService.js';
-import * as Passkeys from '../passkeys.js';
+import * as Passkeys from '../core/passkeys.js';
 
 export class PasskeyService extends ApiService {
   constructor() {

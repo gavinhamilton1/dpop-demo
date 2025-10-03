@@ -9,8 +9,9 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from server.config import load_settings
 from server.utils import b64u, b64u_dec, jws_es256_sign, jws_es256_verify, now
+from server.db import DB
 
-log = logging.getLogger("stronghold")
+log = logging.getLogger("dpop-fun")
 SETTINGS = load_settings()
 
 # ---------------- utils ----------------
@@ -30,6 +31,35 @@ def _nonce_headers(ctx: Any) -> Dict[str, str]:
 
 _LINKS: Dict[str, Dict[str, Any]] = {}
 _LINKS_LOCK = threading.RLock()
+
+async def _load_links_from_db():
+    """Load existing links from database on startup"""
+    try:
+        # Clean up expired links first
+        expired_count = await DB.cleanup_expired_links()
+        if expired_count > 0:
+            log.info("Cleaned up %d expired links", expired_count)
+        
+        # Load all active links
+        rows = await DB.fetchall("SELECT * FROM links WHERE expires_at > strftime('%s','now')")
+        with _LINKS_LOCK:
+            for row in rows:
+                _LINKS[row["id"]] = {
+                    "rid": row["id"],
+                    "desktop_sid": row["owner_sid"],
+                    "status": row["status"],
+                    "principal": row["principal"],
+                    "expires_at": row["expires_at"],
+                    "applied": bool(row["applied"])
+                }
+        log.info("Loaded %d active links from database", len(_LINKS))
+    except Exception as e:
+        log.error("Failed to load links from database: %s", e)
+
+# Public function to initialize links from database
+async def initialize_links():
+    """Initialize links from database - call this on server startup"""
+    await _load_links_from_db()
 
 # per-link async queues for SSE
 _WATCHERS: Dict[str, List[asyncio.Queue]] = {}
@@ -93,6 +123,19 @@ def _put_link(link_id: str, rec: Dict[str, Any]):
     _notify_watchers(link_id, event)
     _notify_websockets(link_id, event)
 
+async def _persist_link_to_db(link_id: str, rec: Dict[str, Any]):
+    """Persist link to database"""
+    try:
+        await DB.create_link(
+            link_id=link_id,
+            owner_sid=rec.get("desktop_sid", ""),
+            principal=rec.get("principal"),
+            expires_at=rec.get("expires_at", rec.get("exp"))
+        )
+        log.info("Link persisted to database: %s", link_id)
+    except Exception as e:
+        log.error("Failed to persist link to database: %s", e)
+
 def _public_view(rec: Dict[str, Any]) -> Dict[str, Any]:
     now_ts = now()
     return {
@@ -129,10 +172,17 @@ def get_router(
         if not sid or not s:
             raise HTTPException(status_code=401, detail="no session")
 
+        # Get flow type from request body (default to registration for backward compatibility)
+        try:
+            body = await req.json()
+            flow_type = body.get("flow_type", "registration")
+        except:
+            flow_type = "registration"
+
         rid = secrets.token_urlsafe(12)
         iat = now_fn()
         exp = iat + _LINK_TTL
-        payload = {"iss":"stronghold","aud":"link","iat":iat,"exp":exp,"lid":rid}
+        payload = {"iss":"dpop-fun","aud":"link","iat":iat,"exp":exp,"lid":rid}
         token = jws_es256_sign(payload)
 
         origin, _ = canonicalize_origin_and_url(req)
@@ -141,25 +191,34 @@ def get_router(
         # This ensures the mobile device accesses the same domain as the desktop
         qr_origin = origin
         
+        # Generate different QR URLs based on flow type
+        if flow_type == "login":
+            qr_url = f"{qr_origin}/public/mobile-login.html?lid={rid}"
+        else:
+            qr_url = f"{qr_origin}/public/link.html?lid={rid}"
+        
         # Log the QR generation for debugging
-        log.info("QR generation - desktop_origin=%s qr_origin=%s", origin, qr_origin)
-            
-        qr_url = f"{qr_origin}/public/link.html?lid={rid}"
+        log.info("QR generation - desktop_origin=%s qr_origin=%s flow_type=%s qr_url=%s", origin, qr_origin, flow_type, qr_url)
 
         # Get desktop session device type for logging
         desktop_device_type = s.get("device_type", "unknown")
         
-        _put_link(rid, {
+        link_data = {
             "rid": rid,
             "desktop_sid": sid,
             "status": "pending",
             "token": token,
             "created_at": iat,
             "exp": exp,
-        })
+            "expires_at": exp,
+        }
+        _put_link(rid, link_data)
+        
+        # Persist to database
+        await _persist_link_to_db(rid, link_data)
         log.info("Link created - rid=%s desktop_sid=%s desktop_device_type=%s status=pending exp=%s", 
                 rid, sid, desktop_device_type, exp)
-        return JSONResponse({"linkId": rid, "exp": exp, "qr_url": qr_url}, headers=_nonce_headers(ctx))
+        return JSONResponse({"linkId": rid, "exp": exp, "qr_url": qr_url, "flow_type": flow_type}, headers=_nonce_headers(ctx))
 
     @router.get("/link/status/{link_id}")
     async def link_status(link_id: str, req: Request):
@@ -251,9 +310,6 @@ def get_router(
 
         async def event_gen():
             try:
-                # Send initial snapshot
-                yield f"event: status\ndata: {json.dumps(initial)}\n\n"
-                log.info("Link events - sent initial snapshot")
                 # Heartbeat every 15s if no events
                 while True:
                     try:
@@ -441,7 +497,29 @@ def get_router(
         _notify_watchers(lid, {"type":"status", **_public_view(_LINKS[lid])})
         _notify_websockets(lid, {"type":"status", **_public_view(_LINKS[lid])})
         log.info("Mobile link start - notified watchers and websockets for lid=%s", lid)
-        return {"ok": True, "link_id": lid}
+        
+        # Get desktop session data to return username
+        desktop_sid = rec.get("desktop_sid")
+        desktop_username = None
+        if desktop_sid:
+            try:
+                desktop_session = await store.get_session(desktop_sid)
+                if desktop_session:
+                    # Get username from desktop session
+                    user = await DB.get_user_by_session(desktop_sid)
+                    if user:
+                        desktop_username = user.get("username")
+                        log.info("Desktop username found for mobile link - lid=%s desktop_sid=%s username=%s", 
+                                lid, desktop_sid, desktop_username)
+                    else:
+                        log.warning("No user found for desktop session - lid=%s desktop_sid=%s", lid, desktop_sid)
+                else:
+                    log.warning("Desktop session not found - lid=%s desktop_sid=%s", lid, desktop_sid)
+            except Exception as e:
+                log.error("Failed to get desktop session data - lid=%s desktop_sid=%s error=%s", 
+                         lid, desktop_sid, str(e))
+        
+        return {"ok": True, "link_id": lid, "desktop_username": desktop_username}
 
     @router.post("/link/mobile/complete")
     async def link_mobile_complete(body: Dict[str, Any], req: Request, ctx=Depends(require_dpop)):
@@ -630,7 +708,7 @@ def get_router(
                 raise HTTPException(status_code=404, detail="no such link")
         # Re-issue token pointing at same link (keeps original exp)
         now_ts = now()
-        payload = {"iss":"stronghold","aud":"link","iat":now_ts,"exp":rec["exp"],"lid":link_id}
+        payload = {"iss":"dpop-fun","aud":"link","iat":now_ts,"exp":rec["exp"],"lid":link_id}
         token = jws_es256_sign(payload)
         origin, _ = canonicalize_origin_and_url(req)
         uri = f"{origin}/public/link.html?lid={link_id}"

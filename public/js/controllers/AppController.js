@@ -1,20 +1,20 @@
 // src/controllers/AppController.js
 // Main application controller
 
-import { ButtonManager } from '../components/ButtonManager.js';
-import { Logger } from '../components/Logger.js';
+import { ButtonManager } from './ButtonManager.js';
+import { logger } from '../utils/logging.js';
 import { DpopFunService } from '../services/DpopFunService.js';
 import { PasskeyService } from '../services/PasskeyService.js';
 import { LinkingService } from '../services/LinkingService.js';
 import { FingerprintService } from '../services/FingerprintService.js';
 import { ErrorHandler } from '../utils/ErrorHandler.js';
+import { createQRContainer } from '../utils/qr-generator.js';
 
 export class AppController {
   constructor() {
     // Initialize components
-    this.logger = new Logger('logContainer');
     this.buttonManager = new ButtonManager();
-    this.errorHandler = new ErrorHandler(this.logger);
+    this.errorHandler = new ErrorHandler(logger);
     
     // Initialize services
     this.dpopFun = new DpopFunService();
@@ -40,11 +40,32 @@ export class AppController {
   }
 
   /**
+   * Check for debug mode and show/hide admin controls
+   */
+  checkDebugMode() {
+    // Check for debug=1 query parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const isDebugMode = urlParams.get('debug') === '1';
+    
+    const adminSection = document.getElementById('adminSection');
+    if (adminSection) {
+      adminSection.style.display = isDebugMode ? 'block' : 'none';
+    }
+    
+    if (isDebugMode) {
+      logger.info('Debug mode enabled - admin controls visible');
+    }
+  }
+
+  /**
    * Initialize the application
    */
   async initialize() {
     try {
-      this.logger.info('Initializing application...');
+      logger.info('Initializing application...');
+      
+      // Check debug mode first
+      this.checkDebugMode();
       
             // Initialize button manager
       this.buttonManager.initialize([
@@ -73,7 +94,7 @@ export class AppController {
       this.setupModalHandlers();
       
       this.state.isInitialized = true;
-      this.logger.success('Application initialized successfully');
+      logger.success('Application initialized successfully');
       
     } catch (error) {
       this.handleError(error, 'Application initialization');
@@ -103,12 +124,12 @@ export class AppController {
         this.buttonManager.disable('regBtn', reason);
         this.buttonManager.disable('authBtn', reason);
         
-        this.logger.warn(`Passkey buttons disabled: ${reason}`);
+        logger.warn(`Passkey buttons disabled: ${reason}`);
       }
       
     } catch (error) {
       // Don't fail initialization if passkey check fails
-      this.logger.warn('Passkey support check failed, continuing without passkeys', error);
+      logger.warn('Passkey support check failed, continuing without passkeys', error);
       this.state.passkeySupported = false;
       this.state.passkeyEnabled = false;
       
@@ -127,13 +148,13 @@ export class AppController {
       const data = await this.dpopFun.secureRequest('/onboarding/current-user');
       
       this.state.username = data.username;
-      this.logger.info('Existing username found:', data.username);
+      logger.info('Existing username found:', data.username);
       
       // Show success message for existing username
       this.showUsernameSuccess(data.username, 'signin');
       return true;
     } catch (error) {
-      this.logger.debug('Could not check for existing username:', error);
+      logger.debug('Could not check for existing username:', error);
       return false;
     }
   }
@@ -252,11 +273,11 @@ export class AppController {
         const data = await response.json();
         this.displaySignalSummary(data.fingerprint, data.device_type);
       } else {
-        this.logger.debug('Could not load fingerprint data for signal summary');
+        logger.debug('Could not load fingerprint data for signal summary');
         this.hideSignalSummary();
       }
     } catch (error) {
-      this.logger.debug('Failed to load signal summary:', error);
+      logger.debug('Failed to load signal summary:', error);
       this.hideSignalSummary();
     }
   }
@@ -478,130 +499,47 @@ export class AppController {
    */
   async autoRegisterBrowserAndBindDPoP() {
     try {
-      // Debug: Check if dpopFun service is properly initialized
-      if (!this.dpopFun) {
-        throw new Error('DpopFun service not initialized');
+      // Import the core DPoP functions
+      const DpopFun = await import('../core/dpop-fun.js');
+      
+      // Use the core session setup logic
+      const sessionData = await DpopFun.setupSession();
+      
+      // Update local state
+      this.state.hasSession = sessionData.hasSession;
+      this.state.hasBIK = sessionData.hasBIK;
+      this.state.hasDPoP = sessionData.hasDPoP;
+
+      // Enable passkey service authentication after DPoP binding
+      if (sessionData.hasDPoP) {
+        this.passkeys.setAuthenticated(true);
+        await this.checkExistingPasskeys();
       }
       
-      // Check if we already have everything we need AND the session is actually valid
-      if (this.state.hasSession && this.state.hasBIK && this.state.hasDPoP) {
-        // Verify the session is actually valid on the server
-        const sessionStatus = await this.dpopFun.getSessionStatus();
+      // Update UI based on session state
+      if (sessionData.hasSession && sessionData.hasDPoP) {
+        const ttlSeconds = sessionData.sessionStatus?.ttl_seconds || 0;
         
-        if (sessionStatus && sessionStatus.valid && sessionStatus.dpop_bound) {
-          const ttlSeconds = sessionStatus?.ttl_seconds || 0;
-          
+        if (sessionData.details?.serverSession && sessionData.details?.localBIK) {
+          // Existing session restored
           this.updateSessionStatusIndicator('reconnect', '✅', 'Session Restored', 'Browser identity and DPoP binding restored from existing session', ttlSeconds);
-          
-          if (ttlSeconds > 0) {
-            this.startTTLTimer(ttlSeconds);
-          }
-          
-          this.logger.info('Session already complete - no registration needed');
-          return;
         } else {
-          this.logger.info('State indicates session exists but server says invalid - will recreate');
-          // Reset state since server says session is invalid
-          this.state.hasSession = false;
-          this.state.hasBIK = false;
-          this.state.hasDPoP = false;
+          // New session created
+          this.updateSessionStatusIndicator('new-session', '✅', 'New Session Created', 'Browser identity registered and DPoP token bound successfully', ttlSeconds);
         }
-      }
-
-      // Check if we have a BIK but no DPoP binding
-      if (this.state.hasBIK && !this.state.hasDPoP) {
-        this.updateSessionStatusIndicator('loading', '🔄', 'Reconnecting...', 'Found existing browser identity, binding DPoP token');
-        
-        this.logger.info('Found existing BIK, reinitializing session and binding DPoP...');
-        
-        // Always ensure session is properly initialized with CSRF token for DPoP binding
-        // Even existing sessions need fresh CSRF tokens for binding operations
-        const session = await this.dpopFun.initSession();
-        this.state.hasSession = true;
-        this.logger.success('Session initialized with CSRF token', session);
-        
-        // Debug: Check if bindDPoP method exists
-        if (typeof this.dpopFun.bindDPoP !== 'function') {
-          throw new Error('bindDPoP method not found on DpopFun service');
-        }
-        
-        const dpop = await this.dpopFun.bindDPoP();
-        this.state.hasDPoP = true;
-        
-        // Enable passkey service authentication after DPoP binding
-        this.passkeys.setAuthenticated(true);
-        
-        // Check for existing passkeys now that we're authenticated
-        await this.checkExistingPasskeys();
-        
-        // Fetch TTL after binding
-        const sessionStatus = await this.dpopFun.getSessionStatus();
-        const ttlSeconds = sessionStatus?.ttl_seconds || 0;
-        
-        this.updateSessionStatusIndicator('reconnect', '✅', 'Reconnected Successfully', 'Browser identity restored and DPoP token bound', ttlSeconds);
         
         if (ttlSeconds > 0) {
           this.startTTLTimer(ttlSeconds);
         }
         
-        this.logger.success('DPoP binding completed successfully', dpop);
-        return;
+        logger.success('Session setup completed successfully', sessionData);
+      } else {
+        throw new Error('Session setup failed - missing required components');
       }
-
-      // Need to do full registration
-      this.updateSessionStatusIndicator('loading', '🔄', 'Creating New Session...', 'No existing browser identity found, registering new session');
-      
-      this.logger.info('No existing session found, performing full registration...');
-      
-      // Step 1: Initialize session
-      this.logger.info('Step 1: Initializing session...');
-      const session = await this.dpopFun.initSession();
-      this.state.hasSession = true;
-      this.logger.success('Session initialized successfully', session);
-      
-      // Collect device fingerprinting data after session is confirmed working
-      console.log('About to collect fingerprint...');
-      await this.collectFingerprint();
-      console.log('Fingerprint collection completed');
-      
-      // Step 2: Register BIK
-      this.logger.info('Step 2: Registering browser identity...');
-      const bik = await this.dpopFun.registerBIK();
-      this.state.hasBIK = true;
-      this.logger.success('Browser identity registered successfully', bik);
-      
-      // Step 3: Bind DPoP
-      this.logger.info('Step 3: Binding DPoP token...');
-      
-      // Debug: Check if bindDPoP method exists
-      if (typeof this.dpopFun.bindDPoP !== 'function') {
-        throw new Error('bindDPoP method not found on DpopFun service');
-      }
-      
-      const dpop = await this.dpopFun.bindDPoP();
-      this.state.hasDPoP = true;
-      
-      // Enable passkey service authentication after DPoP binding
-      this.passkeys.setAuthenticated(true);
-      
-      // Check for existing passkeys now that we're authenticated
-      await this.checkExistingPasskeys();
-      
-      // Fetch TTL after full registration
-      const sessionStatus = await this.dpopFun.getSessionStatus();
-      const ttlSeconds = sessionStatus?.ttl_seconds || 0;
-      
-      this.updateSessionStatusIndicator('new-session', '✅', 'New Session Created', 'Browser identity registered and DPoP token bound successfully', ttlSeconds);
-      
-      if (ttlSeconds > 0) {
-        this.startTTLTimer(ttlSeconds);
-      }
-      
-      this.logger.success('Automatic browser registration and DPoP binding completed successfully', { session, bik, dpop });
       
     } catch (error) {
       this.updateSessionStatusIndicator('loading', '❌', 'Registration Failed', `Error: ${error.message}`);
-      this.logger.error('Automatic registration failed:', error);
+      logger.error('Automatic registration failed:', error);
       throw error;
     }
   }
@@ -611,15 +549,15 @@ export class AppController {
    */
   async checkExistingSession() {
     try {
-      this.logger.info('Checking for existing session...');
+      logger.info('Checking for existing session...');
       
       // Check if we have a valid session
       const sessionStatus = await this.dpopFun.getSessionStatus();
-      this.logger.debug('Session status received:', sessionStatus);
+      logger.debug('Session status received:', sessionStatus);
       
       if (sessionStatus && sessionStatus.valid) {
-        this.logger.info('Valid session found, checking DPoP binding...');
-        this.logger.debug('Session details:', {
+        logger.info('Valid session found, checking DPoP binding...');
+        logger.debug('Session details:', {
           valid: sessionStatus.valid,
           state: sessionStatus.state,
           bik_registered: sessionStatus.bik_registered,
@@ -633,7 +571,7 @@ export class AppController {
         
         // Check if DPoP is bound
         if (sessionStatus.dpop_bound) {
-          this.logger.info('DPoP binding found - resuming session to get fresh binding token');
+          logger.info('DPoP binding found - resuming session to get fresh binding token');
           this.state.hasSession = true;
           this.state.hasBIK = true;
           this.state.hasDPoP = true;
@@ -652,10 +590,10 @@ export class AppController {
           this.buttonManager.setSuccess('bikBtn', 'BIK restored!', 0);
           this.buttonManager.setSuccess('dpopBtn', 'DPoP restored!', 0);
           
-          this.logger.success('Session resume completed - ready for secure operations');
+          logger.success('Session resume completed - ready for secure operations');
           
         } else if (sessionStatus.bik_registered) {
-          this.logger.info('BIK registered but DPoP not bound');
+          logger.info('BIK registered but DPoP not bound');
           this.state.hasBIK = true;
           
           // Set success state for session and BIK (no auto-reset for restored sessions)
@@ -663,7 +601,7 @@ export class AppController {
           this.buttonManager.setSuccess('initBtn', 'Session restored!', 0);
           this.buttonManager.setSuccess('bikBtn', 'BIK restored!', 0);
         } else {
-          this.logger.info('Session exists but BIK not registered');
+          logger.info('Session exists but BIK not registered');
           
           // Set success state for session only (no auto-reset for restored sessions)
           // registerBrowserBtn removed - status shown in session indicator
@@ -671,11 +609,11 @@ export class AppController {
         }
         
       } else {
-        this.logger.info('No valid session found - starting fresh');
+        logger.info('No valid session found - starting fresh');
       }
       
     } catch (error) {
-      this.logger.warn('Failed to check existing session, starting fresh', error);
+      logger.warn('Failed to check existing session, starting fresh', error);
       // Continue with fresh state
     }
   }
@@ -689,13 +627,13 @@ export class AppController {
       this.state.hasExistingPasskeys = hasPasskeys;
       
       if (hasPasskeys) {
-        this.logger.info('Existing passkeys found for this domain');
+        logger.info('Existing passkeys found for this domain');
       } else {
-        this.logger.info('No existing passkeys found for this domain');
+        logger.info('No existing passkeys found for this domain');
       }
       
     } catch (error) {
-      this.logger.warn('Failed to check existing passkeys', error);
+      logger.warn('Failed to check existing passkeys', error);
       this.state.hasExistingPasskeys = false;
     }
   }
@@ -767,7 +705,7 @@ export class AppController {
         
         // Success - show success message
         this.showUsernameSuccess(username);
-        this.logger.success(`Username '${username}' submitted successfully!`);
+        logger.success(`Username '${username}' submitted successfully!`);
         
         // Store username in state
         this.state.username = username;
@@ -778,7 +716,7 @@ export class AppController {
       } catch (error) {
         // Only show error for unexpected network/server errors
         this.showUsernameError('Network error. Please try again.');
-        this.logger.error('Unexpected error during username submission:', error);
+        logger.error('Unexpected error during username submission:', error);
       } finally {
         // Re-enable form
         submitBtn.disabled = false;
@@ -943,7 +881,7 @@ export class AppController {
         
         // Success - show success message
         this.showUsernameSuccess(username, 'signin');
-        this.logger.success(`Welcome back, ${username}!`);
+        logger.success(`Welcome back, ${username}!`);
         
         // Store username in state
         this.state.username = username;
@@ -954,7 +892,7 @@ export class AppController {
       } catch (error) {
         // Only show error for unexpected network/server errors
         this.showSigninError('Network error. Please try again.');
-        this.logger.error('Unexpected error during sign-in:', error);
+        logger.error('Unexpected error during sign-in:', error);
       } finally {
         // Re-enable form
         submitBtn.disabled = false;
@@ -1097,7 +1035,7 @@ export class AppController {
       // Auto-start the face capture process
       await window.faceCapture.startCapture();
     } catch (error) {
-      this.logger.error('Failed to initialize face capture:', error);
+      logger.error('Failed to initialize face capture:', error);
       this.showFaceStatus('error', 'Failed to initialize face capture. Please refresh and try again.');
     }
   }
@@ -1213,7 +1151,7 @@ export class AppController {
       this.updateState();
       
       this.buttonManager.setSuccess('initBtn', 'Session initialized!');
-      this.logger.success('Session initialized successfully', session);
+      logger.success('Session initialized successfully', session);
       
       // Collect device fingerprinting data after session is confirmed working
       console.log('About to collect fingerprint...');
@@ -1228,16 +1166,16 @@ export class AppController {
    */
   async collectFingerprint() {
     try {
-      this.logger.info('Starting fingerprint collection...');
+      logger.info('Starting fingerprint collection...');
       
       // Use the centralized FingerprintService
       const result = await FingerprintService.collectAndSendFingerprint('desktop');
       
-      this.logger.info('Fingerprint collection completed successfully');
+      logger.info('Fingerprint collection completed successfully');
       return result;
     } catch (error) {
       console.log('FINGERPRINT COLLECTION FAILED:', error);
-      this.logger.error('Failed to collect fingerprint:', error);
+      logger.error('Failed to collect fingerprint:', error);
       // Don't throw - fingerprinting failure shouldn't break session initialization
     }
   }
@@ -1316,7 +1254,7 @@ export class AppController {
       this.updateState();
       
       this.buttonManager.setSuccess('bikBtn', 'BIK registered!');
-      this.logger.success('BIK registered successfully', bik);
+      logger.success('BIK registered successfully', bik);
       
     }, 'BIK registration', this.handleError);
   }
@@ -1328,8 +1266,8 @@ export class AppController {
     await this.errorHandler.handleAsync(async () => {
       this.buttonManager.setLoading('dpopBtn', 'Binding DPoP...');
       
-      this.logger.debug('Starting DPoP binding process...');
-      this.logger.debug('Current state before binding:', {
+      logger.debug('Starting DPoP binding process...');
+      logger.debug('Current state before binding:', {
         hasSession: this.state.hasSession,
         hasBIK: this.state.hasBIK,
         hasDPoP: this.state.hasDPoP
@@ -1337,7 +1275,7 @@ export class AppController {
       
       const dpop = await this.dpopFun.bindDPoP();
       
-      this.logger.debug('DPoP binding completed:', dpop);
+      logger.debug('DPoP binding completed:', dpop);
       
       this.state.hasDPoP = true;
       
@@ -1350,7 +1288,7 @@ export class AppController {
       this.updateState();
       
       this.buttonManager.setSuccess('dpopBtn', 'DPoP bound!');
-      this.logger.success('DPoP bound successfully', dpop);
+      logger.success('DPoP bound successfully', dpop);
       
     }, 'DPoP binding', this.handleError);
   }
@@ -1379,13 +1317,13 @@ export class AppController {
         this.updateState();
         
         this.buttonManager.setSuccess('regBtn', 'Passkey created!');
-        this.logger.success('Passkey registered successfully', result);
+        logger.success('Passkey registered successfully', result);
         
       } catch (error) {
         // Handle user cancellation gracefully
         if (error.message && error.message.includes('cancelled')) {
           this.buttonManager.reset('regBtn');
-          this.logger.info('Passkey registration cancelled by user');
+          logger.info('Passkey registration cancelled by user');
           return; // Don't treat cancellation as an error
         }
         
@@ -1407,13 +1345,13 @@ export class AppController {
         const result = await this.passkeys.authenticatePasskey();
         
         this.buttonManager.setSuccess('authBtn', 'Authenticated!');
-        this.logger.success('Passkey authentication successful', result);
+        logger.success('Passkey authentication successful', result);
         
       } catch (error) {
         // Handle user cancellation gracefully
         if (error.message && error.message.includes('cancelled')) {
           this.buttonManager.reset('authBtn');
-          this.logger.info('Passkey authentication cancelled by user');
+          logger.info('Passkey authentication cancelled by user');
           return; // Don't treat cancellation as an error
         }
         
@@ -1446,7 +1384,7 @@ export class AppController {
       this.monitorLinkingStatus(linkData.linkId);
       
       this.buttonManager.setSuccess('linkBtn', 'QR created!');
-      this.logger.success('Cross-device linking started', linkData);
+      logger.success('Cross-device linking started', linkData);
       
     }, 'Cross-device linking', this.handleError);
   }
@@ -1459,7 +1397,7 @@ export class AppController {
     const onStatusUpdate = (status) => {
       // Handle different message types
       if (status.type === 'status') {
-        this.logger.info(`Linking status: ${status.status}`, status);
+        logger.info(`Linking status: ${status.status}`, status);
         
         if (status.status === 'scanned') {
           this.updateQRStatus('scanned');
@@ -1469,15 +1407,15 @@ export class AppController {
           this.handleLinkingFailed(status.error);
         }
       } else if (status.type === 'signature') {
-        this.logger.info('Signature data received', status.data);
+        logger.info('Signature data received', status.data);
         // Handle signature data if needed
       } else {
-        this.logger.info('Unknown message type received', status);
+        logger.info('Unknown message type received', status);
       }
     };
 
     const onError = (error) => {
-      this.logger.error('Linking status monitoring failed', error);
+      logger.error('Linking status monitoring failed', error);
     };
 
     // Try SSE first, fallback to polling
@@ -1501,8 +1439,8 @@ export class AppController {
       this.state.isLinking = false;
       this.updateState();
       
-      this.logger.success('Cross-device linking completed successfully');
-      this.logger.info('Redirecting to verify page to enter BC code...');
+      logger.success('Cross-device linking completed successfully');
+      logger.info('Redirecting to verify page to enter BC code...');
       
       // Redirect to verify page to enter BC code
       setTimeout(() => {
@@ -1523,7 +1461,7 @@ export class AppController {
     this.state.isLinking = false;
     this.updateState();
     
-    this.logger.error('Cross-device linking failed', error);
+    logger.error('Cross-device linking failed', error);
   }
 
 
@@ -1533,15 +1471,8 @@ export class AppController {
    * @param {string} linkId - Link ID
    */
   createQRCode(qrData, linkId) {
-    const container = document.createElement('div');
-    container.className = 'qr-container';
-    container.innerHTML = `
-      <h3>Scan QR Code with Mobile Device</h3>
-      <div class="qr-code" id="qrcode"></div>
-      <p>Link ID: ${linkId}</p>
-      <p><strong>URL:</strong> <code>${qrData}</code></p>
-      <div class="qr-status" id="qrStatus">Waiting for scan...</div>
-    `;
+    // Use shared QR container utility
+    const container = createQRContainer(qrData, linkId);
 
     // Insert after the sequence step containing the link button
     const linkBtn = document.getElementById('linkBtn');
@@ -1554,19 +1485,6 @@ export class AppController {
         // Fallback: insert after the button
         linkBtn.parentNode.insertBefore(container, linkBtn.nextSibling);
       }
-    }
-
-    // Generate QR code
-    if (window.QRCode) {
-      new QRCode(document.getElementById('qrcode'), qrData);
-      
-      // Add AprilTag overlay after QR code is generated
-      setTimeout(async () => {
-        if (window.QRGenerator) {
-          const qrGenerator = new QRGenerator();
-          await qrGenerator.generateQRWithAprilTag('qrcode', qrData);
-        }
-      }, 100); // Small delay to ensure QR code is rendered
     }
   }
 
@@ -1702,7 +1620,7 @@ export class AppController {
       clientRequest.innerHTML = 'Preparing request...';
       clientRequest.className = 'response-box';
 
-      this.logger.info('Testing API access with DPoP token...');
+      logger.info('Testing API access with DPoP token...');
 
       const message = apiMessage.value.trim() || 'Hello from Browser Identity & DPoP Security Demo!';
       
@@ -1726,9 +1644,9 @@ export class AppController {
       apiResponse.className = 'response-box success';
 
       this.buttonManager.setSuccess('apiBtn', 'API test successful!');
-      this.logger.success('API access successful - DPoP token working!');
-      this.logger.info(`Response: ${JSON.stringify(response, null, 2)}`);
-      this.logger.success('DPoP cryptographic binding verified');
+      logger.success('API access successful - DPoP token working!');
+      logger.info(`Response: ${JSON.stringify(response, null, 2)}`);
+      logger.success('DPoP cryptographic binding verified');
 
     } catch (error) {
       // Display error
@@ -1738,7 +1656,7 @@ export class AppController {
       clientRequest.className = 'response-box error';
 
       this.buttonManager.setError('apiBtn', 'API test failed');
-      this.logger.error(`API access failed: ${error.message}`);
+      logger.error(`API access failed: ${error.message}`);
     } finally {
       sendBtn.disabled = false;
       sendBtn.textContent = 'Send Request';
@@ -1753,7 +1671,7 @@ export class AppController {
   async captureRequestDetails(testData) {
     try {
       // Import the dpop-fun module to access its functions
-      const DpopFun = await import('../dpop-fun.js');
+      const DpopFun = await import('../core/dpop-fun.js');
       
       // Get current DPoP state
       const dpopNonce = await DpopFun.getDpopNonce();
@@ -1812,7 +1730,7 @@ export class AppController {
    * Update application state
    */
   updateState() {
-    this.logger.debug('Updating application state:', this.state);
+    logger.debug('Updating application state:', this.state);
     
     // Register Browser & Bind DPoP button - enabled by default (first step)
     if (!this.state.hasDPoP) {
@@ -1830,13 +1748,13 @@ export class AppController {
     }
 
     if (this.state.hasSession && this.state.hasBIK && !this.state.hasDPoP) {
-      this.logger.debug('Enabling DPoP button - hasSession:', this.state.hasSession, 'hasBIK:', this.state.hasBIK, 'hasDPoP:', this.state.hasDPoP);
+      logger.debug('Enabling DPoP button - hasSession:', this.state.hasSession, 'hasBIK:', this.state.hasBIK, 'hasDPoP:', this.state.hasDPoP);
       this.buttonManager.enableIfNotSuccess('dpopBtn');
     } else if (this.state.hasDPoP) {
-      this.logger.debug('DPoP already bound - keeping button enabled');
+      logger.debug('DPoP already bound - keeping button enabled');
       this.buttonManager.enableIfNotSuccess('dpopBtn');
     } else {
-      this.logger.debug('Disabling DPoP button - hasSession:', this.state.hasSession, 'hasBIK:', this.state.hasBIK, 'hasDPoP:', this.state.hasDPoP);
+      logger.debug('Disabling DPoP button - hasSession:', this.state.hasSession, 'hasBIK:', this.state.hasBIK, 'hasDPoP:', this.state.hasDPoP);
       this.buttonManager.disable('dpopBtn');
     }
 
@@ -1858,7 +1776,7 @@ export class AppController {
     }
 
     // Log state changes
-    this.logger.debug('Application state updated', this.state);
+    logger.debug('Application state updated', this.state);
   }
 
   /**
@@ -1893,7 +1811,7 @@ export class AppController {
       }
       
       const result = await response.json();
-      this.logger.success('Server data flushed successfully');
+      logger.success('Server data flushed successfully');
       
       // Reset all states since server data is cleared
       this.resetAllStates();
@@ -1916,7 +1834,7 @@ export class AppController {
       // Clear IndexedDB storage
       await this.clearClientStorage();
       
-      this.logger.success('Client data flushed successfully');
+      logger.success('Client data flushed successfully');
       
       // Reset all states since client data is cleared
       this.resetAllStates();
@@ -1937,12 +1855,12 @@ export class AppController {
       // Import the idbWipe function to properly delete the entire database
       const { idbWipe } = await import('../idb.js');
       
-      this.logger.debug('Deleting entire IndexedDB database...');
+      logger.debug('Deleting entire IndexedDB database...');
       await idbWipe();
-      this.logger.debug('IndexedDB database deleted successfully');
+      logger.debug('IndexedDB database deleted successfully');
       
     } catch (error) {
-      this.logger.error('Failed to clear client storage:', error);
+      logger.error('Failed to clear client storage:', error);
       throw new Error(`Failed to clear client storage: ${error.message}`);
     }
   }
@@ -1989,7 +1907,7 @@ export class AppController {
       this.buttonManager.enable('authBtn');
     }
     
-    this.logger.info('All application states reset');
+    logger.info('All application states reset');
   }
 
   /**

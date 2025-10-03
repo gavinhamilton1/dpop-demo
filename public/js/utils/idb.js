@@ -1,7 +1,7 @@
 // src/idb.js
-import { storageLogger } from './utils/logging.js';
-import { StorageError } from './utils/errors.js';
-import { CONFIG } from './utils/config.js';
+import { logger } from './logging.js';
+import { StorageError } from './errors.js';
+import { CONFIG } from './config.js';
 
 export const DB_NAME = CONFIG.STORAGE.DB_NAME;
 export const DB_VERSION = CONFIG.STORAGE.DB_VERSION;
@@ -14,35 +14,35 @@ export function idbReset() {
   try { 
     _db?.close(); 
   } catch (error) {
-    storageLogger.warn('Error closing database during reset:', error);
+    logger.warn('Error closing database during reset:', error);
   }
   _db = null;
   _opening = null;
-  storageLogger.debug('IndexedDB reset completed');
+  logger.debug('IndexedDB reset completed');
 }
 
 export async function idbWipe() {
   try {
-    storageLogger.debug('Wiping IndexedDB database');
+    logger.debug('Wiping IndexedDB database');
     await new Promise((resolve, reject) => {
       const req = indexedDB.deleteDatabase(DB_NAME);
       req.onsuccess = () => {
-        storageLogger.debug('IndexedDB database deleted successfully');
+        logger.debug('IndexedDB database deleted successfully');
         resolve();
       };
       req.onerror = () => {
-        storageLogger.error('Failed to delete IndexedDB database:', req.error);
+        logger.error('Failed to delete IndexedDB database:', req.error);
         reject(req.error);
       };
       req.onblocked = () => {
         const error = new Error('IndexedDB deletion blocked (another tab open?)');
-        storageLogger.error('IndexedDB deletion blocked:', error);
+        logger.error('IndexedDB deletion blocked:', error);
         reject(error);
       };
     });
     idbReset(); // <<< critical: drop cached connection so next open recreates stores
   } catch (error) {
-    storageLogger.error('Failed to wipe IndexedDB:', error);
+    logger.error('Failed to wipe IndexedDB:', error);
     throw new StorageError('Failed to wipe IndexedDB database', { originalError: error.message });
   }
 }
@@ -51,20 +51,20 @@ async function openDB() {
   if (_db) return _db;
   if (_opening) return _opening;
 
-  storageLogger.debug('Opening IndexedDB connection');
+  logger.debug('Opening IndexedDB connection');
   _opening = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     
     req.onupgradeneeded = () => {
-      storageLogger.debug('IndexedDB upgrade needed, creating stores');
+      logger.debug('IndexedDB upgrade needed, creating stores');
       const db = req.result;
       if (!db.objectStoreNames.contains(STORES.KEYS)) {
         db.createObjectStore(STORES.KEYS, { keyPath: 'id' });
-        storageLogger.debug('Created keys store');
+        logger.debug('Created keys store');
       }
       if (!db.objectStoreNames.contains(STORES.META)) {
         db.createObjectStore(STORES.META, { keyPath: 'id' });
-        storageLogger.debug('Created meta store');
+        logger.debug('Created meta store');
       }
     };
     
@@ -74,18 +74,18 @@ async function openDB() {
         try { 
           _db.close(); 
         } catch (error) {
-          storageLogger.warn('Error closing database on version change:', error);
+          logger.warn('Error closing database on version change:', error);
         } 
         _db = null; 
       };
       _opening = null;
-      storageLogger.debug('IndexedDB connection opened successfully');
+      logger.debug('IndexedDB connection opened successfully');
       resolve(_db);
     };
     
     req.onerror = () => { 
       _opening = null; 
-      storageLogger.error('Failed to open IndexedDB:', req.error);
+      logger.error('Failed to open IndexedDB:', req.error);
       reject(req.error); 
     };
   });
@@ -112,11 +112,11 @@ async function run(storeName, mode, fn, attempt = 0) {
       e?.name === 'TransactionInactiveError' ||
       e?.name === 'NotFoundError'
     )) {
-      storageLogger.warn('IndexedDB transaction failed, attempting auto-heal:', e);
+      logger.warn('IndexedDB transaction failed, attempting auto-heal:', e);
       idbReset();
       return run(storeName, mode, fn, 1);
     }
-    storageLogger.error('IndexedDB operation failed:', e);
+    logger.error('IndexedDB operation failed:', e);
     throw new StorageError('IndexedDB operation failed', { 
       originalError: e.message, 
       storeName, 
@@ -128,9 +128,9 @@ async function run(storeName, mode, fn, attempt = 0) {
 
 export async function idbPut(storeName, record) {
   try {
-    storageLogger.debug('Putting record in store:', { storeName, recordId: record.id });
+    logger.debug('Putting record in store:', { storeName, recordId: record.id });
     const result = await run(storeName, 'readwrite', (store) => store.put(record));
-    storageLogger.debug('Record put successfully');
+    logger.debug('Record put successfully');
     return result;
   } catch (error) {
     if (error.name === 'StorageError') throw error;
@@ -144,13 +144,13 @@ export async function idbPut(storeName, record) {
 
 export async function idbGet(storeName, id) {
   try {
-    storageLogger.debug('Getting record from store:', { storeName, id });
+    logger.debug('Getting record from store:', { storeName, id });
     const result = await run(storeName, 'readonly', (store) => new Promise((resolve, reject) => {
       const req = store.get(id);
       req.onsuccess = () => resolve(req.result ?? null);
       req.onerror = () => reject(req.error);
     }));
-    storageLogger.debug('Record retrieved:', { storeName, id, found: !!result });
+    logger.debug('Record retrieved:', { storeName, id, found: !!result });
     return result;
   } catch (error) {
     if (error.name === 'StorageError') throw error;

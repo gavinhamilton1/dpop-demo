@@ -1,9 +1,9 @@
 // /public/link.js  (module)
 
-// --- Imports (unchanged) ---
-import * as DpopFun from './dpop-fun.js';
-import * as Passkeys from './passkeys.js';
+// --- Imports (updated to use unified service) ---
+import * as DpopFun from './core/dpop-fun.js';
 import { SignatureShare } from './signature-share.js';
+import { UnifiedMobileService } from './services/UnifiedMobileService.js';
 
 // --- Constants ---
 const VERIFY_URL = 'https://verify.dpop.fun/device';
@@ -29,27 +29,8 @@ const log = (msg, level = 'info') => {
   console.log(`[${level.toUpperCase()}] ${msg}`);
 };
 
-// --- Mobile Fingerprint Collection ---
-async function collectMobileFingerprint() {
-  console.log('🔍 MOBILE FINGERPRINT COLLECTION STARTED');
-  try {
-    log('Collecting mobile device fingerprint...', 'info');
-    
-    // Use the centralized FingerprintService
-    const result = await FingerprintService.collectAndSendFingerprint('mobile');
-    
-    log('Mobile fingerprint collection completed successfully', 'success');
-    console.log('Mobile fingerprint collection completed successfully');
-    return result;
-    
-  } catch (error) {
-    log(`Mobile fingerprint collection failed: ${error.message}`, 'error');
-    log(`Mobile fingerprint error details: ${error.stack}`, 'error');
-    console.log('MOBILE FINGERPRINT COLLECTION FAILED:', error.message);
-    // Don't throw - fingerprinting failure shouldn't break the linking flow
-    return null;
-  }
-}
+// --- Mobile Service Instance ---
+let mobileService = null;
 
 
 
@@ -155,7 +136,47 @@ function generateBCQR(bc) {
 let signatureShare = new SignatureShare();
 function initSignatureSharing(linkId) {
   try {
-    signatureShare.initMobile(linkId);
+    // Show the scribble section
+    const scribbleSection = document.getElementById('scribbleSection');
+    if (scribbleSection) {
+      scribbleSection.style.display = 'block';
+    }
+    
+    // Initialize signature sharing in the dedicated container
+    signatureShare.linkId = linkId;
+    signatureShare.isMobile = true;
+    
+    // Create canvas in the dedicated container
+    const container = document.getElementById('scribbleCanvasContainer');
+    if (container) {
+      container.innerHTML = `
+        <canvas id="signature-canvas-mobile" width="300" height="300" style="border: 2px solid #333; border-radius: 8px; background: white;"></canvas>
+        <button id="reset-signature" style="margin-top: 10px; padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Clear Scribble</button>
+      `;
+      
+      // Get canvas and context
+      signatureShare.canvas = document.getElementById('signature-canvas-mobile');
+      signatureShare.ctx = signatureShare.canvas.getContext('2d');
+      
+      // Set canvas properties
+      signatureShare.ctx.lineWidth = 3;
+      signatureShare.ctx.strokeStyle = '#000';
+      signatureShare.ctx.lineCap = 'round';
+      signatureShare.ctx.lineJoin = 'round';
+      
+      // Setup touch/mouse events for mobile drawing
+      signatureShare.setupDrawingEvents();
+      
+      // Setup reset button event listener
+      const resetBtn = document.getElementById('reset-signature');
+      if (resetBtn) {
+        resetBtn.addEventListener('click', () => signatureShare.resetCanvas());
+      }
+      
+      // Connect to WebSocket for sending signature data
+      signatureShare.connectWebSocket();
+    }
+    
     log('Scribble sharing initialized ✓', 'success');
   } catch (e) {
     log(`Scribble init failed: ${e.message}`, 'warn');
@@ -374,79 +395,40 @@ async function link(lid) {
   console.log('🚀 MOBILE LINKING FLOW STARTED with lid:', lid);
   console.log('📱 Mobile link function called - this should appear in mobile logs');
   try {
-    // Step 1: Initialize session
-    updateStep(1, 'active', 'Initializing session…');
-    await DpopFun.sessionInit({ sessionInitUrl: '/session/init' });
-    updateStep(1, 'completed', 'Session initialized');
-    log('Session initialized ✓', 'success');
+    // Initialize unified mobile service for registration flow
+    mobileService = new UnifiedMobileService();
     
-    // Collect mobile device fingerprint (with small delay to ensure session is established)
-    log('Starting mobile fingerprint collection...', 'info');
-    log(`Available cookies before fingerprint collection: ${document.cookie}`, 'info');
-    console.log('🍪 Cookies before fingerprint collection:', document.cookie);
-    await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
-    console.log('⏰ About to call collectMobileFingerprint()');
-    try {
-      await collectMobileFingerprint();
-      log('Mobile fingerprint collection completed successfully', 'success');
-      console.log('Mobile fingerprint collection completed successfully');
-    } catch (error) {
-      log(`Mobile fingerprint collection failed: ${error.message}`, 'error');
-      console.log('Mobile fingerprint collection failed:', error.message);
-      // Continue with linking flow even if fingerprinting fails
-    }
-
-    // Step 2: BIK register + DPoP bind
-    updateStep(2, 'active', 'Setting up security…');
-    await DpopFun.bikRegisterStep({ bikRegisterUrl: '/browser/register' });
-    await DpopFun.dpopBindStep({ dpopBindUrl: '/dpop/bind' });
-    updateStep(2, 'completed', 'Security configured');
-    log('Security setup completed ✓', 'success');
-
-    // Step 3: Passkey UV (register if needed, then authenticate)
-    updateStep(3, 'active', 'Verifying passkey…');
-    let hasCreds = false;
-    let authOptions = null;
-    try {
-      authOptions = await Passkeys.getAuthOptions();
-      hasCreds = !!(authOptions.allowCredentials && authOptions.allowCredentials.length);
-      log(`[link] auth options: hasCreds=${hasCreds} rpId=${authOptions?.rpId}`, 'info');
-    } catch (e) {
-      log(`[link] getAuthOptions failed; will register: ${e.message || e}`, 'warn');
-      hasCreds = false;
-    }
-
-    if (!hasCreds) {
-      updateStep(3, 'active', 'Creating new passkey…');
-      await Passkeys.registerPasskey();
-      log('Passkey registered ✓', 'success');
-    }
-    await Passkeys.authenticatePasskey(hasCreds ? authOptions : undefined);
-    updateStep(3, 'completed', 'Passkey verified');
-    log('Passkey authenticated ✓', 'success');
-
-    // Step 4: Complete mobile linking and issue BC
-    currentLid = lid;
-    updateStep(4, 'active', 'Completing mobile link…');
-    
-    // Complete the mobile linking process
-    const completeData = await DpopFun.dpopFunFetch('/link/mobile/complete', {
-      method: 'POST',
-      body: { link_id: lid }
-    });
-    log('Mobile link completed ✓', 'success');
-    log(`Complete response: ${JSON.stringify(completeData)}`, 'info');
-    
-    // Add a small delay to ensure session is properly established
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Debug: Check if we have a session cookie
-    log(`Document cookies: ${document.cookie}`, 'info');
-    
-    // Now issue BC for desktop to enter
-    updateStep(4, 'active', 'Issuing verification code…');
-    await issueBC(lid);
-    startPollingConfirmation(lid);
+    // Step 1: Setup mobile session
+    updateStep(1, 'active', 'Setting up mobile session…');
+    await mobileService.initRegistrationFlow(
+      lid,
+      (data) => {
+        log('Mobile registration completed ✓', 'success');
+        updateStep(1, 'completed', 'Mobile session setup complete');
+        updateStep(2, 'completed', 'Passkey verified');
+        updateStep(3, 'completed', 'Mobile link completed');
+        
+        // Issue BC for desktop to enter
+        updateStep(4, 'active', 'Issuing verification code…');
+        issueBC(lid).then(() => {
+          startPollingConfirmation(lid);
+        });
+      },
+      (error) => {
+        log(`Mobile registration failed: ${error.message}`, 'error');
+        const currentStep = document.querySelector('.progress-step.active');
+        if (currentStep) {
+          currentStep.classList.remove('active');
+          currentStep.classList.add('error');
+          const statusEl = currentStep.querySelector('.step-status');
+          if (statusEl) statusEl.textContent = 'Failed';
+        }
+      },
+      (method) => {
+        log(`Mobile authentication successful with method: ${method}`, 'success');
+        // Authentication status is handled by the desktop side through SSE
+      }
+    );
 
   } catch (error) {
     log(`Linking failed: ${error.message}`, 'error');
@@ -480,12 +462,17 @@ function attachBcButtons() {
 
   // Tell server we scanned the QR (no DPoP required yet)
   try {
+    log(`Sending link ID to server: ${linkId}`, 'info');
     const r = await fetch(MOBILE_START_URL, {
       method: 'POST',
       headers: { 'Content-Type':'application/json' },
       body: JSON.stringify({ lid: linkId })
     });
-    if (!r.ok) throw new Error(`start failed: ${r.status}`);
+    if (!r.ok) {
+      const errorText = await r.text();
+      log(`Server error: ${r.status} - ${errorText}`, 'error');
+      throw new Error(`start failed: ${r.status}`);
+    }
     const { link_id } = await r.json();
     if (!link_id) throw new Error('start failed (no link_id)');
     log('QR accepted ✓', 'success');

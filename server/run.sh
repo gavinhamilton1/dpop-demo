@@ -2,7 +2,7 @@
 set -euo pipefail
 
 
-export STRONGHOLD_CONFIG=server/stronghold.dev.yaml
+export DPOP_FUN_CONFIG=server/dpop-fun.dev.yaml
 
 
 # PROJECT ROOT is parent of this script's dir

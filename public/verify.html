@@ -356,7 +356,7 @@
           </div>
           <div class="verify-actions">
             <button class="btn btn-primary" type="submit">Verify & continue</button>
-            <button class="btn btn-secondary" type="button" id="useCamBtn">Use camera instead</button>
+            <button class="btn btn-primary" type="button" id="useCamBtn">Scan QR Code shown on your Mobile from here</button>
             <button class="btn btn-secondary" type="button" id="toggleInputBtn">Single field</button>
           </div>
           <div class="verify-status" id="codeStatus">Code expires ~60s after it appears on your phone.</div>
@@ -367,7 +367,7 @@
       <div class="verify-card hidden" id="camCard" aria-labelledby="camTitle">
         <h2 id="camTitle" class="verify-card-title">Scan QR from your phone</h2>
         <div class="camera-container">
-          <video id="video" class="verify-video" playsinline></video>
+          <video id="video" class="verify-video" autoplay playsinline muted></video>
           <div class="privacy-overlay">
             <div class="blur-overlay"></div>
             <div class="scanning-blur"></div>

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DPoP Authentication Journeys</title>
+    
+
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="/public/css/design-system.css">
+    <link rel="stylesheet" href="/public/css/components.css">
+    <link rel="stylesheet" href="/public/style.css">
+    <link rel="stylesheet" href="/public/css/journeys.css">
+    
+</head>
+<body>
+    <div class="journey-container">
+        <!-- Header -->
+        <header class="journey-header">
+            <h1>🔐 DPoP Authentication Journeys</h1>
+            <p class="journey-subtitle">Choose your authentication method</p>
+        </header>
+
+        <!-- Session Status -->
+        <div class="session-status-section">
+            <div id="sessionStatusIndicator" class="status-indicator loading">
+                <div class="status-content">
+                    <div class="status-text">
+                        <span class="status-title">Initializing session...</span>
+                    </div>
+                    <div class="status-detail">Checking for existing browser identity and session</div>
+                    
+                    <!-- Signal Data Summary -->
+                    <div id="signalSummary" class="signal-summary" style="display: none;">
+                        <div class="signal-header">
+                            <span class="signal-title">Risk Signals</span>
+                            <button id="signalDetailsBtn" class="signal-details-btn" title="View all signal data">
+                                <span class="btn-icon">More...</span>
+                            </button>
+                        </div>
+                        <div class="signal-row">
+                            <div class="signal-item">   
+                                <span class="signal-label">Location:</span>
+                                <span class="signal-value" id="signalLocation">--</span>
+                            </div>
+                            <div class="signal-item">
+                                <span class="signal-label">Device:</span>
+                                <span class="signal-value" id="signalDevice">--</span>
+                            </div>
+                            <div class="signal-item">
+                                <span class="signal-label">Browser:</span>
+                                <span class="signal-value" id="signalBrowser">--</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="session-actions" id="sessionActions" style="display: none;">
+                        <div class="debug-actions" id="debugActions" style="display: none;">
+                            <button class="btn-pill" id="serverFlushBtn">
+                                🗑️ Server Flush
+                            </button>
+                            <button class="btn-pill" id="clientFlushBtn">
+                                🧹 Client Flush
+                            </button>
+                        </div>
+                        <button class="btn-pill" id="testApiBtn" disabled>
+                            🧪 Test API
+                        </button>
+                        <button class="btn-pill" id="logoutBtn" style="display: none;">
+                            🚪 Logout
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Journey Selection -->
+        <div class="journey-selection" id="journeySelection">
+            <!-- New User Journey -->
+            <div class="journey-card clickable" id="newUserJourney" data-journey="newUser">
+                <div class="journey-icon">👤</div>
+                <h2>New User Registration</h2>
+                <p>Create a new account with username, passkey, face, and mobile device</p>
+                <button class="journey-btn primary" id="startNewUserBtn" disabled>
+                    Start New User Journey
+                </button>
+            </div>
+
+            <!-- Existing User Login -->
+            <div class="journey-card clickable" id="existingUserJourney" data-journey="existingUser">
+                <div class="journey-icon">🔐</div>
+                <h2>Existing User Login</h2>
+                <p>Sign in with your existing account using passkey, face, or mobile authentication</p>
+                <button class="journey-btn primary" id="startExistingUserBtn" disabled>
+                    Login with Existing Account
+                </button>
+            </div>
+        </div>
+
+        <!-- Username Entry (for login journeys) -->
+        <div class="username-entry-section" id="usernameEntrySection" style="display: none;">
+            <div class="username-card">
+                <h3>Enter Username</h3>
+                <div class="username-form">
+                    <input type="text" id="usernameInput" placeholder="Enter your username" maxlength="50">
+                    <button id="continueWithUsernameBtn" class="btn primary">Continue</button>
+                    <button id="cancelUsernameBtn" class="btn secondary">Cancel</button>
+                </div>
+                <div id="usernameError" class="error-message" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- Journey Content -->
+        <div class="journey-content-section" id="journeyContent" style="display: none;">
+            <div class="journey-content-card">
+                <!-- Journey Header -->
+                <div class="journey-header-content">
+                    <div class="journey-title-row">
+                        <h2 id="journeyTitle"></h2>
+                        <div class="journey-header-actions">
+                            <button id="cancelJourneyBtn" class="btn-pill">✕ Cancel</button>
+                        </div>
+                    </div>
+                    <p id="journeyDescription"></p>
+                </div>
+
+                <!-- Journey Steps -->
+                <div class="journey-steps" id="journeySteps">
+                    <!-- Steps will be populated dynamically -->
+                </div>
+
+                <!-- Journey Actions -->
+                <div class="journey-actions" id="journeyActions">
+                    <!-- Actions will be populated dynamically -->
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- API Test Modal -->
+    <div id="apiModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🧪 Test API with DPoP</h3>
+                <span class="close" id="closeApiModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="apiMessage">Message to send to server:</label>
+                    <textarea id="apiMessage" class="form-control" rows="3" placeholder="Enter your message here...">Hello from DPoP-Fun Journeys!</textarea>
+                </div>
+                <div class="request-response-grid">
+                    <div class="form-group">
+                        <label>📤 Client Request (with DPoP):</label>
+                        <div id="clientRequest" class="response-box">
+                            <em>Request details will appear here...</em>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>📥 Server Response:</label>
+                        <div id="apiResponse" class="response-box">
+                            <em>Click "Send Request" to test the API...</em>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="sendApiRequest" class="btn btn-primary">Send Request</button>
+                <button id="cancelApiRequest" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signal Details Modal -->
+    <div id="signalDetailsModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📊 Complete Signal Data</h3>
+                <button class="modal-close" id="signalModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="signalDetailsContent">
+                    <div class="loading-text">Loading signal data...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/public/vendor/qrcode.min.js"></script>
+    <script src="/public/vendor/jsQR.js"></script>
+    <script src="/public/vendor/browser.js"></script>
+    <script src="/public/js/utils/apriltag.js"></script>
+    <script type="module" src="/public/js/journeys.js"></script>
+
+</body>
+</html>

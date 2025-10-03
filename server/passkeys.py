@@ -14,9 +14,10 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding, ed25519
 from cryptography.x509.oid import ObjectIdentifier
 
 from server.config import load_settings
+from server.db import DB
 from server.utils import b64u, b64u_dec, ec_p256_thumbprint, now
 
-log = logging.getLogger("stronghold")
+log = logging.getLogger("dpop-fun")
 SETTINGS = load_settings()
 
 # ---------------- Policy (Android-friendly by default) ----------------
@@ -318,10 +319,21 @@ def get_router(
         sid = req.session.get("sid"); s = await session_store.get_session(sid) if sid else None
         if not sid or not s:
             raise HTTPException(status_code=401, detail="no session")
+        log.info(f"Passkey registration - session state: {s.get('state')}")
         if s.get("state") != "bound":
+            log.warning(f"Session state is not 'bound': {s.get('state')}")
             raise HTTPException(status_code=403, detail="session must be DPoP-bound before passkey registration")
 
-        principal = _principal_from_session(s)
+        # Use username as principal instead of BIK to persist across sessions
+        log.info(f"Passkey registration options - checking for user with session_id: {sid}")
+        user = await DB.get_user_by_session(sid)
+        if not user:
+            log.warning(f"No user found for session_id: {sid}")
+            raise HTTPException(status_code=401, detail="No user bound to session")
+        log.info(f"User found for passkey registration: {user['username']}")
+        
+        principal = user["username"]  # Use username as principal
+        username = user["username"]
         origin, _ = canonicalize_origin_and_url(req)
         rp_id = _rp_id_from_origin(origin)
 
@@ -335,8 +347,8 @@ def get_router(
             "rp": {"id": rp_id, "name": rp_name},
             "user": {
                 "id": b64u(principal.encode()),
-                "name": f"acct:{principal[:8]}",
-                "displayName": f"Acct {principal[:8]}"
+                "name": username,
+                "displayName": username
             },
             "challenge": b64u(challenge),
             "pubKeyCredParams": [
@@ -345,9 +357,10 @@ def get_router(
                 {"type": "public-key", "alg": -8},    # EdDSA (Ed25519)
             ],
             "authenticatorSelection": {
-                "residentKey": RESIDENT_MODE,
-                "requireResidentKey": RESIDENT_MODE == 'required',
-                "userVerification": UV_MODE,
+                "authenticatorAttachment": "platform",  # Force platform authenticators (Touch ID, Face ID, etc.)
+                "residentKey": "required",  # Force resident keys for better platform authenticator support
+                "requireResidentKey": True,
+                "userVerification": "required",  # Force user verification for platform authenticators
             },
             "attestation": ATTESTATION_MODE,
             "excludeCredentials": exclude,
@@ -362,7 +375,12 @@ def get_router(
         if s.get("state") != "bound":
             raise HTTPException(status_code=403, detail="session must be DPoP-bound before passkey registration")
 
-        principal = _principal_from_session(s)
+        # Use username as principal instead of BIK to persist across sessions
+        user = await DB.get_user_by_session(sid)
+        if not user:
+            raise HTTPException(status_code=401, detail="No user bound to session")
+        
+        principal = user["username"]  # Use username as principal
         origin, _ = canonicalize_origin_and_url(req)
         rp_id = _rp_id_from_origin(origin)
         chal_info = (s.get("webauthn_reg") or {})
@@ -443,7 +461,30 @@ def get_router(
         sid = req.session.get("sid"); s = await session_store.get_session(sid) if sid else None
         if not sid or not s: raise HTTPException(status_code=401, detail="no session")
 
-        principal = _principal_from_session(s)
+        # Get request body to check for username
+        try:
+            body = await req.json()
+            username = body.get("username")
+        except:
+            username = None
+        
+        if username:
+            # Username-based authentication (for mobile login)
+            # Get user by username to verify they exist
+            user = await DB.get_user_by_username(username)
+            if not user:
+                raise HTTPException(404, "User not found")
+            
+            # Use username as principal to find passkeys
+            principal = username
+        else:
+            # Session-based authentication (default)
+            # Use username as principal instead of BIK
+            user = await DB.get_user_by_session(sid)
+            if not user:
+                raise HTTPException(401, detail="No user bound to session")
+            principal = user["username"]
+        
         origin, _ = canonicalize_origin_and_url(req)
         rp_id = _rp_id_from_origin(origin)
 
@@ -477,7 +518,12 @@ def get_router(
         sid = req.session.get("sid"); s = await session_store.get_session(sid) if sid else None
         if not sid or not s: raise HTTPException(status_code=401, detail="no session")
 
-        principal = _principal_from_session(s)
+        # Use username as principal instead of BIK to persist across sessions
+        user = await DB.get_user_by_session(sid)
+        if not user:
+            raise HTTPException(status_code=401, detail="No user bound to session")
+        
+        principal = user["username"]  # Use username as principal
         origin, _ = canonicalize_origin_and_url(req)
         rp_id = _rp_id_from_origin(origin)
         chal_info = (s.get("webauthn_auth") or {})
@@ -533,6 +579,11 @@ def get_router(
             pass  # soft policy
         await _maybe_await(repo.update_sign_count(cred_id, info["signCount"]))
         await session_store.update_session(sid, {"passkey_auth": True, "passkey_principal": principal})
+        
+        # Mark user as authenticated using centralized method
+        from server.auth_tracking import mark_user_authenticated
+        await mark_user_authenticated(sid, principal, "desktop passkey")
+        
         return JSONResponse({"ok": True, "principal": principal}, headers=_nonce_headers(ctx))
 
     return router

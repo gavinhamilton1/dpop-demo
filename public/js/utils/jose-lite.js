@@ -1,7 +1,7 @@
 // src/jose-lite.js
-import { cryptoLogger } from './utils/logging.js';
-import { CryptoError } from './utils/errors.js';
-import { validateJwk } from './utils/validation.js';
+import { logger } from './logging.js';
+import { CryptoError } from './errors.js';
+import { validateJwk } from './validation.js';
 
 export const b64u = (bytes) => {
   try {
@@ -73,7 +73,7 @@ export function sigToJoseEcdsa(sig, size=32) {
 
 export async function createJwsES256({ protectedHeader, payload, privateKey }) {
   try {
-    cryptoLogger.debug('Creating JWS with header:', protectedHeader);
+    logger.debug('Creating JWS with header:', protectedHeader);
     const h = b64uJSON(protectedHeader);
     const p = b64uJSON(payload);
     const input = new TextEncoder().encode(`${h}.${p}`);
@@ -81,10 +81,10 @@ export async function createJwsES256({ protectedHeader, payload, privateKey }) {
     const sigJose = sigToJoseEcdsa(sig, 32);
     const s = b64u(sigJose);
     const jws = `${h}.${p}.${s}`;
-    cryptoLogger.debug('JWS created successfully');
+    logger.debug('JWS created successfully');
     return jws;
   } catch (error) {
-    cryptoLogger.error('Failed to create JWS:', error);
+    logger.error('Failed to create JWS:', error);
     throw new CryptoError('Failed to create JWS', { originalError: error.message });
   }
 }
@@ -97,7 +97,7 @@ export async function jwkThumbprint(jwk) {
     const hash = await crypto.subtle.digest('SHA-256', data);
     return b64u(hash);
   } catch (error) {
-    if (error.name === 'StrongholdError') throw error;
+    if (error.name === 'DPopFunError') throw error;
     throw new CryptoError('Failed to create JWK thumbprint', { originalError: error.message });
   }
 }
