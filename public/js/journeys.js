@@ -805,10 +805,14 @@ class JourneysController {
                 <strong>Error:</strong> ${message}
             </div>
             <div class="step-actions">
-                <button class="btn primary" onclick="journeysController.retryCurrentStep()">Retry</button>
-                <button class="btn secondary" onclick="journeysController.cancelJourney()">Cancel</button>
+                <button class="btn primary" id="retryStepBtn">Retry</button>
+                <button class="btn secondary" id="cancelStepBtn">Cancel</button>
             </div>
         `;
+        
+        // Add event listeners for the error buttons
+        document.getElementById('retryStepBtn')?.addEventListener('click', () => this.retryCurrentStep());
+        document.getElementById('cancelStepBtn')?.addEventListener('click', () => this.cancelJourney());
     }
     
     async retryCurrentStep() {
@@ -1027,8 +1031,9 @@ class JourneysController {
                     logger.info(`Username "${username}" created successfully`);
                     logger.info(`Completing username step, current step: ${this.currentStep}`);
 
-                    // Update session status to show updated states
-                    await this.checkSessionStatus();
+                    // Update local session state (don't call checkSessionStatus as it might reinitialize session)
+                    this.sessionState.hasUsername = true;
+                    this.sessionState.username = username;
 
                     await this.completeStep();
                     
@@ -1154,6 +1159,8 @@ class JourneysController {
         
         document.getElementById('registerPasskeyBtn').addEventListener('click', async () => {
             try {
+                // Add small delay to ensure server has processed username binding
+                await new Promise(resolve => setTimeout(resolve, 500));
                 await Passkeys.registerPasskey();
                 
                 this.sessionState.hasPasskey = true;
@@ -1172,16 +1179,16 @@ class JourneysController {
                     <div class="step-status error">
                         <p>Failed to register passkey: ${error.message}</p>
                         <div class="step-actions">
-                            <button class="btn primary" onclick="journeysController.retryCurrentStep()">Retry</button>
-                            <button class="btn secondary" onclick="journeysController.skipCurrentStep()">Skip</button>
+                            <button class="btn primary" id="retryPasskeyBtn">Retry</button>
+                            <button class="btn secondary" id="skipPasskeyBtn">Skip</button>
                         </div>
                     </div>
                 `;
+                
+                // Add event listeners for the passkey error buttons
+                document.getElementById('retryPasskeyBtn')?.addEventListener('click', () => this.retryCurrentStep());
+                document.getElementById('skipPasskeyBtn')?.addEventListener('click', () => this.skipCurrentStep());
             }
-        });
-        
-        document.getElementById('skipPasskeyBtn').addEventListener('click', () => {
-            this.skipCurrentStep();
         });
     }
     
