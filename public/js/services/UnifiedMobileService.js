@@ -269,11 +269,9 @@ export class UnifiedMobileService {
   async handlePasskeyAuthentication() {
     try {
       if (this.isLoginFlow) {
-        // For login flow, create a new passkey on the mobile device
-        // This allows cross-device authentication by creating a new passkey
-        // linked to the existing user account
-        logger.info('Login flow - creating new passkey for cross-device authentication...');
-        await this.createNewPasskeyForLogin();
+        // For login flow, authenticate with existing passkey
+        logger.info('Login flow - authenticating with existing passkey...');
+        await this.authenticateWithExistingPasskey();
       } else {
         // For registration flow, create new passkey with platform authenticator
         logger.info('Registration flow - creating new passkey with platform authenticator...');
@@ -289,19 +287,27 @@ export class UnifiedMobileService {
   }
 
   /**
-   * Create new passkey for login flow (cross-device authentication)
+   * Authenticate with existing passkey for login flow
    */
-  async createNewPasskeyForLogin() {
+  async authenticateWithExistingPasskey() {
     try {
-      logger.info('Creating new passkey for login flow (cross-device authentication)...');
+      logger.info('Authenticating with existing passkey for login flow...');
       
-      // Register new passkey using platform authenticator
-      // The registerPasskey function will get options from server and handle registration
-      logger.info('Calling Passkeys.registerPasskey() for login flow...');
-      const result = await Passkeys.registerPasskey();
-      logger.info('Passkeys.registerPasskey() completed successfully for login flow:', result);
+      // Get authentication options to check if passkey exists
+      const authOptions = await Passkeys.getAuthOptions();
+      const hasCreds = !!(authOptions.allowCredentials && authOptions.allowCredentials.length);
       
-      logger.info('New passkey created successfully for login flow');
+      if (!hasCreds) {
+        logger.info('No existing passkey found for login flow');
+        throw new Error('No passkey registered for this user. Please complete registration first.');
+      }
+      
+      // Authenticate with existing passkey
+      logger.info('Calling Passkeys.authenticatePasskey() for login flow...');
+      const result = await Passkeys.authenticatePasskey(authOptions);
+      logger.info('Passkeys.authenticatePasskey() completed successfully for login flow:', result);
+      
+      logger.info('Passkey authentication successful for login flow');
       
       // Mark user as authenticated in session
       await this.markUserAsAuthenticated();
@@ -312,7 +318,7 @@ export class UnifiedMobileService {
       }
       
     } catch (error) {
-      logger.error('Failed to create new passkey for login:', error);
+      logger.error('Failed to authenticate with existing passkey for login:', error);
       logger.error('Error details:', {
         name: error.name,
         message: error.message,
