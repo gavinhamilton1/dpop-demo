@@ -10,8 +10,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding
 from cryptography.x509.oid import ObjectIdentifier
 
-from server.config import load_settings
-from server.utils import b64u, b64u_dec
+from server.core.config import load_settings
+from server.utils.helpers import b64u, b64u_dec
 
 # -------- Config-backed settings --------
 SETTINGS = load_settings()

@@ -10,45 +10,20 @@ import { FingerprintService } from '../services/FingerprintService.js';
 
 export { createJwsES256, idbWipe, jwkThumbprint };
 
+//enum for session states
+const SessionState = {
+  PENDING_DPOP_BIND: "pending_dpop_bind",
+  BOUND_BIK: "bound_bik", 
+  BOUND_DPOP: "bound_dpop",
+  AUTHENTICATED: "authenticated",
+  USER_TERMINATED: "user_terminated",
+  SYSTEM_TERMINATED: "system_terminated",
+  EXPIRED: "expired"
+}
+
 let CSRF = null;
 let REG_NONCE = null;
 
-/**
- * Create a session state object with default values
- * @param {Object} overrides - Values to override defaults
- * @returns {Object} Session state object
- */
-function createSessionState(overrides = {}) {
-  const defaults = {
-    hasSession: false,
-    hasBIK: false,
-    hasDPoP: false,
-    hasUsername: false,
-    username: null,
-    sessionStatus: null,
-    details: {
-      serverSession: false,
-      localBIK: false,
-      localDPoP: false,
-      serverBIK: false,
-      serverDPoP: false,
-      bikMatch: false,
-      dpopMatch: false,
-      dpopWorking: false,
-        sessionType: SESSION_TYPES.NONE,
-        bikType: KEY_TYPES.NONE,
-        dpopType: KEY_TYPES.NONE
-    }
-  };
-  
-  return { ...defaults, ...overrides };
-}
-
-
-
-/**
- * Configuration constants for session and key types
- */
 const SESSION_TYPES = {
   NONE: 'none',
   NEW: 'new',
@@ -64,66 +39,296 @@ const KEY_TYPES = {
   SERVER_ONLY: 'server-only'
 };
 
-/**
- * Get current origin with fallback
- */
-function getCurrentOrigin() {
-  return globalThis.location?.origin || globalThis.self?.location?.origin || 'http://localhost';
+let DPOP_SESSION = {
+  device_id: null,
+  bik: null, 
+  dpop: null,
+  dpop_nonce: null,         
+  auth_method: null,
+  auth_status: null,
+  auth_username: null,
+  signal_data: null,
+  csrf: null,
+  state: SessionState.pending_dpop_bind,
+  server_bind: null,
+  server_bind_expires_at: null,
+  lastusername: null,
+  created_at: null,
+  updated_at: null
 }
 
-/**
- * Session restoration helper functions
- */
-const SessionRestore = {
-  /**
-   * Check local BIK and JKT from IndexedDB
-   */
-  async checkLocalBIK() {
-    let localBIK = false;
-    let localBikJkt = null;
-    try {
-      logger.debug('Checking for BIK with key:', CONFIG.STORAGE.KEYS.BIK_CURRENT);
-      const bikRecord = await idbGet(STORES.KEYS, CONFIG.STORAGE.KEYS.BIK_CURRENT);
-      logger.debug('BIK record from IndexedDB:', bikRecord);
+
+//Main entry point for session setup
+export async function setupSession() {
+  let newSession = false;
+  try {
+    logger.info('Setting up session');
+
+    logger.debug('STEP 1. Check for device ID');
+    const deviceIdRecord = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.DEVICE_ID);
+    const deviceId = deviceIdRecord?.value || null;
+    if (deviceId) {
+      DPOP_SESSION.device_id = deviceId;
+      logger.info('Device ID found: ', deviceId);
+    } else {
+      newSession = true;
+      DPOP_SESSION.device_id = crypto.randomUUID();
+      await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DEVICE_ID, value: DPOP_SESSION.device_id });
+      logger.info('Device ID not found, created new one: ', DPOP_SESSION.device_id);
+    }
+
+    logger.debug('STEP 2. Check for BIK key');
+    const {localBIK, localBikJkt} = await checkLocalBIK();
+    if (localBIK && localBikJkt && !newSession) {
+      DPOP_SESSION.bik = localBIK;
+      DPOP_SESSION.bik_jkt = localBikJkt;
+      logger.info('Local BIK found: ', localBIK);
+    } else {
+      if (!await createBIK()) {
+        logger.error('Failed to create session');
+        return;
+      }
+    }
+
+    logger.debug('STEP 3. Check for DPoP key');
+    const {localDPoP, localDpopJkt} = await checkLocalDPoP();
+    if (localDPoP && localDpopJkt && !newSession) {
+      DPOP_SESSION.dpop = localDPoP;
+      DPOP_SESSION.dpop_jkt = localDpopJkt;
+      logger.info('Local DPoP found: ', localDPoP);
+    } else {
+      if (!await createDPoP()) {
+        logger.error('Failed to create session');
+        return;
+      }
+    }
+
+    logger.debug('STEP 4. Collect signal data');
+    DPOP_SESSION.signal_data = await FingerprintService.collectFingerprint('desktop');
+    logger.info('Signal data collected: ', DPOP_SESSION.signal_data);
+
+
+    logger.debug('STEP 5. Create new server session');
+    if (!newSession) {
+      // Get dpop_nonce for BIK registration
+      const dpopNonceRecord = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.DPOP_NONCE);
+      const dpopNonce = dpopNonceRecord?.value || null;
       
-      const bikJktRecord = await get(CONFIG.STORAGE.KEYS.BIK_JKT);
-      logger.debug('BIK JKT record:', bikJktRecord);
+      const bikJws = await createJwsWithDefaults({
+        typ: CONFIG.CRYPTO.JWT_TYPES.BIK_REG,
+        payload: { 
+          device_id: DPOP_SESSION.device_id,
+        },
+        privateKey: DPOP_SESSION.bik.privateKey,
+        publicJwk: DPOP_SESSION.bik.publicJwk
+      });
+
+      const dpopJws = await createJwsWithDefaults({
+        typ: CONFIG.CRYPTO.JWT_TYPES.DPOP_BIND,
+        payload: { 
+          htm: "POST",
+          htu: window.location.origin + "/session/init",
+          iat: Math.floor(Date.now() / 1000),
+          jti: crypto.randomUUID(),
+          nonce: DPOP_SESSION.dpop_nonce
+        },
+        privateKey: DPOP_SESSION.dpop.privateKey,
+        publicJwk: DPOP_SESSION.dpop.publicJwk
+      });
+
+      const body = JSON.stringify({
+        payload: {
+          device_id: DPOP_SESSION.device_id,
+          bik_jws: bikJws,
+          dpop_jws: dpopJws,
+          signal_data: DPOP_SESSION.signal_data
+        }
+      });
+      logger.info('Creating session init request with payload:', body);
+      const r = await fetch(CONFIG.ENDPOINTS.SESSION_INIT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'DPoP': dpopJws, 'BIK': bikJws },
+        credentials: 'include',
+        body: body
+      });
+      logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Fetch request completed, status:`, r.status);
       
-      localBIK = !!bikRecord;
-      localBikJkt = bikJktRecord?.value || null;
+      if (!r.ok) {
+        logger.error(`${CONFIG.ENDPOINTS.SESSION_INIT} failed:`, r.status);
+      }
       
-      logger.info('Local BIK detection result:', { localBIK, localBikJkt: localBikJkt ? 'present' : 'missing' });
-    } catch (error) {
-      logger.error('Error checking local BIK:', error);
-      localBIK = false;
+      const j = await r.json();
+      logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: response:`, j);
+      CSRF = j.csrf; 
+      REG_NONCE = j.reg_nonce;
+      await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.CSRF, value: j.csrf });
+      await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.SESSION_NONCE, value: j.reg_nonce });
+
+
+
+
+      await bikRegisterStep();
+      //await dpopBindStep();
+  
+    }
+//create new server session
+
+
+    logger.info('DPOP_SESSION:', DPOP_SESSION);
+    
+    logger.info('Getting session status');
+    const sessionStatus = await getSessionStatus();
+    logger.info('Session status:', sessionStatus);
+    if (sessionStatus && sessionStatus.valid) {
+      logger.info('Using restored session');
+      return sessionStatus;
+    }
+
+
+    logger.info('No valid session found, initializing fresh session');
+    const restoredSession = await restoreSession();
+    
+    if (restoredSession.hasSession && restoredSession.hasDPoP) {
+      // We have a working session
+      logger.info('Using restored session');
+      return restoredSession;
+    } else {
+      // No session or DPoP not working, initialize fresh
+      logger.info('Initializing fresh session');
+      return await initializeFreshSession();
     }
     
-    return { localBIK, localBikJkt };
-  },
-  
-  /**
-   * Check local DPoP from IndexedDB
-   */
-  async checkLocalDPoP() {
-    let localDPoP = false;
-    try {
-      logger.debug('Checking for DPoP with key:', CONFIG.STORAGE.KEYS.DPOP_CURRENT);
-      const dpopRecord = await idbGet(STORES.KEYS, CONFIG.STORAGE.KEYS.DPOP_CURRENT);
-      logger.debug('DPoP record from IndexedDB:', dpopRecord);
-      
-      localDPoP = !!dpopRecord;
-      logger.info('Local DPoP detection result:', { localDPoP });
-    } catch (error) {
-      logger.error('Error checking local DPoP:', error);
+  } catch (error) {
+    logger.error('Session setup failed:', error);
+    throw error;
+  }
+}
+
+export async function restoreSession() {
+  try {
+    logger.info('Starting comprehensive session restoration');
+    
+    // Step 1: Get server session status
+    const sessionStatus = await getSessionStatus();
+    
+    if (!sessionStatus || !sessionStatus.valid) {
+      logger.info('No valid session found');
+      return createSessionState();
     }
     
-    return { localDPoP };
-  },
+    logger.info('Valid session found, restoring state');
+    
+    // Step 2: Restore session tokens from IndexedDB
+    await restoreSessionTokens();
+    
+    // Step 3: Check local keys and server status
+    const { localBIK, localBikJkt } = await checkLocalBIK();
+    const { localDPoP } = await checkLocalDPoP();
+    
+    // Step 5: Check server BIK status
+    const serverBIK = sessionStatus.bik_registered;
+    const serverDPoP = sessionStatus.dpop_bound;
+    
+    // Step 4: Test DPoP binding functionality
+    const { dpopWorking } = await testDPoPBinding();
+    
+    // Step 5: Check BIK match (if both exist)
+    let bikMatch = false;
+    if (serverBIK && localBIK && localBikJkt) {
+      // We have both server BIK and local BIK with JKT
+      // For now, assume match if we have a stored JKT
+      // In a real implementation, we'd compare with server's JKT
+      bikMatch = true;
+      logger.info('BIK exists on both server and client with stored JKT');
+    } else if (serverBIK && localBIK && !localBikJkt) {
+      // We have both but no JKT stored - this is a mismatch
+      bikMatch = false;
+      logger.warn('BIK exists locally but no JKT stored - mismatch');
+    } else {
+      // Not both present or no JKT
+      bikMatch = false;
+    }
+    
+    const dpopMatch = localDPoP && serverDPoP && dpopWorking;
+    
+    // Step 6: Store signal data for restored BIK if available
+    if (bikMatch && serverBIK) {
+      await storeSignalDataForRestoredBIK();
+    }
+    
+    // Step 7: Get current username
+    const { hasUsername, username } = await getCurrentUsername();
+    
+    // Step 7: Check for mismatches and handle them
+    const mismatchResult = await checkAndHandleMismatches(localBIK, localDPoP, serverBIK, serverDPoP);
+    if (mismatchResult) {
+      return mismatchResult;
+    }
+
+    const result = createSessionState({
+      hasSession: true,
+      hasBIK: serverBIK,
+      hasDPoP: dpopWorking,
+      hasUsername,
+      username,
+      bik_jkt: sessionStatus.bik_jkt, // Include BIK JKT for signal matching
+      sessionStatus,
+      details: {
+        serverSession: true,
+        localBIK,
+        localDPoP,
+        serverBIK,
+        serverDPoP,
+        bikMatch,
+        dpopMatch,
+        dpopWorking,
+        sessionType: SESSION_TYPES.RESTORED,
+        bikType: localBIK && serverBIK ? (bikMatch ? KEY_TYPES.RESTORED : KEY_TYPES.MISMATCH) : (localBIK ? KEY_TYPES.LOCAL_ONLY : KEY_TYPES.SERVER_ONLY),
+        dpopType: localDPoP && serverDPoP ? (dpopWorking ? KEY_TYPES.RESTORED : KEY_TYPES.MISMATCH) : (localDPoP ? KEY_TYPES.LOCAL_ONLY : KEY_TYPES.SERVER_ONLY)
+      }
+    });
+    
+    logger.info('Session restoration completed:', result);
+    return result;
+    
+  } catch (error) {
+    logger.error('Session restoration failed:', error);
+    throw error;
+  }
+}
+
+
+async function checkLocalBIK() {
+  try {
+    const bikRecord = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.BIK);
+    const bikData = bikRecord?.value || null;
+    return {
+      localBIK: bikData,
+      localBikJkt: bikData?.bik_jkt || null
+    };
+  } catch (error) {
+    logger.error('Error checking local BIK:', error);
+    return { localBIK: null, localBikJkt: null };
+  }
+}
   
-  /**
-   * Test DPoP binding functionality
-   */
-  async testDPoPBinding() {
+async function checkLocalDPoP() {
+  try {
+    const dpopRecord = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.DPOP);
+    const dpopData = dpopRecord?.value || null;
+    const result = {
+      localDPoP: dpopData,
+      localDpopJkt: dpopData?.dpop_jkt || null
+    };
+    logger.info('Local DPoP detection result:', result);
+    return result;
+  } catch (error) {
+    logger.error('Error checking local DPoP:', error);
+    return { localDPoP: null, localDpopJkt: null };
+  }
+}
+  
+  async function testDPoPBinding() {
     let dpopWorking = false;
     try {
       // Test DPoP binding by making a request to session status
@@ -136,12 +341,12 @@ const SessionRestore = {
     }
     
     return { dpopWorking };
-  },
+  }
   
   /**
    * Check for client/server mismatches and handle them
    */
-  async checkAndHandleMismatches(localBIK, localDPoP, serverBIK, serverDPoP) {
+  async function checkAndHandleMismatches(localBIK, localDPoP, serverBIK, serverDPoP) {
     logger.info('Checking for mismatches:', { localBIK, localDPoP, serverBIK, serverDPoP });
     
     const bikMatch = localBIK && serverBIK && localBIK;
@@ -178,25 +383,12 @@ const SessionRestore = {
     }
     
     return null; // No mismatch handled
-  },
-  
-  /**
-   * Get current username from server
-   */
-  async getCurrentUsername() {
-    try {
-      const username = await getCurrentUsername();
-      return { hasUsername: !!username, username };
-    } catch (error) {
-      logger.debug('Failed to get current username:', error.message);
-      return { hasUsername: false, username: null };
-    }
-  },
+  }
 
   /**
    * Store signal data for restored BIK to build historical baseline
    */
-  async storeSignalDataForRestoredBIK() {
+  async function storeSignalDataForRestoredBIK() {
     try {
       logger.info('Storing signal data for restored BIK...');
       
@@ -230,7 +422,6 @@ const SessionRestore = {
       logger.error('Failed to store signal data for restored BIK:', error);
     }
   }
-};
 
 
 export function canonicalUrl(inputUrl, base) {
@@ -298,23 +489,7 @@ export async function createDpopProof({ url, method, nonce, privateKey, publicJw
 }
 
 
-export async function get(key) { 
-  try {
-    return await idbGet(STORES.META, key); 
-  } catch (error) {
-    if (error.name === 'StorageError') throw error;
-    throw new StorageError('Failed to get value from storage', { originalError: error.message, key });
-  }
-}
-
-export async function set(key, value) { 
-  try {
-    return await idbPut(STORES.META, { id: key, value }); 
-  } catch (error) {
-    if (error.name === 'StorageError') throw error;
-    throw new StorageError('Failed to set value in storage', { originalError: error.message, key });
-  }
-}
+// Simplified: Use direct idbGet/idbPut with single session store
 
 async function generateES256KeyPair() {
   try {
@@ -339,47 +514,57 @@ async function maybeRotate(rec, ttlSec, label) {
   return false;
 }
 
-export async function ensureBIK() {
+async function createBIK() {
   try {
-    let rec = await idbGet(STORES.KEYS, CONFIG.STORAGE.KEYS.BIK_CURRENT);
-    if (!rec || await maybeRotate(rec, CONFIG.TIMEOUTS.BIK_ROTATE_SEC, 'BIK')) {
-      const { privateKey, publicKey, publicJwk } = await generateES256KeyPair();
-      rec = { id: CONFIG.STORAGE.KEYS.BIK_CURRENT, privateKey, publicKey, publicJwk, createdAt: Date.now() };
-      await idbPut(STORES.KEYS, rec);
-      logger.debug('BIK key created/rotated');
-    }
-    return { 
-      privateKey: rec.privateKey, 
-      publicKey: rec.publicKey, 
-      publicJwk: rec.publicJwk, 
-      jkt: await jwkThumbprint(rec.publicJwk) 
+    const { privateKey, publicKey, publicJwk } = await generateES256KeyPair();
+    const bikJkt = await jwkThumbprint(publicJwk);
+    const keyData = { 
+      bik_jkt: bikJkt,
+      privateKey, 
+      publicKey, 
+      publicJwk, 
+      createdAt: Date.now() 
     };
+    
+    // Store in session object
+    DPOP_SESSION.bik = keyData;
+    DPOP_SESSION.bik_jkt = bikJkt;
+    
+    // Store in IndexedDB (single record with JKT included)
+    await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.BIK, value: keyData });
+    
+    logger.debug('BIK key created: ', keyData);
+    return true;
   } catch (error) {
-    logger.error('Failed to ensure BIK:', error);
-    if (error.name === 'AuthenticationError') throw error;
-    throw new AuthenticationError('Failed to ensure BIK key', { originalError: error.message });
+    logger.error('Failed to create BIK:', error);
+    return false;
   }
 }
 
-export async function ensureDPoP() {
+async function createDPoP() {
   try {
-    let rec = await idbGet(STORES.KEYS, CONFIG.STORAGE.KEYS.DPOP_CURRENT);
-    if (!rec || await maybeRotate(rec, CONFIG.TIMEOUTS.DPOP_ROTATE_SEC, 'DPoP')) {
-      const { privateKey, publicKey, publicJwk } = await generateES256KeyPair();
-      rec = { id: CONFIG.STORAGE.KEYS.DPOP_CURRENT, privateKey, publicKey, publicJwk, createdAt: Date.now() };
-      await idbPut(STORES.KEYS, rec);
-      logger.debug('DPoP key created/rotated');
-    }
-    return { 
-      privateKey: rec.privateKey, 
-      publicKey: rec.publicKey, 
-      publicJwk: rec.publicJwk, 
-      jkt: await jwkThumbprint(rec.publicJwk) 
+    const { privateKey, publicKey, publicJwk } = await generateES256KeyPair();
+    const dpopJkt = await jwkThumbprint(publicJwk);
+    const keyData = { 
+      dpop_jkt: dpopJkt,
+      privateKey, 
+      publicKey, 
+      publicJwk, 
+      createdAt: Date.now() 
     };
+    
+    // Store in session object
+    DPOP_SESSION.dpop = keyData;
+    DPOP_SESSION.dpop_jkt = dpopJkt;
+    
+    // Store in IndexedDB (single record with JKT included)
+    await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DPOP, value: keyData });
+    
+    logger.debug('DPoP key created: ', keyData);
+    return true;
   } catch (error) {
-    logger.error('Failed to ensure DPoP:', error);
-    if (error.name === 'AuthenticationError') throw error;
-    throw new AuthenticationError('Failed to ensure DPoP key', { originalError: error.message });
+    logger.error('Failed to create DPoP:', error);
+    return false;
   }
 }
 
@@ -401,41 +586,6 @@ async function createJwsWithDefaults({ typ, payload, privateKey, publicJwk }) {
   }
 }
 
-export async function sessionInit({ sessionInitUrl = CONFIG.ENDPOINTS.SESSION_INIT, browserUuid = null } = {}) {
-  try {
-    logger.info('sessionInit: Starting session initialization');
-    logger.debug('Initializing session');
-    const existing = (await get(CONFIG.STORAGE.KEYS.BROWSER_UUID))?.value;
-    const uuid = browserUuid || existing || crypto.randomUUID();
-    if (!existing) await set(CONFIG.STORAGE.KEYS.BROWSER_UUID, uuid);
-
-    logger.info('sessionInit: Making fetch request to', sessionInitUrl);
-    const r = await fetch(sessionInitUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ browser_uuid: uuid })
-    });
-    logger.info('sessionInit: Fetch request completed, status:', r.status);
-    
-    if (!r.ok) {
-      throw new NetworkError(`session/init failed: ${r.status}`, r.status, { url: sessionInitUrl });
-    }
-    
-    const j = await r.json();
-    CSRF = j.csrf; 
-    REG_NONCE = j.reg_nonce;
-    // Store CSRF and reg_nonce in IndexedDB for session restoration
-    await set(CONFIG.STORAGE.KEYS.CSRF, j.csrf);
-    await set(CONFIG.STORAGE.KEYS.REG_NONCE, j.reg_nonce);
-    logger.info('sessionInit ok', j);
-    return j;
-  } catch (error) {
-    logger.error('Session initialization failed:', error);
-    if (error.name === 'NetworkError') throw error;
-    throw new AuthenticationError('Session initialization failed', { originalError: error.message });
-  }
-}
 
 export async function bikRegisterStep({ bikRegisterUrl = CONFIG.ENDPOINTS.BROWSER_REGISTER } = {}) {
   try {
@@ -464,7 +614,7 @@ export async function bikRegisterStep({ bikRegisterUrl = CONFIG.ENDPOINTS.BROWSE
     }
     
     const j = await r.json();
-    await set(CONFIG.STORAGE.KEYS.BIK_JKT, j.bik_jkt);
+    await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.BIK_JKT, value: j.bik_jkt });
     logger.info('bik/register ok', j);
     return j;
   } catch (error) {
@@ -521,12 +671,12 @@ export async function dpopBindStep({ dpopBindUrl = CONFIG.ENDPOINTS.DPOP_BIND } 
     }
     
     const j = await r.json();
-    await set(CONFIG.STORAGE.KEYS.BIND, j.bind);
+    await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.BIND, value: j.bind });
     const serverNonce = r.headers.get('DPoP-Nonce'); 
-    if (serverNonce) await set(CONFIG.STORAGE.KEYS.DPOP_NONCE, serverNonce);
+    if (serverNonce) await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DPOP_NONCE, value: serverNonce });
 
     logger.info('dpop/bind ok', j, 'nonce=', serverNonce || null);
-    return { ...j, dpopKeyId: CONFIG.STORAGE.KEYS.DPOP_CURRENT, nonce: serverNonce || null };
+    return { ...j, dpopKeyId: CONFIG.STORAGE.SESSION.DPOP, nonce: serverNonce || null };
   } catch (error) {
     logger.error('DPoP binding failed:', error);
     if (error.name === 'AuthenticationError' || error.name === 'NetworkError') throw error;
@@ -535,11 +685,11 @@ export async function dpopBindStep({ dpopBindUrl = CONFIG.ENDPOINTS.DPOP_BIND } 
 }
 
 async function ensureBinding() {
-  let bind = (await get(CONFIG.STORAGE.KEYS.BIND))?.value;
+  let bind = (await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.BIND))?.value;
   if (!bind) {
     const ok = await resumeViaPage();
     if (!ok) throw new AuthenticationError('no binding token (resume failed)');
-    bind = (await get(CONFIG.STORAGE.KEYS.BIND))?.value;
+    bind = (await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.BIND))?.value;
   } else {
     // Check if binding token is expired (server TTL is 1 hour = 3600 seconds)
     try {
@@ -551,7 +701,7 @@ async function ensureBinding() {
         logger.debug('Binding token expired, triggering resume');
         const ok = await resumeViaPage();
         if (!ok) throw new AuthenticationError('binding token expired and resume failed');
-        bind = (await get(CONFIG.STORAGE.KEYS.BIND))?.value;
+        bind = (await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.BIND))?.value;
       }
     } catch (error) {
       logger.warn('Failed to check binding token expiration, assuming valid');
@@ -563,7 +713,7 @@ async function ensureBinding() {
 async function handleNonceChallenge(res, url, method, dpop) {
   if ((res.status === CONFIG.HTTP.STATUS_CODES.UNAUTHORIZED || res.status === CONFIG.HTTP.STATUS_CODES.PRECONDITION_REQUIRED) && res.headers.get('DPoP-Nonce')) {
     const n = res.headers.get('DPoP-Nonce');
-    await set(CONFIG.STORAGE.KEYS.DPOP_NONCE, n);
+    await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DPOP_NONCE, value: n });
     const proof = await createDpopProof({ 
       url, method, nonce: n, 
       privateKey: dpop.privateKey, 
@@ -617,7 +767,7 @@ export async function dpopFunFetch(url, { method = 'GET', body = null } = {}) {
       if (res.status === 401 && t.includes('bind token invalid')) {
         logger.warn('Binding token invalid, clearing stored token and retrying');
         // Clear the stored binding token
-        await set(CONFIG.STORAGE.KEYS.BIND, null);
+        await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.BIND, value: null });
         // Try to get a fresh binding token
         const freshBind = await ensureBinding();
         if (freshBind) {
@@ -669,10 +819,10 @@ export async function resumeViaPage() {
     const r2 = await fetch(CONFIG.ENDPOINTS.SESSION_RESUME_CONFIRM, { method: 'POST', credentials: 'include', body: jws });
     if (!r2.ok) return false;
     const j = await r2.json();
-    await set(CONFIG.STORAGE.KEYS.BIND, j.bind);
+    await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.BIND, value: j.bind });
     const n = r2.headers.get('DPoP-Nonce'); 
     if (n) {
-      await set(CONFIG.STORAGE.KEYS.DPOP_NONCE, n);
+      await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DPOP_NONCE, value: n });
       logger.info('Fresh DPoP nonce received and stored:', n);
     } else {
       logger.warn('No DPoP nonce received from session resume - this may cause authentication issues');
@@ -688,16 +838,16 @@ export async function resumeViaPage() {
 
 // Helper functions for DPoP information capture
 export async function getDpopNonce() {
-  return await get(CONFIG.STORAGE.KEYS.DPOP_NONCE);
+  return await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.DPOP_NONCE);
 }
 
 export async function getBindToken() {
-  return await get(CONFIG.STORAGE.KEYS.BIND);
+  return await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.BIND);
 }
 
 export async function getBIK() {
   try {
-    return await idbGet(STORES.KEYS, CONFIG.STORAGE.KEYS.BIK_CURRENT);
+    return await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.BIK);
   } catch {
     return null;
   }
@@ -708,8 +858,8 @@ export async function getBIK() {
  */
 export async function restoreSessionTokens() {
   try {
-    const csrf = await get(CONFIG.STORAGE.KEYS.CSRF);
-    const regNonce = await get(CONFIG.STORAGE.KEYS.REG_NONCE);
+    const csrf = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.CSRF);
+    const regNonce = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.SESSION_NONCE);
     
     if (csrf?.value) {
       CSRF = csrf.value;
@@ -750,28 +900,6 @@ export async function clientFlush() {
 // SESSION MANAGEMENT
 // ============================================================================
 
-/**
- * Get comprehensive session status from server
- */
-export async function getSessionStatus() {
-  try {
-    const response = await fetch('/session/status', {
-      method: 'GET',
-      credentials: 'include'
-    });
-    
-    if (!response.ok) {
-      throw new NetworkError(`Session status failed: ${response.status}`, response.status);
-    }
-    
-    const status = await response.json();
-    logger.debug('Session status retrieved:', status);
-    return status;
-  } catch (error) {
-    logger.error('Failed to get session status:', error);
-    throw error;
-  }
-}
 
 /**
  * Get current username from server
@@ -797,183 +925,8 @@ export async function getCurrentUsername() {
   }
 }
 
-/**
- * Comprehensive session restoration with detailed state information
- */
-export async function restoreSession() {
-  try {
-    logger.info('Starting comprehensive session restoration');
-    
-    // Step 1: Get server session status
-    const sessionStatus = await getSessionStatus();
-    
-    if (!sessionStatus || !sessionStatus.valid) {
-      logger.info('No valid session found');
-      return createSessionState();
-    }
-    
-    logger.info('Valid session found, restoring state');
-    
-    // Step 2: Restore session tokens from IndexedDB
-    await restoreSessionTokens();
-    
-    // Step 3: Check local keys and server status
-    const { localBIK, localBikJkt } = await SessionRestore.checkLocalBIK();
-    const { localDPoP } = await SessionRestore.checkLocalDPoP();
-    
-    // Step 5: Check server BIK status
-    const serverBIK = sessionStatus.bik_registered;
-    const serverDPoP = sessionStatus.dpop_bound;
-    
-    // Step 4: Test DPoP binding functionality
-    const { dpopWorking } = await SessionRestore.testDPoPBinding();
-    
-    // Step 5: Check BIK match (if both exist)
-    let bikMatch = false;
-    if (serverBIK && localBIK && localBikJkt) {
-      // We have both server BIK and local BIK with JKT
-      // For now, assume match if we have a stored JKT
-      // In a real implementation, we'd compare with server's JKT
-      bikMatch = true;
-      logger.info('BIK exists on both server and client with stored JKT');
-    } else if (serverBIK && localBIK && !localBikJkt) {
-      // We have both but no JKT stored - this is a mismatch
-      bikMatch = false;
-      logger.warn('BIK exists locally but no JKT stored - mismatch');
-    } else {
-      // Not both present or no JKT
-      bikMatch = false;
-    }
-    
-    const dpopMatch = localDPoP && serverDPoP && dpopWorking;
-    
-    // Step 6: Store signal data for restored BIK if available
-    if (bikMatch && serverBIK) {
-      await SessionRestore.storeSignalDataForRestoredBIK();
-    }
-    
-    // Step 7: Get current username
-    const { hasUsername, username } = await SessionRestore.getCurrentUsername();
-    
-    // Step 7: Check for mismatches and handle them
-    const mismatchResult = await SessionRestore.checkAndHandleMismatches(localBIK, localDPoP, serverBIK, serverDPoP);
-    if (mismatchResult) {
-      return mismatchResult;
-    }
 
-    const result = createSessionState({
-      hasSession: true,
-      hasBIK: serverBIK,
-      hasDPoP: dpopWorking,
-      hasUsername,
-      username,
-      bik_jkt: sessionStatus.bik_jkt, // Include BIK JKT for signal matching
-      sessionStatus,
-      details: {
-        serverSession: true,
-        localBIK,
-        localDPoP,
-        serverBIK,
-        serverDPoP,
-        bikMatch,
-        dpopMatch,
-        dpopWorking,
-        sessionType: SESSION_TYPES.RESTORED,
-        bikType: localBIK && serverBIK ? (bikMatch ? KEY_TYPES.RESTORED : KEY_TYPES.MISMATCH) : (localBIK ? KEY_TYPES.LOCAL_ONLY : KEY_TYPES.SERVER_ONLY),
-        dpopType: localDPoP && serverDPoP ? (dpopWorking ? KEY_TYPES.RESTORED : KEY_TYPES.MISMATCH) : (localDPoP ? KEY_TYPES.LOCAL_ONLY : KEY_TYPES.SERVER_ONLY)
-      }
-    });
-    
-    logger.info('Session restoration completed:', result);
-    return result;
-    
-  } catch (error) {
-    logger.error('Session restoration failed:', error);
-    throw error;
-  }
-}
 
-/**
- * Initialize a fresh session (when no existing session)
- */
-export async function initializeFreshSession() {
-  try {
-    logger.info('Initializing fresh session');
-    
-    // Step 1: Initialize session
-    logger.info('Step 1: Calling sessionInit...');
-    await sessionInit();
-    logger.info('Step 1: sessionInit completed');
-    
-    // Step 2: Register BIK
-    logger.info('Step 2: Calling bikRegisterStep...');
-    await bikRegisterStep();
-    logger.info('Step 2: bikRegisterStep completed');
-    
-    // Step 3: Bind DPoP
-    logger.info('Step 3: Calling dpopBindStep...');
-    await dpopBindStep();
-    logger.info('Step 3: dpopBindStep completed');
-    
-    logger.info('Fresh session initialization completed');
-    
-    return createSessionState({
-      hasSession: true,
-      hasBIK: true,
-      hasDPoP: true,
-      hasUsername: false,
-      username: null,
-      sessionStatus: { valid: true, bik_registered: true, dpop_bound: true },
-      details: {
-        serverSession: true,
-        localBIK: true,
-        localDPoP: true,
-        serverBIK: true,
-        serverDPoP: true,
-        bikMatch: true,
-        dpopMatch: true,
-        dpopWorking: true,
-        sessionType: SESSION_TYPES.NEW,
-        bikType: KEY_TYPES.NEW,
-        dpopType: KEY_TYPES.NEW
-      }
-    });
-    
-  } catch (error) {
-    logger.error('Fresh session initialization failed:', error);
-    throw error;
-  }
-}
-
-/**
- * Complete session setup (restore existing or initialize fresh)
- */
-export async function setupSession() {
-  try {
-    logger.info('Setting up session');
-    
-    // Try to restore existing session first
-    const restoredSession = await restoreSession();
-    
-    if (restoredSession.hasSession && restoredSession.hasDPoP) {
-      // We have a working session
-      logger.info('Using restored session');
-      return restoredSession;
-    } else {
-      // No session or DPoP not working, initialize fresh
-      logger.info('Initializing fresh session');
-      return await initializeFreshSession();
-    }
-    
-  } catch (error) {
-    logger.error('Session setup failed:', error);
-    throw error;
-  }
-}
-
-/**
- * Clear server session (preserves user data)
- */
 export async function clearServerSession() {
   try {
     logger.info('Clearing server session');
@@ -1016,123 +969,9 @@ export async function resetSession() {
   }
 }
 
-
-/**
- * Resume session with fresh binding token
- */
-export async function resumeSession() {
-  try {
-    // First restore CSRF token and reg_nonce from IndexedDB
-    await restoreSessionTokens();
-    
-    // Verify we have the necessary tokens
-    const csrf = await get(CONFIG.STORAGE.KEYS.CSRF);
-    const bind = await get(CONFIG.STORAGE.KEYS.BIND);
-    
-    if (!csrf?.value) {
-      throw new AuthenticationError('CSRF token not found in storage');
-    }
-    
-    if (!bind?.value) {
-      throw new AuthenticationError('Binding token not found in storage');
-    }
-    
-    // Now call the server-side resume process to get fresh DPoP nonce
-    const resumeSuccess = await resumeViaPage();
-    if (!resumeSuccess) {
-      throw new AuthenticationError('Server-side session resume failed');
-    }
-    
-    logger.info('Session restoration completed successfully');
-    return true;
-  } catch (error) {
-    logger.error('Session restoration failed:', error);
-    throw error;
-  }
+function getCurrentOrigin() {
+  return globalThis.location?.origin || globalThis.self?.location?.origin || 'http://localhost';
 }
 
-/**
- * Perform a full session resume when binding token is expired
- */
-export async function performFullResume() {
-  try {
-    // Call the resume endpoints directly to get a fresh binding token
-    const r1 = await fetch('/session/resume-init', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
-    });
-    
-    if (!r1.ok) {
-      throw new NetworkError(`Resume init failed: ${r1.status}`, r1.status);
-    }
-    
-    const { resume_nonce } = await r1.json();
-    
-    // Get the BIK from storage
-    const bik = await getBIK();
-    if (!bik) {
-      throw new AuthenticationError('BIK not found in storage');
-    }
-    
-    // Create the resume JWS manually
-    const jws = await createResumeJws(resume_nonce, bik);
-    
-    // Confirm the resume
-    const r2 = await fetch('/session/resume-confirm', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/jose+json' },
-      body: jws
-    });
-    
-    if (!r2.ok) {
-      throw new NetworkError(`Resume confirm failed: ${r2.status}`, r2.status);
-    }
-    
-    const { bind } = await r2.json();
-    
-    // Store the binding token
-    await set(CONFIG.STORAGE.KEYS.BIND, bind);
-    
-    logger.info('Full session resume completed successfully');
-    return true;
-  } catch (error) {
-    logger.error('Full session resume failed:', error);
-    throw error;
-  }
-}
 
-/**
- * Create a resume JWS manually
- */
-export async function createResumeJws(resume_nonce, bik) {
-  try {
-    // Import the necessary crypto functions from the jose-lite module
-    const { jose } = await import('../vendor/jose-lite.js');
-    
-    // Create the JWS payload
-    const payload = {
-      resume_nonce,
-      iat: Math.floor(Date.now() / 1000)
-    };
-    
-    // Create the JWS header
-    const header = {
-      alg: 'ES256',
-      typ: 'bik-resume+jws',
-      jwk: bik.publicJwk
-    };
-    
-    // Sign the JWS
-    const jws = await jose.sign(header, payload, bik.privateKey);
-    
-    logger.debug('Created resume JWS:', { length: jws.length });
-    return jws;
-  } catch (error) {
-    logger.error('Failed to create resume JWS:', error);
-    throw error;
-  }
-}
 

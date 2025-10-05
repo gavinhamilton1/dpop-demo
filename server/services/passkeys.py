@@ -13,9 +13,9 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding, ed25519
 from cryptography.x509.oid import ObjectIdentifier
 
-from server.config import load_settings
-from server.db import DB
-from server.utils import b64u, b64u_dec, ec_p256_thumbprint, now
+from server.core.config import load_settings
+from server.db.database import DB
+from server.utils.helpers import b64u, b64u_dec, ec_p256_thumbprint, now
 
 log = logging.getLogger("dpop-fun")
 SETTINGS = load_settings()

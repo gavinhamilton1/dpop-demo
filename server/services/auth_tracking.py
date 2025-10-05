@@ -1,7 +1,7 @@
 # server/auth_tracking.py
 import time
 import logging
-from server.db import DB
+from server.db.database import DB
 
 log = logging.getLogger(__name__)
 

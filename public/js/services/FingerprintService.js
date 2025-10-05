@@ -80,7 +80,6 @@ export class FingerprintService {
         fullVersionList: uaCh.fullVersionList
       };
     } catch (error) {
-      console.warn('Failed to collect User Agent Client Hints:', error);
       return null;
     }
   }
@@ -116,7 +115,6 @@ export class FingerprintService {
 
       return automation;
     } catch (error) {
-      console.warn('Failed to collect automation data:', error);
       return {
         webdriver: false,
         headlessUA: false,
@@ -136,7 +134,6 @@ export class FingerprintService {
    */
   static async collectFingerprint(deviceType = 'unknown') {
     try {
-      console.log(`🔍 FINGERPRINT COLLECTION STARTED for ${deviceType}`);
       
       // Collect User Agent Client Hints data
       const uaCh = await this.collectUserAgentClientHints();
@@ -163,12 +160,8 @@ export class FingerprintService {
         timestamp: new Date().toISOString(),
         deviceType: deviceType
       };
-
-      console.log(`FINGERPRINT COLLECTION COMPLETED for ${deviceType}:`, Object.keys(fingerprint).length, 'signals');
-      return fingerprint;
-      
+      return fingerprint;      
     } catch (error) {
-      console.error(`FINGERPRINT COLLECTION FAILED for ${deviceType}:`, error);
       throw error;
     }
   }
@@ -180,7 +173,6 @@ export class FingerprintService {
    */
   static async sendFingerprintToServer(fingerprint) {
     try {
-      console.log('📤 Sending fingerprint to server...');
       
       const response = await fetch('/session/fingerprint', {
         method: 'POST',
@@ -195,11 +187,9 @@ export class FingerprintService {
       }
 
       const result = await response.json();
-      console.log('Fingerprint sent to server successfully');
       return result;
       
     } catch (error) {
-      console.error('Failed to send fingerprint to server:', error);
       throw error;
     }
   }
@@ -215,7 +205,6 @@ export class FingerprintService {
       const result = await this.sendFingerprintToServer(fingerprint);
       return result;
     } catch (error) {
-      console.error(`Failed to collect and send fingerprint for ${deviceType}:`, error);
       throw error;
     }
   }

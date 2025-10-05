@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from server.config import load_settings
-from server.utils import b64u, b64u_dec, jws_es256_sign, jws_es256_verify, now
-from server.db import DB
+from server.core.config import load_settings
+from server.utils.helpers import b64u, b64u_dec, jws_es256_sign, now
+from server.db.database import DB
 
 log = logging.getLogger("dpop-fun")
 SETTINGS = load_settings()

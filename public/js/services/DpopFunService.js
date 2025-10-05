@@ -149,30 +149,6 @@ export class DpopFunService extends ApiService {
   }
 
   /**
-   * Resume session with fresh binding token
-   */
-  async resumeSession() {
-    try {
-      return await DpopFun.resumeSession();
-    } catch (error) {
-      throw new Error(`Session restoration failed: ${error.message}`);
-    }
-  }
-
-  /**
-   * Perform a full session resume when binding token is expired
-   */
-  async performFullResume() {
-    try {
-      return await DpopFun.performFullResume();
-    } catch (error) {
-      throw new Error(`Full session resume failed: ${error.message}`);
-    }
-  }
-
-
-
-  /**
    * Clear session data
    */
   clearSession() {

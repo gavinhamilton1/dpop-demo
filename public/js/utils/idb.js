@@ -56,15 +56,11 @@ async function openDB() {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     
     req.onupgradeneeded = () => {
-      logger.debug('IndexedDB upgrade needed, creating stores');
+      logger.debug('IndexedDB upgrade needed, creating session store');
       const db = req.result;
-      if (!db.objectStoreNames.contains(STORES.KEYS)) {
-        db.createObjectStore(STORES.KEYS, { keyPath: 'id' });
-        logger.debug('Created keys store');
-      }
-      if (!db.objectStoreNames.contains(STORES.META)) {
-        db.createObjectStore(STORES.META, { keyPath: 'id' });
-        logger.debug('Created meta store');
+      if (!db.objectStoreNames.contains(STORES.SESSION)) {
+        db.createObjectStore(STORES.SESSION, { keyPath: 'id' });
+        logger.debug('Created session store');
       }
     };
     

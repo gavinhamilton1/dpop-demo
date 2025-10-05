@@ -36,18 +36,17 @@ export const CONFIG = {
   STORAGE: {
     DB_NAME: 'dpop-fun',
     DB_VERSION: 1,
-    STORES: { KEYS: 'keys', META: 'meta' },
-    KEYS: {
-      BIK_CURRENT: 'bik.current',
-      DPOP_CURRENT: 'dpop.current',
+    STORES: { SESSION: 'session' },
+    SESSION: {
+      BIK: 'bik',
+      DPOP: 'dpop',
       BIND: 'bind',
       DPOP_NONCE: 'dpop_nonce',
-      BROWSER_UUID: 'browser_uuid',
-      BIK_JKT: 'bik_jkt',
+      DEVICE_ID: 'device_id',
       CSRF: 'csrf',
-      REG_NONCE: 'reg_nonce',
       AUTH_STATUS: 'auth_status',
       AUTH_METHOD: 'auth_method',
+      LAST_USERNAME: 'last_username',
     }
   },
   HTTP: {

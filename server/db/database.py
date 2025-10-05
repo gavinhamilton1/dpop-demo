@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
 
 import aiosqlite
-from server.config import load_settings
+from server.core.config import load_settings
 
 # Load config once at import
 _SETTINGS = load_settings()
@@ -45,34 +45,52 @@ class Database:
             await self._conn.execute("PRAGMA foreign_keys=ON;")
             await self._conn.commit()
 
-        # Create minimal tables used by the app; extend as needed
+        # Create device-centric tables
         await self.execscript("""
-        CREATE TABLE IF NOT EXISTS sessions (
-          sid TEXT PRIMARY KEY,
-          data TEXT NOT NULL,           -- JSON blob
-          updated_at INTEGER NOT NULL
+        CREATE TABLE IF NOT EXISTS devices (
+          device_id TEXT PRIMARY KEY,           -- Browser UUID (unique device identifier)
+          device_type TEXT NOT NULL,            -- 'browser' or 'mobile'
+          bik_jkt TEXT,                         -- Browser Identity Key Thumbprint
+          bik_public_jwk TEXT,                  -- BIK public key (JSON)
+          signal_data TEXT,                     -- Device fingerprint/signal data (JSON)
+          first_seen INTEGER NOT NULL,          -- Unix timestamp of first device registration
+          last_seen INTEGER NOT NULL,           -- Unix timestamp of last activity
+          created_at INTEGER NOT NULL,          -- Unix timestamp of record creation
+          updated_at INTEGER NOT NULL           -- Unix timestamp of last update
         );
 
-        CREATE TABLE IF NOT EXISTS users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          username TEXT UNIQUE NOT NULL,
-          session_id TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          FOREIGN KEY (session_id) REFERENCES sessions(sid)
+        CREATE TABLE IF NOT EXISTS sessions (
+          session_id TEXT PRIMARY KEY,          -- Unique session identifier
+          device_id TEXT NOT NULL,              -- Foreign key to devices.device_id
+          user_id TEXT,                         -- User identifier (NULL if not authenticated)
+          state TEXT NOT NULL,                  -- 'pending-bind', 'bound-bik', 'bound', 'authenticated'
+          dpop_jkt TEXT,                        -- DPoP key thumbprint
+          dpop_public_jwk TEXT,                 -- DPoP public key (JSON)
+          bind_token TEXT,                      -- Current binding token (JWT)
+          bind_expires_at INTEGER,              -- Binding token expiration timestamp
+          csrf_token TEXT NOT NULL,             -- CSRF protection token
+          created_at INTEGER NOT NULL,              -- Unix timestamp of session creation
+          updated_at INTEGER NOT NULL,          -- Unix timestamp of last session update
+          expires_at INTEGER,                   -- Session expiration timestamp
+          FOREIGN KEY (device_id) REFERENCES devices(device_id)
         );
 
         CREATE TABLE IF NOT EXISTS nonces (
-          sid TEXT NOT NULL,
-          nonce TEXT NOT NULL,
-          exp INTEGER NOT NULL,
-          PRIMARY KEY (sid, nonce)
+          session_id TEXT NOT NULL,             -- Foreign key to sessions.session_id
+          nonce TEXT NOT NULL,                  -- Nonce value
+          expires_at INTEGER NOT NULL,          -- Nonce expiration timestamp
+          created_at INTEGER NOT NULL,          -- Unix timestamp of nonce creation
+          PRIMARY KEY (session_id, nonce),
+          FOREIGN KEY (session_id) REFERENCES sessions(session_id)
         );
 
         CREATE TABLE IF NOT EXISTS jtis (
-          sid TEXT NOT NULL,
-          jti TEXT NOT NULL,
-          exp INTEGER NOT NULL,
-          PRIMARY KEY (sid, jti)
+          session_id TEXT NOT NULL,             -- Foreign key to sessions.session_id
+          jti TEXT NOT NULL,                    -- JWT ID for replay protection
+          expires_at INTEGER NOT NULL,          -- JTI expiration timestamp
+          created_at INTEGER NOT NULL,          -- Unix timestamp of JTI creation
+          PRIMARY KEY (session_id, jti),
+          FOREIGN KEY (session_id) REFERENCES sessions(session_id)
         );
 
         CREATE TABLE IF NOT EXISTS passkeys (
@@ -179,23 +197,55 @@ class Database:
             (sid, j),
         )
 
-    async def get_session(self, sid: str) -> Optional[Dict[str, Any]]:
-        row = await self.fetchone("SELECT data FROM sessions WHERE sid=?", (sid,))
+    # Device management methods
+    async def get_device(self, device_id: str) -> Optional[Dict[str, Any]]:
+        """Get device by device_id"""
+        row = await self.fetchone("SELECT * FROM devices WHERE device_id=?", (device_id,))
         if not row:
             return None
-        try:
-            return json.loads(row["data"])
-        except Exception:
+        return dict(row)
+
+    async def create_device(self, device_id: str, device_type: str, signal_data: str = None) -> None:
+        """Create a new device record"""
+        now = int(time.time())
+        await self.exec("""
+            INSERT INTO devices (device_id, device_type, signal_data, first_seen, last_seen, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (device_id, device_type, signal_data, now, now, now, now))
+
+    async def update_device(self, device_id: str, **updates) -> None:
+        """Update device record"""
+        updates['updated_at'] = int(time.time())
+        set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+        values = list(updates.values()) + [device_id]
+        await self.exec(f"UPDATE devices SET {set_clause} WHERE device_id = ?", values)
+
+    # Session management methods
+    async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get session by session_id"""
+        row = await self.fetchone("SELECT * FROM sessions WHERE session_id=?", (session_id,))
+        if not row:
             return None
+        return dict(row)
 
-    async def update_session(self, sid: str, patch: Dict[str, Any]):
-        cur = await self.get_session(sid) or {}
-        cur.update(patch)
-        await self.set_session(sid, cur)
+    async def create_session(self, session_id: str, device_id: str, csrf_token: str, state: str = "pending-bind") -> None:
+        """Create a new session"""
+        now = int(time.time())
+        await self.exec("""
+            INSERT INTO sessions (session_id, device_id, state, csrf_token, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (session_id, device_id, state, csrf_token, now, now))
 
-    async def delete_session(self, sid: str):
+    async def update_session(self, session_id: str, **updates) -> None:
+        """Update session record"""
+        updates['updated_at'] = int(time.time())
+        set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+        values = list(updates.values()) + [session_id]
+        await self.exec(f"UPDATE sessions SET {set_clause} WHERE session_id = ?", values)
+
+    async def delete_session(self, session_id: str):
         """Delete a session from the database"""
-        await self.exec("DELETE FROM sessions WHERE sid=?", (sid,))
+        await self.exec("DELETE FROM sessions WHERE session_id=?", (session_id,))
 
     async def get_session_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """Get session by username - used for duplicate username validation"""
@@ -260,23 +310,26 @@ class Database:
         except Exception:
             return False
 
-    async def add_nonce(self, sid: str, nonce: str, ttl_sec: int):
-        exp = await self.fetchone("SELECT strftime('%s','now') + ? AS e", (ttl_sec,))
-        await self.exec("INSERT OR REPLACE INTO nonces(sid, nonce, exp) VALUES(?,?,?)",
-                        (sid, nonce, int(exp["e"])))
+    async def add_nonce(self, session_id: str, nonce: str, ttl_sec: int):
+        """Add a nonce for a session"""
+        now = int(time.time())
+        expires_at = now + ttl_sec
+        await self.exec("INSERT OR REPLACE INTO nonces(session_id, nonce, expires_at, created_at) VALUES(?,?,?,?)",
+                        (session_id, nonce, expires_at, now))
 
-    async def nonce_valid(self, sid: str, nonce: str) -> bool:
-        await self.exec("DELETE FROM nonces WHERE exp < strftime('%s','now')")
-        row = await self.fetchone("SELECT 1 FROM nonces WHERE sid=? AND nonce=?", (sid, nonce))
+    async def nonce_valid(self, session_id: str, nonce: str) -> bool:
+        """Check if a nonce is valid for a session"""
+        await self.exec("DELETE FROM nonces WHERE expires_at < ?", (int(time.time()),))
+        row = await self.fetchone("SELECT 1 FROM nonces WHERE session_id=? AND nonce=?", (session_id, nonce))
         return bool(row)
 
-    async def add_jti(self, sid: str, jti: str, ttl_sec: int) -> bool:
-        # garbage collect old
-        await self.exec("DELETE FROM jtis WHERE exp < strftime('%s','now')")
-        exp = await self.fetchone("SELECT strftime('%s','now') + ? AS e", (ttl_sec,))
+    async def add_jti(self, session_id: str, jti: str, ttl_sec: int) -> bool:
+        """Add a JTI for replay protection"""
+        now = int(time.time())
+        expires_at = now + ttl_sec
         try:
-            await self.exec("INSERT INTO jtis(sid, jti, exp) VALUES(?,?,?)",
-                            (sid, jti, int(exp["e"])))
+            await self.exec("INSERT INTO jtis(session_id, jti, expires_at, created_at) VALUES(?,?,?,?)",
+                            (session_id, jti, expires_at, now))
             return True
         except Exception:
             # primary key conflict → seen already
@@ -290,13 +343,13 @@ class Database:
           PRAGMA foreign_keys=OFF;
           
           -- Delete in reverse dependency order
-          DELETE FROM users;           -- References sessions
           DELETE FROM face_embeddings; -- References users
           DELETE FROM links;           -- References sessions
           DELETE FROM nonces;          -- References sessions
-          DELETE FROM jtis;            -- References sessions
+          DELETE FROM jtis;          -- References sessions
           DELETE FROM passkeys;        -- No foreign keys
-          DELETE FROM sessions;        -- Base table
+          DELETE FROM sessions;        -- References devices
+          DELETE FROM devices;         -- Base table
           
           -- Re-enable foreign key checks
           PRAGMA foreign_keys=ON;

@@ -47,11 +47,11 @@ class Settings:
 _DEFAULTS: Dict[str, Any] = {
     "server": {
         "external_origin": None,
-        "allowed_origins": [],  # List of allowed origins for multi-domain support
+        "allowed_origins": ["http://localhost:8000", "https://dpop.fun", "https://dpop-fun.onrender.com"],  # List of allowed origins for multi-domain support
         "ec_private_key_pem": None,
         "ec_private_key_pem_file": None,
     },
-    "db": {"path": "/tmp/dpop-fun.db"},
+    "db": {"path": "../data/dpop-fun.db"},
     "session": {
         "cookie_name": "dpop-fun_session",
         "same_site": "lax",
@@ -114,7 +114,7 @@ def load_settings(path: Optional[str] = None) -> Settings:
       2) env DPOP_FUN_CONFIG (absolute or relative; robustly resolved)
       3) search order in project root: dpop-fun.yaml|yml|dpop-fun.dev.yaml
     """
-    base_dir = Path(__file__).resolve().parent.parent  # Go up to project root
+    base_dir = Path(__file__).resolve().parent.parent.parent  # Go up to project root
     cfg_file_used: Optional[Path] = None
 
     if path:

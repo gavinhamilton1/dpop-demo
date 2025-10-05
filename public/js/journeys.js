@@ -9,7 +9,6 @@ import { idbGet, STORES } from '../js/utils/idb.js';
 import * as DpopFun from './core/dpop-fun.js';
 import * as Passkeys from './core/passkeys.js';
 import { FingerprintService } from './services/FingerprintService.js';
-import { generateQRCode } from '../js/utils/qr-generator.js';
 
 class JourneysController {
     constructor() {
