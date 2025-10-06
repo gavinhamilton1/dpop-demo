@@ -121,6 +121,14 @@ export async function setupSession() {
       logger.info('DPoP nonce found: ', dpopNonce);
     }
 
+    logger.info('STEP 6. Check for DPoP bind');
+    const dpopBindRecord = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.DPOP_BIND);
+    const dpopBind = dpopBindRecord?.value || null;
+    if (dpopBind) {
+      DPOP_SESSION.dpop_bind = dpopBind;
+      logger.info('DPoP bind found: ', dpopBind);
+    }
+
     logger.info('STEP 6. Collect signal data');
     DPOP_SESSION.signal_data = await FingerprintService.collectFingerprint('desktop');
     logger.info('Signal data collected: ', DPOP_SESSION.signal_data);
@@ -160,13 +168,21 @@ export async function setupSession() {
       }
     });
     logger.info('Creating session init request with payload:', body);
+    logger.info('Creating session init request with headers:', {
+      'Content-Type': 'application/json', 
+      'DPoP': dpopJws, 
+      'BIK': bikJws,
+      'Dpop-Bind': DPOP_SESSION.dpop_bind,
+      'Dpop-Nonce': DPOP_SESSION.dpop_nonce,
+      'X-CSRF-Token': DPOP_SESSION.csrf
+    });
     const r = await fetch(CONFIG.ENDPOINTS.SESSION_INIT, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json', 
         'DPoP': dpopJws, 
         'BIK': bikJws,
-        'Dpop-Bind': DPOP_SESSION.bind_token,
+        'Dpop-Bind': DPOP_SESSION.dpop_bind,
         'Dpop-Nonce': DPOP_SESSION.dpop_nonce,
         'X-CSRF-Token': DPOP_SESSION.csrf
       },
@@ -177,6 +193,7 @@ export async function setupSession() {
     logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: response:`, r);
     const CSRF = r.headers.get('X-Csrf-Token'); 
     const DPOP_NONCE = r.headers.get('Dpop-Nonce');
+    const DPOP_BIND = r.headers.get('Dpop-Bind');
 
     logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Response headers csrf:`, CSRF);
     logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Response headers dpop nonce:`, DPOP_NONCE);
@@ -186,6 +203,7 @@ export async function setupSession() {
     
     await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.CSRF, value: CSRF });
     await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DPOP_NONCE, value: DPOP_NONCE });
+    await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DPOP_BIND, value: DPOP_BIND });
 
 
   

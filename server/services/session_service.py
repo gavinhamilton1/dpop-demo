@@ -12,12 +12,16 @@ from typing import Dict, Any, Optional, Tuple
 from fastapi import Request, HTTPException, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-
+from jose import jws as jose_jws
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+            
 from server.core.config import load_settings
 from server.db.session import SessionDB
 from server.utils.helpers import ec_p256_thumbprint, now, _new_nonce, validate_jws_token, validate_key_jws
 from server.utils.url_utils import canonicalize_origin_and_url
 from server.services.signal_service import signal_service
+from server.utils.geolocation import GeolocationService
 # Removed schemas for development simplicity
 
 # Import constants from main
@@ -33,7 +37,8 @@ SETTINGS = load_settings()
 
 #enum for session states
 SessionState = Enum("SessionState", ["pending_dpop_bind", "bound_bik", "bound_dpop", "authenticated", "user_terminated", "system_terminated", "expired"])
-SessionStatus = Enum("SessionStatus", ["ACTIVE", "EXPIRED", "TERMINATED"]
+SessionStatus = Enum("SessionStatus", ["ACTIVE", "EXPIRED", "TERMINATED"])
+NonceStatus = Enum("NonceStatus", ["PENDING", "REDEEMED", "EXPIRED"])
 
 
 class SessionService:
@@ -52,7 +57,7 @@ class SessionService:
         # Create fresh SESSION object for this request
         SESSION = {
             "_session_id": None,
-            "_session_status": "ACTIVE",
+            "_session_status": SessionStatus.ACTIVE.name,
             "_access_token": None,
             "_refresh_token": None,
             "_id_token": None,
@@ -73,7 +78,8 @@ class SessionService:
             "dpop_bind_expires_at": None,
             "created_at": None,
             "updated_at": None,
-            "expires_at": None
+            "expires_at": None,
+            "geolocation": None
         }
 
         #check origin details from the https request against allow list
@@ -102,7 +108,7 @@ class SessionService:
         session_status = session_db.get("_session_status") if session_db else None
         log.info("Session initialization - Session ID: %s, Session Status: %s", session_id, session_status)
         
-        if not session_id or not session_db or session_db.get("_session_status") != "ACTIVE":
+        if not session_id or not session_db or session_db.get("_session_status") != SessionStatus.ACTIVE.name:
             #create a new session
             log.info("Session initialization - No session found, creating new session")
             session_id = secrets.token_urlsafe(18)
@@ -111,7 +117,7 @@ class SessionService:
             nonce_valid, new_nonce = await SessionService._do_nonce_sense(session_id, None)
             log.info("Session initialization - Session ID: %s, CSRF: %s, Bind Token: %s", session_id, csrf, bind_token)
             SESSION["_session_id"] = session_id
-            SESSION["_session_status"] = "ACTIVE"
+            SESSION["_session_status"] = SessionStatus.ACTIVE.name
             SESSION["_access_token"] = None
             SESSION["_refresh_token"] = None
             SESSION["_id_token"] = None
@@ -134,12 +140,21 @@ class SessionService:
             SESSION["created_at"] = now()
             SESSION["updated_at"] = now()
             SESSION["expires_at"] = now() + SESSION_TTL
+            SESSION["geolocation"] = None
             log.info("Session initialization - Session ID: %s created, CSRF: %s", session_id, csrf)
             req.session.update({
                 "session_id": session_id,
                 "expires_at": now(),
                 "gavin": "was here"
             })
+            
+            
+            try:
+                geolocation = GeolocationService.get_ip_geolocation(SESSION["client_ip"])
+                SESSION["geolocation"] = json.dumps(geolocation) if geolocation else None
+                log.info("Session initialization - Geolocation City: %s, Country: %s", geolocation.get("city"), geolocation.get("country"))
+            except Exception as e:
+                log.error("Session initialization - Error getting geolocation: %s", e)
             
             try:
                 device = await SessionDB.get_device(payload.get("device_id"))
@@ -153,6 +168,8 @@ class SessionService:
                 log.error("Session initialization - Error setting device or session: %s", e)
                 await SessionDB.terminate_session(session_id)
                 raise HTTPException(status_code=400, detail="Error setting device or session")
+            
+
             
         else:
             log.info("Session initialization - FOUND a session of some sort")
@@ -173,12 +190,27 @@ class SessionService:
                 await SessionDB.terminate_session(session_id)
                 raise HTTPException(status_code=400, detail="Nonce is invalid")
             
+            try:
+                geolocation = GeolocationService.get_ip_geolocation(req.client.host)
+                geolocation_db = session_db.get("geolocation")
+
+                if geolocation and geolocation_db:
+                    SESSION["geolocation"] = json.dumps(geolocation)
+                    log.info("Session initialization - GeolocationIP City: %s, Country: %s", geolocation.get("city"), geolocation.get("country"))
+                    geolocation_db_parsed = json.loads(geolocation_db)
+                    log.info("Session initialization - GeolocationDB City: %s, Country: %s", geolocation_db_parsed.get("city"), geolocation_db_parsed.get("country"))
+                else:
+                    log.warning("Session initialization - No geolocation data returned")
+            except Exception as e:
+                log.error("Session initialization - Error getting geolocation: %s", e)
+
             #validate the jws tokens
             try:
                 bik_jkt, bik_jwk, bik_payload = validate_key_jws(payload.get("bik_jws"), "bik-reg+jws", ["device_id"], payload.get("device_id"), "BIK")   
                 dpop_jkt, dpop_jwk, dpop_payload = validate_key_jws(payload.get("dpop_jws"), "dpop-bind+jws", ["htm", "htu", "iat", "jti", "nonce", "device_id"], payload.get("device_id"), "DPoP")
                 # Validate bind token (server-signed, not client JWS) - optional on first request
-                bind_token = headers.get("dpop-bind")
+                bind_token = headers.get("Dpop-Bind")
+                log.info("Got Bind Token: %s", bind_token)
                 bind_payload = None
                 if bind_token:
                     try:
@@ -249,31 +281,31 @@ class SessionService:
 
         if not nonce:
             # No nonce provided - this is a first-time request
-            await SessionDB.set_nonce(session_id, new_nonce, "PENDING", NONCE_TTL)
+            await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
             return True, new_nonce
         else:
             # Validate existing nonce
             nonce_record = await SessionDB.get_nonce(session_id, nonce)
             if not nonce_record:
                 log.warning("Nonce validation failed - nonce not found: %s", nonce)
-                await SessionDB.set_nonce(session_id, new_nonce, "PENDING", NONCE_TTL)
+                await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
                 return False, new_nonce
                 
-            if nonce_record.get("nonce_status") == "EXPIRED":
+            if nonce_record.get("nonce_status") == NonceStatus.EXPIRED.name:
                 log.warning("Nonce validation failed - nonce expired: %s", nonce)
-                await SessionDB.set_nonce(session_id, new_nonce, "PENDING", NONCE_TTL)
+                await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
                 return False, new_nonce
                 
-            if nonce_record.get("nonce_status") == "REDEEMED":
+            if nonce_record.get("nonce_status") == NonceStatus.REDEEMED.name:
                 log.warning("Nonce validation failed - nonce already redeemed: %s", nonce)
-                await SessionDB.set_nonce(session_id, new_nonce, "PENDING", NONCE_TTL)
+                await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
                 return False, new_nonce
             
             # Valid nonce - mark as redeemed and issue new one
-            if nonce_record.get("nonce_status") == "PENDING":
-                await SessionDB.set_nonce(session_id, nonce, "REDEEMED", NONCE_TTL)
+            if nonce_record.get("nonce_status") == NonceStatus.PENDING.name:
+                await SessionDB.set_nonce(session_id, nonce, NonceStatus.REDEEMED.name, NONCE_TTL)
             
-            await SessionDB.set_nonce(session_id, new_nonce, "PENDING", NONCE_TTL)
+            await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
             return True, new_nonce
     
     
@@ -310,14 +342,19 @@ class SessionService:
     @staticmethod
     def verify_binding_token(token: str) -> Dict[str, Any]:
         """Verify a binding token and return its payload"""
-        from jose import jws as jose_jws
+        
+        log.info("Verifying binding token: %s", token)
         try:
-            # Get server public key for verification
-            server_key = SETTINGS.server_ec_private_key_pem
-            if not server_key:
+            # Get server private key and derive public key for verification
+            server_private_key = SETTINGS.server_ec_private_key_pem
+            if not server_private_key:
                 raise ValueError("Server key not configured")
             
-            payload = jose_jws.verify(token, server_key, algorithms=["ES256"])
+            # Load the private key and get the public key
+            private_key = serialization.load_pem_private_key(server_private_key.encode(), password=None)
+            public_key = private_key.public_key()
+            
+            payload = jose_jws.verify(token, public_key, algorithms=["ES256"])
             data = payload if isinstance(payload, dict) else json.loads(payload)
             if data.get("exp", 0) < now():
                 raise ValueError("bind token expired")
