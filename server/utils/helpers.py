@@ -2,9 +2,15 @@
 import base64
 import hashlib
 import json
+import logging
 import secrets
 import time
 from typing import Dict, Any, Optional
+import jose.jws as jose_jws
+import jose.utils as jose_utils
+
+# Logger instance
+log = logging.getLogger(__name__)
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -76,14 +82,67 @@ def jwk_to_ec_public_key(jwk: Dict[str, Any]) -> ec.EllipticCurvePublicKey:
     public_numbers = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1())
     return public_numbers.public_key()
 
+
+def validate_key_jws(jws_token: str, expected_typ: str, expected_payload_fields: list, expected_device_id: str, key_type: str) -> tuple[str, dict, dict]:
+    """
+    Generic validation function for BIK and DPoP JWS tokens
+    
+    Args:
+        jws_token: The JWS token to validate
+        expected_typ: Expected JWT type (e.g., "bik-reg+jws", "dpop-bind+jws")
+        expected_payload_fields: List of required payload field names (e.g., ["device_id"] or ["htm", "htu", "iat", "jti", "nonce"])
+        expected_device_id: Expected device ID for validation
+        key_type: Type of key for error messages (e.g., "BIK", "DPoP")
+        
+    Returns:
+        tuple[str, dict, dict]: (jkt, public_jwk, payload)
+        - jkt: The validated JKT
+        - public_jwk: The JWK from the header
+        - payload: The complete payload from the JWS token
+        
+    Raises:
+        ValueError: If validation fails
+    """
+    try:
+        # Validate the JWS token with the specified payload fields
+        key_data = validate_jws_token(jws_token, expected_typ, expected_payload_fields)
+        public_jwk = key_data["header"].get("jwk", {})
+        
+        # Validate JWK structure
+        if public_jwk.get("kty") != "EC" or public_jwk.get("crv") != "P-256" or not public_jwk.get("x") or not public_jwk.get("y"):
+            raise ValueError(f"bad {key_type.lower()} jwk")
+        
+        # Generate JKT from JWK (since JKT is not in payload anymore)
+        jkt = ec_p256_thumbprint(public_jwk)
+        
+        # Validate device ID if it's in the expected fields
+        if "device_id" in expected_payload_fields:
+            device_id = key_data["payload"].get("device_id")
+            log.info("Got %s JKT: %s, Device ID: %s", key_type, jkt, device_id)
+            if device_id != expected_device_id:
+                raise ValueError("Device ID mismatch")
+        else:
+            log.info("Got %s JKT: %s", key_type, jkt)
+        
+        # Additional validation for DPoP-specific claims
+        if "htm" in expected_payload_fields:
+            payload = key_data["payload"]
+            if payload.get("htm") != "POST":
+                raise ValueError("Invalid HTTP method")
+            
+        return jkt, public_jwk, key_data["payload"]
+        
+    except ValueError as e:
+        raise ValueError(f"{key_type} JWS validation failed: {str(e)}")
+
+
 def validate_jws_token(jws_token: str, expected_typ: str, required_payload_fields: list = None) -> Dict[str, Any]:
     """Generic JWS validation function that verifies signature and validates structure using Jose library."""
     if jws_token is None:
         raise ValueError("JWS token cannot be None")
     
     try:
-        import jose.jws as jose_jws
-        import jose.utils as jose_utils
+
         
         # Parse JWS token using Jose's safe parsing
         h_b64, p_b64, _ = jws_token.split(".")

@@ -50,9 +50,9 @@ let DPOP_SESSION = {
   signal_data: null,
   csrf: null,
   state: SessionState.pending_dpop_bind,
-  server_bind: null,
-  server_bind_expires_at: null,
-  lastusername: null,
+  dpop_bind: null,
+  dpop_bind_expires_at: null,
+  last_username: null,
   created_at: null,
   updated_at: null
 }
@@ -64,7 +64,7 @@ export async function setupSession() {
   try {
     logger.info('Setting up session');
 
-    logger.debug('STEP 1. Check for device ID');
+    logger.info('STEP 1. Check for device ID');
     const deviceIdRecord = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.DEVICE_ID);
     const deviceId = deviceIdRecord?.value || null;
     if (deviceId) {
@@ -77,7 +77,7 @@ export async function setupSession() {
       logger.info('Device ID not found, created new one: ', DPOP_SESSION.device_id);
     }
 
-    logger.debug('STEP 2. Check for BIK key');
+    logger.info('STEP 2. Check for BIK key');
     const {localBIK, localBikJkt} = await checkLocalBIK();
     if (localBIK && localBikJkt && !newSession) {
       DPOP_SESSION.bik = localBIK;
@@ -90,7 +90,7 @@ export async function setupSession() {
       }
     }
 
-    logger.debug('STEP 3. Check for DPoP key');
+    logger.info('STEP 3. Check for DPoP key');
     const {localDPoP, localDpopJkt} = await checkLocalDPoP();
     if (localDPoP && localDpopJkt && !newSession) {
       DPOP_SESSION.dpop = localDPoP;
@@ -103,106 +103,117 @@ export async function setupSession() {
       }
     }
 
-    logger.debug('STEP 4. Collect signal data');
+    logger.info('STEP 4. Check for CSRF token');
+    const csrfRecord = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.CSRF);
+    const csrf = csrfRecord?.value || null;
+    if (csrf) {
+      DPOP_SESSION.csrf = csrf;
+      logger.info('CSRF token found: ', csrf);
+    } else {
+      logger.warn('CSRF token not found, retrying...');
+    }
+
+    logger.info('STEP 5. Check for DPoP nonce');
+    const dpopNonceRecord = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.DPOP_NONCE);
+    const dpopNonce = dpopNonceRecord?.value || null;
+    if (dpopNonce) {
+      DPOP_SESSION.dpop_nonce = dpopNonce;
+      logger.info('DPoP nonce found: ', dpopNonce);
+    }
+
+    logger.info('STEP 6. Collect signal data');
     DPOP_SESSION.signal_data = await FingerprintService.collectFingerprint('desktop');
     logger.info('Signal data collected: ', DPOP_SESSION.signal_data);
 
 
-    logger.debug('STEP 5. Create new server session');
-    if (!newSession) {
-      // Get dpop_nonce for BIK registration
-      const dpopNonceRecord = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.DPOP_NONCE);
-      const dpopNonce = dpopNonceRecord?.value || null;
-      
-      const bikJws = await createJwsWithDefaults({
-        typ: CONFIG.CRYPTO.JWT_TYPES.BIK_REG,
-        payload: { 
-          device_id: DPOP_SESSION.device_id,
-        },
-        privateKey: DPOP_SESSION.bik.privateKey,
-        publicJwk: DPOP_SESSION.bik.publicJwk
-      });
+    logger.info('STEP 7. Create new server session');
+    
+    const bikJws = await createJwsWithDefaults({
+      typ: CONFIG.CRYPTO.JWT_TYPES.BIK_REG,
+      payload: { 
+        device_id: DPOP_SESSION.device_id,
+      },
+      privateKey: DPOP_SESSION.bik.privateKey,
+      publicJwk: DPOP_SESSION.bik.publicJwk
+    });
 
-      const dpopJws = await createJwsWithDefaults({
-        typ: CONFIG.CRYPTO.JWT_TYPES.DPOP_BIND,
-        payload: { 
-          htm: "POST",
-          htu: window.location.origin + "/session/init",
-          iat: Math.floor(Date.now() / 1000),
-          jti: crypto.randomUUID(),
-          nonce: DPOP_SESSION.dpop_nonce
-        },
-        privateKey: DPOP_SESSION.dpop.privateKey,
-        publicJwk: DPOP_SESSION.dpop.publicJwk
-      });
+    const dpopJws = await createJwsWithDefaults({
+      typ: CONFIG.CRYPTO.JWT_TYPES.DPOP_BIND,
+      payload: { 
+        htm: "POST",
+        htu: window.location.origin + "/session/init",
+        iat: Math.floor(Date.now() / 1000),
+        jti: crypto.randomUUID(),
+        nonce: DPOP_SESSION.dpop_nonce,
+        device_id: DPOP_SESSION.device_id
+      },
+      privateKey: DPOP_SESSION.dpop.privateKey,
+      publicJwk: DPOP_SESSION.dpop.publicJwk
+    });
 
-      const body = JSON.stringify({
-        payload: {
-          device_id: DPOP_SESSION.device_id,
-          bik_jws: bikJws,
-          dpop_jws: dpopJws,
-          signal_data: DPOP_SESSION.signal_data
-        }
-      });
-      logger.info('Creating session init request with payload:', body);
-      const r = await fetch(CONFIG.ENDPOINTS.SESSION_INIT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'DPoP': dpopJws, 'BIK': bikJws },
-        credentials: 'include',
-        body: body
-      });
-      logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Fetch request completed, status:`, r.status);
-      
-      if (!r.ok) {
-        logger.error(`${CONFIG.ENDPOINTS.SESSION_INIT} failed:`, r.status);
+    const body = JSON.stringify({
+      payload: {
+        device_id: DPOP_SESSION.device_id,
+        bik_jws: bikJws,
+        dpop_jws: dpopJws,
+        signal_data: DPOP_SESSION.signal_data
       }
-      
-      const j = await r.json();
-      logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: response:`, j);
-      CSRF = j.csrf; 
-      REG_NONCE = j.reg_nonce;
-      await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.CSRF, value: j.csrf });
-      await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.SESSION_NONCE, value: j.reg_nonce });
+    });
+    logger.info('Creating session init request with payload:', body);
+    const r = await fetch(CONFIG.ENDPOINTS.SESSION_INIT, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json', 
+        'DPoP': dpopJws, 
+        'BIK': bikJws,
+        'Dpop-Bind': DPOP_SESSION.bind_token,
+        'Dpop-Nonce': DPOP_SESSION.dpop_nonce,
+        'X-CSRF-Token': DPOP_SESSION.csrf
+      },
+      credentials: 'include',
+      body: body
+    });
+    logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Fetch request completed, status:`, r.status);
+    logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: response:`, r);
+    const CSRF = r.headers.get('X-Csrf-Token'); 
+    const DPOP_NONCE = r.headers.get('Dpop-Nonce');
+
+    logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Response headers csrf:`, CSRF);
+    logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Response headers dpop nonce:`, DPOP_NONCE);
+    if (!r.ok) {
+      logger.error(`${CONFIG.ENDPOINTS.SESSION_INIT} failed:`, r.status);
+    }
+    
+    await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.CSRF, value: CSRF });
+    await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DPOP_NONCE, value: DPOP_NONCE });
 
 
-
-
-      await bikRegisterStep();
-      //await dpopBindStep();
   
-    }
-//create new server session
-
-
-    logger.info('DPOP_SESSION:', DPOP_SESSION);
-    
-    logger.info('Getting session status');
-    const sessionStatus = await getSessionStatus();
-    logger.info('Session status:', sessionStatus);
-    if (sessionStatus && sessionStatus.valid) {
-      logger.info('Using restored session');
-      return sessionStatus;
-    }
-
-
-    logger.info('No valid session found, initializing fresh session');
-    const restoredSession = await restoreSession();
-    
-    if (restoredSession.hasSession && restoredSession.hasDPoP) {
-      // We have a working session
-      logger.info('Using restored session');
-      return restoredSession;
-    } else {
-      // No session or DPoP not working, initialize fresh
-      logger.info('Initializing fresh session');
-      return await initializeFreshSession();
-    }
     
   } catch (error) {
     logger.error('Session setup failed:', error);
     throw error;
   }
 }
+
+
+
+
+
+
+
+
+
+/*
+*
+*  Refactored above this line
+*
+*/
+
+
+
+
+
 
 export async function restoreSession() {
   try {
@@ -426,7 +437,7 @@ async function checkLocalDPoP() {
 
 export function canonicalUrl(inputUrl, base) {
   try {
-    logger.debug('Canonicalizing URL:', { inputUrl, base });
+    logger.info('Canonicalizing URL:', { inputUrl, base });
     validateUrl(inputUrl);
     
     // If no base is provided, use the current origin
@@ -434,7 +445,7 @@ export function canonicalUrl(inputUrl, base) {
       base = getCurrentOrigin();
     }
     
-    logger.debug('Using base URL:', base);
+    logger.info('Using base URL:', base);
     const u = new URL(inputUrl, base);
     const scheme = u.protocol.toLowerCase();
     const host = u.hostname.toLowerCase();
@@ -442,7 +453,7 @@ export function canonicalUrl(inputUrl, base) {
     if ((scheme === 'https:' && port === '443') || (scheme === 'http:' && port === '80')) port = '';
     const netloc = port ? `${host}:${port}` : host;
     const canonical = `${scheme}//${netloc}${u.pathname || '/'}${u.search || ''}`;
-    logger.debug('Canonicalized URL:', { input: inputUrl, output: canonical, base });
+    logger.info('Canonicalized URL:', { input: inputUrl, output: canonical, base });
     return canonical;
   } catch (error) {
     logger.error('Canonicalization error:', { error: error.message, inputUrl, base });
@@ -458,7 +469,7 @@ export async function createDpopProof({ url, method, nonce, privateKey, publicJw
     validateNonce(nonce);
     validateKeyPair({ privateKey, publicKey: null, publicJwk });
 
-    logger.debug('Creating DPoP proof:', { url, method: validatedMethod, hasNonce: !!nonce });
+    logger.info('Creating DPoP proof:', { url, method: validatedMethod, hasNonce: !!nonce });
 
     const h = b64uJSON({ alg: CONFIG.CRYPTO.ALGORITHM, typ: CONFIG.CRYPTO.JWT_TYPES.DPOP, jwk: publicJwk });
     const p = b64uJSON({ 
@@ -474,7 +485,7 @@ export async function createDpopProof({ url, method, nonce, privateKey, publicJw
     const s = btoa(String.fromCharCode(...raw)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
     const proof = `${h}.${p}.${s}`;
     
-    logger.debug('DPoP proof created successfully');
+    logger.info('DPoP proof created successfully');
     return proof;
   } catch (error) {
     logger.error('Failed to create DPoP proof:', error);
@@ -493,10 +504,10 @@ export async function createDpopProof({ url, method, nonce, privateKey, publicJw
 
 async function generateES256KeyPair() {
   try {
-    logger.debug('Generating new ES256 key pair');
+    logger.info('Generating new ES256 key pair');
     const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: CONFIG.CRYPTO.CURVE }, false, ['sign', 'verify']);
     const publicJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
-    logger.debug('ES256 key pair generated successfully');
+    logger.info('ES256 key pair generated successfully');
     return { privateKey: kp.privateKey, publicKey: kp.publicKey, publicJwk };
   } catch (error) {
     logger.error('Failed to generate ES256 key pair:', error);
@@ -533,7 +544,7 @@ async function createBIK() {
     // Store in IndexedDB (single record with JKT included)
     await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.BIK, value: keyData });
     
-    logger.debug('BIK key created: ', keyData);
+    logger.info('BIK key created: ', keyData);
     return true;
   } catch (error) {
     logger.error('Failed to create BIK:', error);
@@ -560,7 +571,7 @@ async function createDPoP() {
     // Store in IndexedDB (single record with JKT included)
     await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DPOP, value: keyData });
     
-    logger.debug('DPoP key created: ', keyData);
+    logger.info('DPoP key created: ', keyData);
     return true;
   } catch (error) {
     logger.error('Failed to create DPoP:', error);
@@ -593,7 +604,7 @@ export async function bikRegisterStep({ bikRegisterUrl = CONFIG.ENDPOINTS.BROWSE
       throw new AuthenticationError('missing csrf/reg_nonce (call sessionInit first)');
     }
     
-    logger.debug('Registering BIK');
+    logger.info('Registering BIK');
     const bik = await ensureBIK();
     const jws = await createJwsWithDefaults({
       typ: CONFIG.CRYPTO.JWT_TYPES.BIK_REG,
@@ -630,12 +641,12 @@ export async function dpopBindStep({ dpopBindUrl = CONFIG.ENDPOINTS.DPOP_BIND } 
       throw new AuthenticationError('missing csrf (call sessionInit first)');
     }
     
-    logger.debug('Binding DPoP');
+    logger.info('Binding DPoP');
     const bik = await ensureBIK();
     const dpop = await ensureDPoP();
 
     const payload = { dpop_jwk: dpop.publicJwk, nonce: crypto.randomUUID() };
-    logger.debug('DPoP bind payload:', payload);
+    logger.info('DPoP bind payload:', payload);
     
     const jws = await createJwsWithDefaults({
       typ: CONFIG.CRYPTO.JWT_TYPES.DPOP_BIND,
@@ -698,7 +709,7 @@ async function ensureBinding() {
       const expiresAt = payload.exp || 0;
       
       if (now >= expiresAt) {
-        logger.debug('Binding token expired, triggering resume');
+        logger.info('Binding token expired, triggering resume');
         const ok = await resumeViaPage();
         if (!ok) throw new AuthenticationError('binding token expired and resume failed');
         bind = (await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.BIND))?.value;
@@ -726,7 +737,7 @@ async function handleNonceChallenge(res, url, method, dpop) {
 
 export async function dpopFunFetch(url, { method = 'GET', body = null } = {}) {
   try {
-    logger.debug('Making signed fetch request:', { url, method, hasBody: !!body });
+    logger.info('Making signed fetch request:', { url, method, hasBody: !!body });
     
     const bind = await ensureBinding();
     const dpop = await ensureDPoP();
@@ -735,7 +746,7 @@ export async function dpopFunFetch(url, { method = 'GET', body = null } = {}) {
     const fullUrl = canonicalUrl(url, currentOrigin);
     
     const storedNonce = (await get(CONFIG.STORAGE.KEYS.DPOP_NONCE))?.value || null;
-    logger.debug('Using DPoP nonce for request:', storedNonce);
+    logger.info('Using DPoP nonce for request:', storedNonce);
     
     let proof = await createDpopProof({ 
       url: fullUrl, method, 
@@ -755,7 +766,7 @@ export async function dpopFunFetch(url, { method = 'GET', body = null } = {}) {
     
     const retryProof = await handleNonceChallenge(res, fullUrl, method, dpop);
     if (retryProof) {
-      logger.debug('Handling nonce challenge, retrying with new proof');
+      logger.info('Handling nonce challenge, retrying with new proof');
       headers = { ...headers, 'DPoP': retryProof };
       res = await fetch(fullUrl, { ...init, headers });
     }
@@ -778,7 +789,7 @@ export async function dpopFunFetch(url, { method = 'GET', body = null } = {}) {
             const n2 = retryRes.headers.get('DPoP-Nonce');
             if (n2) await set(CONFIG.STORAGE.KEYS.DPOP_NONCE, n2);
             const result = await retryRes.json();
-            logger.debug('Request succeeded after binding token refresh');
+            logger.info('Request succeeded after binding token refresh');
             return result;
           }
         }
@@ -791,7 +802,7 @@ export async function dpopFunFetch(url, { method = 'GET', body = null } = {}) {
     if (n2) await set(CONFIG.STORAGE.KEYS.DPOP_NONCE, n2);
     
     const result = await res.json();
-    logger.debug('Signed fetch completed successfully');
+    logger.info('Signed fetch completed successfully');
     return result;
   } catch (error) {
     logger.error('Signed fetch failed:', error);
@@ -803,7 +814,7 @@ export async function dpopFunFetch(url, { method = 'GET', body = null } = {}) {
 
 export async function resumeViaPage() {
   try {
-    logger.debug('Attempting session resume');
+    logger.info('Attempting session resume');
     const r1 = await fetch(CONFIG.ENDPOINTS.SESSION_RESUME_INIT, { method: 'POST', credentials: 'include' });
     if (!r1.ok) return false;
     const { resume_nonce } = await r1.json();
@@ -828,7 +839,7 @@ export async function resumeViaPage() {
       logger.warn('No DPoP nonce received from session resume - this may cause authentication issues');
     }
     
-    logger.debug('Session resume completed successfully');
+    logger.info('Session resume completed successfully');
     return true;
   } catch (error) {
     logger.error('Session resume failed:', error);
@@ -863,12 +874,12 @@ export async function restoreSessionTokens() {
     
     if (csrf?.value) {
       CSRF = csrf.value;
-      logger.debug('Restored CSRF token from storage');
+      logger.info('Restored CSRF token from storage');
     }
     
     if (regNonce?.value) {
       REG_NONCE = regNonce.value;
-      logger.debug('Restored reg_nonce from storage');
+      logger.info('Restored reg_nonce from storage');
     }
     
     return { csrf: CSRF, regNonce: REG_NONCE };
@@ -884,11 +895,11 @@ export async function restoreSessionTokens() {
 
 export async function clientFlush() {
   try {
-    logger.debug('Flushing client state');
+    logger.info('Flushing client state');
     CSRF = null; 
     REG_NONCE = null;
     await idbWipe();
-    logger.debug('Client flush completed');
+    logger.info('Client flush completed');
     return { ok: true };
   } catch (error) {
     logger.error('Client flush failed:', error);
@@ -913,14 +924,14 @@ export async function getCurrentUsername() {
     
     if (response.ok) {
       const userData = await response.json();
-      logger.debug('Current username retrieved:', userData.username);
+      logger.info('Current username retrieved:', userData.username);
       return userData;
     } else {
-      logger.debug('No username found (status:', response.status, ')');
+      logger.info('No username found (status:', response.status, ')');
       return null;
     }
   } catch (error) {
-    logger.debug('Failed to get current username:', error.message);
+    logger.info('Failed to get current username:', error.message);
     return null;
   }
 }

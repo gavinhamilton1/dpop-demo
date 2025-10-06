@@ -40,7 +40,7 @@ export const CONFIG = {
     SESSION: {
       BIK: 'bik',
       DPOP: 'dpop',
-      BIND: 'bind',
+      DPOP_BIND: 'dpop_bind',
       DPOP_NONCE: 'dpop_nonce',
       DEVICE_ID: 'device_id',
       CSRF: 'csrf',

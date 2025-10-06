@@ -47,52 +47,6 @@ class Database:
 
         # Create device-centric tables
         await self.execscript("""
-        CREATE TABLE IF NOT EXISTS devices (
-          device_id TEXT PRIMARY KEY,           -- Browser UUID (unique device identifier)
-          device_type TEXT NOT NULL,            -- 'browser' or 'mobile'
-          bik_jkt TEXT,                         -- Browser Identity Key Thumbprint
-          bik_public_jwk TEXT,                  -- BIK public key (JSON)
-          signal_data TEXT,                     -- Device fingerprint/signal data (JSON)
-          first_seen INTEGER NOT NULL,          -- Unix timestamp of first device registration
-          last_seen INTEGER NOT NULL,           -- Unix timestamp of last activity
-          created_at INTEGER NOT NULL,          -- Unix timestamp of record creation
-          updated_at INTEGER NOT NULL           -- Unix timestamp of last update
-        );
-
-        CREATE TABLE IF NOT EXISTS sessions (
-          session_id TEXT PRIMARY KEY,          -- Unique session identifier
-          device_id TEXT NOT NULL,              -- Foreign key to devices.device_id
-          user_id TEXT,                         -- User identifier (NULL if not authenticated)
-          state TEXT NOT NULL,                  -- 'pending-bind', 'bound-bik', 'bound', 'authenticated'
-          dpop_jkt TEXT,                        -- DPoP key thumbprint
-          dpop_public_jwk TEXT,                 -- DPoP public key (JSON)
-          bind_token TEXT,                      -- Current binding token (JWT)
-          bind_expires_at INTEGER,              -- Binding token expiration timestamp
-          csrf_token TEXT NOT NULL,             -- CSRF protection token
-          created_at INTEGER NOT NULL,              -- Unix timestamp of session creation
-          updated_at INTEGER NOT NULL,          -- Unix timestamp of last session update
-          expires_at INTEGER,                   -- Session expiration timestamp
-          FOREIGN KEY (device_id) REFERENCES devices(device_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS nonces (
-          session_id TEXT NOT NULL,             -- Foreign key to sessions.session_id
-          nonce TEXT NOT NULL,                  -- Nonce value
-          expires_at INTEGER NOT NULL,          -- Nonce expiration timestamp
-          created_at INTEGER NOT NULL,          -- Unix timestamp of nonce creation
-          PRIMARY KEY (session_id, nonce),
-          FOREIGN KEY (session_id) REFERENCES sessions(session_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS jtis (
-          session_id TEXT NOT NULL,             -- Foreign key to sessions.session_id
-          jti TEXT NOT NULL,                    -- JWT ID for replay protection
-          expires_at INTEGER NOT NULL,          -- JTI expiration timestamp
-          created_at INTEGER NOT NULL,          -- Unix timestamp of JTI creation
-          PRIMARY KEY (session_id, jti),
-          FOREIGN KEY (session_id) REFERENCES sessions(session_id)
-        );
-
         CREATE TABLE IF NOT EXISTS passkeys (
           principal TEXT NOT NULL,
           cred_id   TEXT PRIMARY KEY,
@@ -126,26 +80,6 @@ class Database:
           applied INTEGER NOT NULL DEFAULT 0
         );
 
-        -- Signal/Fingerprint data linked to BIK for cross-session comparison
-        CREATE TABLE IF NOT EXISTS signal_data (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          bik_jkt TEXT NOT NULL,
-          session_id TEXT NOT NULL,
-          device_type TEXT NOT NULL,
-          fingerprint_data TEXT NOT NULL,  -- JSON
-          ip_address TEXT,
-          geolocation_data TEXT,          -- JSON
-          bik_authenticated INTEGER DEFAULT 0,  -- 0 = not authenticated, 1 = authenticated
-          authenticated_user TEXT,        -- username when authenticated
-          authentication_method TEXT,     -- 'desktop passkey', 'face verify', 'mobile passkey'
-          authentication_timestamp INTEGER, -- when authentication occurred
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
-        );
-
-        -- Index for efficient BIK-based lookups
-        CREATE INDEX IF NOT EXISTS idx_signal_data_bik ON signal_data(bik_jkt);
-        CREATE INDEX IF NOT EXISTS idx_signal_data_session ON signal_data(session_id);
         """)
 
     async def close(self):
@@ -188,76 +122,6 @@ class Database:
             return rows
 
     # --- session store API (drop-in for your previous in-memory Store) ------
-
-    async def set_session(self, sid: str, data: Dict[str, Any]):
-        j = json.dumps(data, separators=(",", ":"))
-        await self.exec(
-            "INSERT INTO sessions(sid, data, updated_at) VALUES(?,?,strftime('%s','now')) "
-            "ON CONFLICT(sid) DO UPDATE SET data=excluded.data, updated_at=strftime('%s','now')",
-            (sid, j),
-        )
-
-    # Device management methods
-    async def get_device(self, device_id: str) -> Optional[Dict[str, Any]]:
-        """Get device by device_id"""
-        row = await self.fetchone("SELECT * FROM devices WHERE device_id=?", (device_id,))
-        if not row:
-            return None
-        return dict(row)
-
-    async def create_device(self, device_id: str, device_type: str, signal_data: str = None) -> None:
-        """Create a new device record"""
-        now = int(time.time())
-        await self.exec("""
-            INSERT INTO devices (device_id, device_type, signal_data, first_seen, last_seen, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (device_id, device_type, signal_data, now, now, now, now))
-
-    async def update_device(self, device_id: str, **updates) -> None:
-        """Update device record"""
-        updates['updated_at'] = int(time.time())
-        set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
-        values = list(updates.values()) + [device_id]
-        await self.exec(f"UPDATE devices SET {set_clause} WHERE device_id = ?", values)
-
-    # Session management methods
-    async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get session by session_id"""
-        row = await self.fetchone("SELECT * FROM sessions WHERE session_id=?", (session_id,))
-        if not row:
-            return None
-        return dict(row)
-
-    async def create_session(self, session_id: str, device_id: str, csrf_token: str, state: str = "pending-bind") -> None:
-        """Create a new session"""
-        now = int(time.time())
-        await self.exec("""
-            INSERT INTO sessions (session_id, device_id, state, csrf_token, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (session_id, device_id, state, csrf_token, now, now))
-
-    async def update_session(self, session_id: str, **updates) -> None:
-        """Update session record"""
-        updates['updated_at'] = int(time.time())
-        set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
-        values = list(updates.values()) + [session_id]
-        await self.exec(f"UPDATE sessions SET {set_clause} WHERE session_id = ?", values)
-
-    async def delete_session(self, session_id: str):
-        """Delete a session from the database"""
-        await self.exec("DELETE FROM sessions WHERE session_id=?", (session_id,))
-
-    async def get_session_by_username(self, username: str) -> Optional[Dict[str, Any]]:
-        """Get session by username - used for duplicate username validation"""
-        rows = await self.fetchall("SELECT sid, data FROM sessions")
-        for row in rows:
-            try:
-                data = json.loads(row["data"])
-                if data.get("username") == username:
-                    return data
-            except Exception:
-                continue
-        return None
 
     # --- User management methods ---
     

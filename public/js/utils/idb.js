@@ -18,16 +18,16 @@ export function idbReset() {
   }
   _db = null;
   _opening = null;
-  logger.debug('IndexedDB reset completed');
+  logger.info('IndexedDB reset completed');
 }
 
 export async function idbWipe() {
   try {
-    logger.debug('Wiping IndexedDB database');
+    logger.info('Wiping IndexedDB database');
     await new Promise((resolve, reject) => {
       const req = indexedDB.deleteDatabase(DB_NAME);
       req.onsuccess = () => {
-        logger.debug('IndexedDB database deleted successfully');
+        logger.info('IndexedDB database deleted successfully');
         resolve();
       };
       req.onerror = () => {
@@ -51,16 +51,16 @@ async function openDB() {
   if (_db) return _db;
   if (_opening) return _opening;
 
-  logger.debug('Opening IndexedDB connection');
+  logger.info('Opening IndexedDB connection');
   _opening = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     
     req.onupgradeneeded = () => {
-      logger.debug('IndexedDB upgrade needed, creating session store');
+      logger.info('IndexedDB upgrade needed, creating session store');
       const db = req.result;
       if (!db.objectStoreNames.contains(STORES.SESSION)) {
         db.createObjectStore(STORES.SESSION, { keyPath: 'id' });
-        logger.debug('Created session store');
+        logger.info('Created session store');
       }
     };
     
@@ -75,7 +75,7 @@ async function openDB() {
         _db = null; 
       };
       _opening = null;
-      logger.debug('IndexedDB connection opened successfully');
+      logger.info('IndexedDB connection opened successfully');
       resolve(_db);
     };
     
@@ -124,9 +124,9 @@ async function run(storeName, mode, fn, attempt = 0) {
 
 export async function idbPut(storeName, record) {
   try {
-    logger.debug('Putting record in store:', { storeName, recordId: record.id });
+    logger.info('Putting record in store:', { storeName, recordId: record.id });
     const result = await run(storeName, 'readwrite', (store) => store.put(record));
-    logger.debug('Record put successfully');
+    logger.info('Record put successfully');
     return result;
   } catch (error) {
     if (error.name === 'StorageError') throw error;
@@ -140,13 +140,13 @@ export async function idbPut(storeName, record) {
 
 export async function idbGet(storeName, id) {
   try {
-    logger.debug('Getting record from store:', { storeName, id });
+    logger.info('Getting record from store:', { storeName, id });
     const result = await run(storeName, 'readonly', (store) => new Promise((resolve, reject) => {
       const req = store.get(id);
       req.onsuccess = () => resolve(req.result ?? null);
       req.onerror = () => reject(req.error);
     }));
-    logger.debug('Record retrieved:', { storeName, id, found: !!result });
+    logger.info('Record retrieved:', { storeName, id, found: !!result });
     return result;
   } catch (error) {
     if (error.name === 'StorageError') throw error;

@@ -17,7 +17,8 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from server.core.config import load_settings
-from server.db.database import DB  # singleton DB instance
+from server.db.session import SessionDB  # singlet
+from server.db.database import DB
 from server.utils.geolocation import GeolocationService
 from server.services.passkeys import get_router as get_passkeys_router
 from server.services.linking import get_router as get_linking_router
@@ -287,11 +288,11 @@ def _new_nonce() -> str: return b64u(secrets.token_bytes(18))
 @app.on_event("startup")
 async def _init_db():
     try:
-        await DB.init(SETTINGS.db_path)  # type: ignore[arg-type]
+        await SessionDB.init(SETTINGS.db_path)  # type: ignore[arg-type]
         log.info("DB initialized at %s", SETTINGS.db_path)
     except TypeError:
-        log.warning("DB.init(db_path) not supported; calling DB.init() without args. Ensure DB uses %s.", SETTINGS.db_path)
-        await DB.init()
+        log.warning("SessionDB.init(db_path) not supported; calling SessionDB.init() without args. Ensure SessionDB uses %s.", SETTINGS.db_path)
+        await SessionDB.init()
 
 # ---------------- Basic routes ----------------
 @app.get("/", 
@@ -355,6 +356,7 @@ async def session_init(req: Request, response: Response):
     
     # loop round the headers and body
     for header, value in result["headers"].items():
+        log.info("Setting header: %s: %s", header, value)
         response.headers[header] = value
     return result["body"] 
 
@@ -367,18 +369,18 @@ async def session_init(req: Request, response: Response):
 @app.post("/session/resume-init")
 async def resume_init(req: Request):
     sid = req.session.get("sid")
-    s = await DB.get_session(sid) if sid else None
+    s = await SessionDB.get_session(sid) if sid else None
     if not sid or not s: raise HTTPException(401, "no session")
     # Use session nonce for resume operations
     session_nonce = s.get("session_nonce") or _new_nonce()
-    await DB.update_session(sid, {"session_nonce": session_nonce})
+    await SessionDB.update_session(sid, {"session_nonce": session_nonce})
     next_nonce = _new_nonce(); await DB.add_nonce(sid, next_nonce, SETTINGS.nonce_ttl)
     return JSONResponse({"session_nonce": session_nonce}, headers={"DPoP-Nonce": next_nonce})
 
 @app.post("/session/resume-confirm")
 async def resume_confirm(req: Request):
     sid = req.session.get("sid")
-    s = await DB.get_session(sid) if sid else None
+    s = await SessionDB.get_session(sid) if sid else None
     if not sid or not s: raise HTTPException(401, "no session")
     jws_compact = (await req.body()).decode()
     
@@ -398,10 +400,10 @@ async def resume_confirm(req: Request):
     origin, _ = canonicalize_origin_and_url(req, SETTINGS.external_origin)
     dpop_jkt = s.get("dpop_jkt")
     bind = SessionService.issue_binding_token(sid=sid, bik_jkt=s["bik_jkt"], dpop_jkt=dpop_jkt, aud=origin)
-    n = _new_nonce(); await DB.add_nonce(sid, n, SETTINGS.nonce_ttl)
+    n = _new_nonce(); await SessionDB.add_nonce(sid, n, SETTINGS.nonce_ttl)
     # Rotate session nonce after successful resume
     new_session_nonce = _new_nonce()
-    await DB.update_session(sid, {"session_nonce": new_session_nonce})
+    await SessionDB.update_session(sid, {"session_nonce": new_session_nonce})
     return JSONResponse({"bind": bind}, headers={"DPoP-Nonce": n})
 
 @app.post("/session/kill")
@@ -431,7 +433,7 @@ async def collect_fingerprint(req: Request):
     
     try:
         # Verify session exists before updating
-        existing_session = await DB.get_session(sid)
+        existing_session = await SessionDB.get_session(sid)
         if not existing_session:
             log.error("Session not found for fingerprint collection sid=%s", sid)
             raise HTTPException(404, "session not found")
@@ -475,13 +477,13 @@ async def collect_fingerprint(req: Request):
         
         # Store fingerprint data and device type in session
         device_type = fingerprint_data.get("deviceType", "unknown")
-        await DB.update_session(sid, {
+        await SessionDB.update_session(sid, {
             "fingerprint": fingerprint_data,
             "device_type": device_type
         })
         
         # Verify the data was stored
-        stored_session = await DB.get_session(sid)
+        stored_session = await SessionDB.get_session(sid)
         stored_fingerprint = stored_session.get("fingerprint", {}) if stored_session else {}
         stored_device_type = stored_session.get("device_type", "unknown") if stored_session else "unknown"
         log.info("Fingerprint stored verification sid=%s device_type=%s stored_keys=%s", 
@@ -503,7 +505,7 @@ async def collect_fingerprint(req: Request):
             
             if not signal_data_stored:
                 # Only store signal data if it hasn't been stored for this session yet
-                signal_stored = await DB.store_signal_data(
+                signal_stored = await SessionDB.store_signal_data(
                     bik_jkt=bik_jkt,
                     session_id=sid,
                     device_type=device_type,
@@ -514,7 +516,7 @@ async def collect_fingerprint(req: Request):
                 
                 if signal_stored:
                     # Mark that signal data has been stored for this session
-                    await DB.update_session(sid, {"signal_data_stored": True})
+                    await SessionDB.update_session(sid, {"signal_data_stored": True})
                     log.info("Signal data stored for BIK %s session %s", bik_jkt[:8], sid[:8])
                 else:
                     log.warning("Failed to store signal data for BIK %s", bik_jkt[:8])
@@ -538,7 +540,7 @@ async def get_signal_data(req: Request):
         raise HTTPException(401, "no session")
     
     try:
-        session_data = await DB.get_session(sid)
+        session_data = await SessionDB.get_session(sid)
         if not session_data:
             raise HTTPException(404, "session not found")
         
@@ -547,7 +549,7 @@ async def get_signal_data(req: Request):
             return JSONResponse({"historical_signal": None})
         
         # Get historical signal data for this BIK
-        historical_signal = await DB.get_latest_signal_data_by_bik(bik_jkt)
+        historical_signal = await SessionDB.get_latest_signal_data_by_bik(bik_jkt)
         
         log.info("Signal data request - BIK JKT: %s, Historical signal found: %s", 
                 bik_jkt[:8] if bik_jkt else "None", 
