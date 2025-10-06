@@ -33,6 +33,7 @@ SETTINGS = load_settings()
 
 #enum for session states
 SessionState = Enum("SessionState", ["pending_dpop_bind", "bound_bik", "bound_dpop", "authenticated", "user_terminated", "system_terminated", "expired"])
+SessionStatus = Enum("SessionStatus", ["ACTIVE", "EXPIRED", "TERMINATED"]
 
 
 class SessionService:
@@ -94,15 +95,14 @@ class SessionService:
         except HTTPException as e:
             raise HTTPException(status_code=400, detail=f"BIK or DPoP JWS validation failed: {e}")
         
-        #is there a session cookie and is it valid
+        #is there a session and is it valid
         session_id = req.session.get("session_id")
-        #session_id = None
         
         session_db = await SessionDB.get_session(session_id)
         session_status = session_db.get("_session_status") if session_db else None
         log.info("Session initialization - Session ID: %s, Session Status: %s", session_id, session_status)
         
-        if not session_id or not session_db or session_db.get("_session_status") == "TERMINATED":
+        if not session_id or not session_db or session_db.get("_session_status") != "ACTIVE":
             #create a new session
             log.info("Session initialization - No session found, creating new session")
             session_id = secrets.token_urlsafe(18)
