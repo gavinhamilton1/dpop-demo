@@ -70,6 +70,9 @@ class Database:
           _session_id TEXT PRIMARY KEY,          -- Unique session identifier
           _session_status TEXT NOT NULL DEFAULT 'ACTIVE'
                 CHECK (_session_status IN ('ACTIVE', 'EXPIRED', 'TERMINATED')),
+          session_flag TEXT NOT NULL DEFAULT 'GREEN'
+                CHECK (session_flag IN ('RED', 'AMBER', 'GREEN')),
+          session_flag_comment TEXT,       -- Session flag comment
           auth_method TEXT,             -- Authentication method
           auth_status TEXT,             -- Authentication status
           auth_username TEXT,           -- Authentication username
@@ -87,6 +90,7 @@ class Database:
           _x_dpop_bind TEXT,             -- DPoP bind token
           client_ip TEXT,                   -- Client IP address
           signal_data TEXT,                 -- Signal data
+          signal_hash TEXT,                 -- Signal hash
           created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),              -- Unix timestamp of session creation
           updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),          -- Unix timestamp of last session update
           expires_at INTEGER,                   -- Session expiration timestamp
@@ -150,18 +154,18 @@ class Database:
             raise ValueError("Session already exists")
         else:
             await self.exec(
-                """INSERT INTO sessions(_session_id, _session_status, auth_method, auth_status, auth_username, 
+                """INSERT INTO sessions(_session_id, _session_status, session_flag, session_flag_comment, auth_method, auth_status, auth_username, 
                                         _access_token, _refresh_token, _id_token, device_id, user_id, state, 
                                         dpop_jkt, dpop_jwk, dpop_bind_expires_at, _x_x_csrf_token, 
-                                        _x_dpop_nonce, _x_dpop_bind, client_ip, signal_data, created_at, 
+                                        _x_dpop_nonce, _x_dpop_bind, client_ip, signal_data, signal_hash, created_at, 
                                         updated_at, expires_at, geolocation) 
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
-                    (session_id, data.get("_session_status"), data.get("auth_method"), data.get("auth_status"), data.get("auth_username"), 
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
+                    (session_id, data.get("_session_status"), data.get("session_flag"), data.get("session_flag_comment"), data.get("auth_method"), data.get("auth_status"), data.get("auth_username"), 
                      data.get("_access_token"), data.get("_refresh_token"), data.get("_id_token"), 
                      data.get("device_id"), data.get("user_id"), data.get("state"), data.get("dpop_jkt"), 
                      data.get("dpop_jwk"), data.get("dpop_bind_expires_at"), data.get("_x_x-csrf-token"), 
                      data.get("_x_dpop-nonce"), data.get("_x_dpop-bind"), data.get("client_ip"), 
-                     data.get("signal_data"), now(), now(), data.get("expires_at"), data.get("geolocation"))
+                     data.get("signal_data"), data.get("signal_hash"), now(), now(), data.get("expires_at"), data.get("geolocation"))
             )
 
     async def terminate_session(self, session_id: str) -> bool:

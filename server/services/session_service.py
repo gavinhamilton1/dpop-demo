@@ -39,6 +39,7 @@ SETTINGS = load_settings()
 SessionState = Enum("SessionState", ["pending_dpop_bind", "bound_bik", "bound_dpop", "authenticated", "user_terminated", "system_terminated", "expired"])
 SessionStatus = Enum("SessionStatus", ["ACTIVE", "EXPIRED", "TERMINATED"])
 NonceStatus = Enum("NonceStatus", ["PENDING", "REDEEMED", "EXPIRED"])
+SessionFlag = Enum("SessionFlag", ["RED", "AMBER", "GREEN"])
 
 
 class SessionService:
@@ -58,6 +59,8 @@ class SessionService:
         SESSION = {
             "_session_id": None,
             "_session_status": SessionStatus.ACTIVE.name,
+            "session_flag": None,
+            "session_flag_comment": None,
             "_access_token": None,
             "_refresh_token": None,
             "_id_token": None,
@@ -69,6 +72,7 @@ class SessionService:
             "auth_status": None,
             "auth_username": None,
             "signal_data": None,
+            "signal_hash": None,
             "client_ip": None,
             "_x_x-csrf-token": None,
             "state": None,
@@ -118,6 +122,8 @@ class SessionService:
             log.info("Session initialization - Session ID: %s, CSRF: %s, Bind Token: %s", session_id, csrf, bind_token)
             SESSION["_session_id"] = session_id
             SESSION["_session_status"] = SessionStatus.ACTIVE.name
+            SESSION["session_flag"] = SessionFlag.GREEN.name
+            SESSION["session_flag_comment"] = None
             SESSION["_access_token"] = None
             SESSION["_refresh_token"] = None
             SESSION["_id_token"] = None
@@ -131,6 +137,7 @@ class SessionService:
             SESSION["_x_dpop-bind"] = bind_token
             SESSION["dpop_bind_expires_at"] = now() + BIND_TTL
             SESSION["signal_data"] = json.dumps(payload.get("signal_data")) if payload.get("signal_data") else None
+            SESSION["signal_hash"] = None
             SESSION["client_ip"] = req.client.host
             if req.headers.get("x-forwarded-for"):
                 SESSION["client_ip"] = req.headers.get("x-forwarded-for").split(",")[0].strip()
@@ -170,9 +177,48 @@ class SessionService:
                 raise HTTPException(status_code=400, detail="Error setting device or session")
             
 
+            # Generate browser fingerprint hash for session
+            try:
+                if SESSION.get("signal_data"):
+                    fingerprint_result = SessionService._generate_browser_fingerprint(SESSION["signal_data"])
+                    SESSION["signal_hash"] = fingerprint_result["hash"]
+                    
+                    # Check for automation flags
+                    signal_data = json.loads(SESSION["signal_data"])
+                    if signal_data.get("automation", {}).get("headlessUA") or signal_data.get("automation", {}).get("webdriver"):
+                        log.info("Session initialization - Headless UA or Webdriver detected")
+                        SESSION["session_flag"] = SessionFlag.RED.name
+                        SESSION["session_flag_comment"] = "Headless UA or Webdriver detected"
+                    
+                    log.info("Session initialization - Browser fingerprint: %s", fingerprint_result)
+            except Exception as e:
+                log.error("Session initialization - Error generating browser fingerprint: %s", e)
             
         else:
             log.info("Session initialization - FOUND a session of some sort")
+            
+            # Calculate signal hash for comparison
+            try:
+                if payload.get("signal_data"):
+                    signal_data_json = json.dumps(payload.get("signal_data"))
+                    fingerprint_result = SessionService._generate_browser_fingerprint(signal_data_json)
+                    SESSION["signal_hash"] = fingerprint_result["hash"]
+                    
+                    # Compare with stored fingerprint if available
+                    stored_signal_hash = session_db.get("signal_hash")
+                    if stored_signal_hash and stored_signal_hash != fingerprint_result["hash"]:
+                        log.warning("Session initialization - Browser fingerprint mismatch detected")
+                        log.warning("Stored hash: %s", stored_signal_hash)
+                        log.warning("Current hash: %s", fingerprint_result["hash"])
+                        SESSION["session_flag"] = SessionFlag.AMBER.name
+                        SESSION["session_flag_comment"] = "Browser fingerprint mismatch"
+                    else:
+                        log.info("Session initialization - Browser fingerprint matches stored fingerprint")
+                    
+                    log.info("Session initialization - Browser fingerprint: %s", fingerprint_result)
+            except Exception as e:
+                log.error("Session initialization - Error comparing browser fingerprint: %s", e)
+            
 
             if headers.get("x-csrf-token") != session_db.get("_x_x_csrf_token"):
                 log.info("Session initialization - Session ID: %s, CSRF Token: %s, CSRF Token mismatch", session_id, headers.get("x-csrf-token"))
@@ -274,6 +320,93 @@ class SessionService:
         return await SessionDB.terminate_session(session_id)
 
     
+    @staticmethod
+    def _generate_browser_fingerprint(signal_data_json: str) -> dict:
+        """
+        Generate browser fingerprint hash from signal data for device identification.
+        
+        Args:
+            signal_data_json: JSON string containing browser signal data
+            
+        Returns:
+            dict: {
+                "hash": str - SHA256 hash of browser fingerprint
+                "fingerprint": dict - Raw fingerprint data
+                "context": dict - Additional browser context for logging
+            }
+        """
+        try:
+            signal_data = json.loads(signal_data_json)
+            ua_ch = signal_data.get("ua_ch", {})
+            
+            # Extract browser name from User Agent string
+            user_agent = signal_data.get("userAgent", "")
+            browser_name = "Unknown"
+            browser_version = "Unknown"
+            
+            # Parse browser from User Agent (simple regex approach)
+            import re
+            if "Chrome/" in user_agent and "Safari/" in user_agent:
+                # Chrome/Chromium-based browsers
+                chrome_match = re.search(r'Chrome/([0-9.]+)', user_agent)
+                if chrome_match:
+                    browser_version = chrome_match.group(1)
+                    if "Edg/" in user_agent:
+                        browser_name = "Microsoft Edge"
+                    elif "OPR/" in user_agent:
+                        browser_name = "Opera"
+                    else:
+                        browser_name = "Google Chrome"
+            elif "Firefox/" in user_agent:
+                firefox_match = re.search(r'Firefox/([0-9.]+)', user_agent)
+                if firefox_match:
+                    browser_name = "Firefox"
+                    browser_version = firefox_match.group(1)
+            elif "Safari/" in user_agent and "Chrome/" not in user_agent:
+                safari_match = re.search(r'Version/([0-9.]+)', user_agent)
+                if safari_match:
+                    browser_name = "Safari"
+                    browser_version = safari_match.group(1)
+            
+            # Browser-specific identifiers for BIK validation
+            browser_fingerprint = {
+                "browser_name": browser_name,
+                "platform": signal_data.get("platform"),
+                "cpu_architecture": ua_ch.get("architecture"),
+                "hardware_concurrency": signal_data.get("hardwareConcurrency"),
+                "device_memory": signal_data.get("deviceMemory"),
+                "webgl_renderer": signal_data.get("webglRenderer")
+            }
+            
+            # Additional context for logging
+            browser_context = {
+                "browser_version": browser_version,
+                "os_name": ua_ch.get("platform"),
+                "os_version": ua_ch.get("platformVersion"),
+                "timezone": signal_data.get("timezone"),
+                "language": signal_data.get("language"),
+                "user_agent": user_agent
+            }
+            
+            # Create browser fingerprint hash for comparison
+            import hashlib
+            fingerprint_data = json.dumps(browser_fingerprint, sort_keys=True)
+            browser_fingerprint_hash = hashlib.sha256(fingerprint_data.encode()).hexdigest()
+            
+            return {
+                "hash": browser_fingerprint_hash,
+                "fingerprint": browser_fingerprint,
+                "context": browser_context
+            }
+            
+        except Exception as e:
+            log.error("Error generating browser fingerprint: %s", e)
+            return {
+                "hash": "unknown",
+                "fingerprint": {},
+                "context": {}
+            }
+
     @staticmethod
     async def _do_nonce_sense(session_id: str, nonce: str) -> tuple[bool, str]:
 

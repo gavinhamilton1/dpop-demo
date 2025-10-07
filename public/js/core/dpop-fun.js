@@ -48,6 +48,7 @@ let DPOP_SESSION = {
   auth_status: null,
   auth_username: null,
   signal_data: null,
+  geolocation: null,
   csrf: null,
   state: SessionState.pending_dpop_bind,
   dpop_bind: null,
