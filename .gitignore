@@ -5,3 +5,4 @@ __pycache__/
 *.pyo
 stronghold.db*
 sms_gateway.py
+*.pem

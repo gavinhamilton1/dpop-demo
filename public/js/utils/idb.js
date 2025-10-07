@@ -1,6 +1,5 @@
 // src/idb.js
 import { logger } from './logging.js';
-import { StorageError } from './errors.js';
 import { CONFIG } from './config.js';
 
 export const DB_NAME = CONFIG.STORAGE.DB_NAME;
@@ -43,7 +42,7 @@ export async function idbWipe() {
     idbReset(); // <<< critical: drop cached connection so next open recreates stores
   } catch (error) {
     logger.error('Failed to wipe IndexedDB:', error);
-    throw new StorageError('Failed to wipe IndexedDB database', { originalError: error.message });
+    throw new Error('Failed to wipe IndexedDB database', { originalError: error.message });
   }
 }
 
@@ -113,7 +112,7 @@ async function run(storeName, mode, fn, attempt = 0) {
       return run(storeName, mode, fn, 1);
     }
     logger.error('IndexedDB operation failed:', e);
-    throw new StorageError('IndexedDB operation failed', { 
+    throw new Error('IndexedDB operation failed', { 
       originalError: e.message, 
       storeName, 
       mode, 
@@ -130,7 +129,7 @@ export async function idbPut(storeName, record) {
     return result;
   } catch (error) {
     if (error.name === 'StorageError') throw error;
-    throw new StorageError('Failed to put record in IndexedDB', { 
+    throw new Error('Failed to put record in IndexedDB', { 
       originalError: error.message, 
       storeName, 
       recordId: record.id 
@@ -150,7 +149,7 @@ export async function idbGet(storeName, id) {
     return result;
   } catch (error) {
     if (error.name === 'StorageError') throw error;
-    throw new StorageError('Failed to get record from IndexedDB', { 
+    throw new Error('Failed to get record from IndexedDB', { 
       originalError: error.message, 
       storeName, 
       id 

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Session Status Control</title>
+    <link rel="stylesheet" href="./style.css">
+    <script defer type="module" src="./script.js"></script>
+</head>
+<body>
+
+    <div id="sessionStatusModal" class="modal-overlay active">
+        <div class="modal-content">
+            
+            <div class="modal-header" id="sessionHeader">
+                <h2>🛡️ Session Details</h2>
+                <button class="close-btn" data-close-modal>−</button>
+            </div>
+            
+            <div class="modal-body" id="sessionBody">
+
+            <!-- Overview Section - 3 Columns -->
+            <div class="overview-section">
+                <div class="overview-column status-column">
+                    <h3>Status</h3>
+                    <div class="status-item">
+                        <span class="label">Binding State:</span>
+                        <strong class="value" id="bindingState">Bound</strong>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">Session Flag:</span>
+                        <strong class="value status-flag" id="sessionFlag">GREEN</strong>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">Active Sessions:</span>
+                        <div class="session-count-container">
+                            <strong class="value" id="sessionCount">1</strong>
+                            <span class="warning-icon" id="sessionWarning" style="display: none;">⚠️</span>
+                            <a href="#" class="more-details-link" id="moreDetailsLink" style="display: none;">More Details</a>
+                        </div>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">Auth Method:</span>
+                        <strong class="value" id="authMethod">No value</strong>
+                    </div>
+                </div>
+
+                <div class="overview-column timers-column">
+                    <h3>Timers</h3>
+                    <div class="timer-item">
+                        <span class="label">Session Expires:</span>
+                        <strong id="sessionTimer" class="time-value">00:00</strong>
+                    </div>
+                    <div class="timer-item">
+                        <span class="label">Idle Timeout:</span>
+                        <strong id="idleTimer" class="time-value">15:00</strong>
+                    </div>
+                </div>
+
+                <div class="overview-column controls-column">
+                    <h3>Controls</h3>
+                    <button class="control-btn end-session" id="endSessionBtn">End Session</button>
+                    <button class="control-btn report-activity" id="reportActivityBtn">Report Suspicious Activity</button>
+                </div>
+            </div>
+
+            <!-- Session Details Modal (hidden by default) -->
+            <div id="sessionDetailsModal" class="modal-overlay" style="display: none;">
+                <div class="modal-content session-details-content">
+                    <div class="modal-header">
+                        <h2>Active Sessions</h2>
+                        <button class="close-btn" data-close-session-details>&times;</button>
+                    </div>
+                    <div class="sessions-list" id="sessionsList">
+                        <!-- Sessions will be populated here -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="status-section session-history">
+                <h3>History & Controls</h3>
+                <div class="history-item" id="historyItem1">
+                    <span id="historyTime1">Yesterday, 3:00 PM</span>
+                    <span id="historyLocation1">London</span>
+                    <span class="history-auth" id="historyAuth1">Firefox</span>
+                </div>
+                <div class="history-item" id="historyItem2">
+                    <span id="historyTime2">2 days ago, 9:00 AM</span>
+                    <span id="historyLocation2">London AM</span>
+                    <span class="history-auth" id="historyAuth2">Mobile, Chrome</span>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button class="control-btn end-session">End Session</button>
+                <button class="control-btn report-activity">Report Suspicious Activity</button>
+            </div>
+            
+            </div> <!-- End modal-body -->
+        </div>
+    </div>
+
+</body>
+</html>

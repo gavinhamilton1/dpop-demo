@@ -69,28 +69,27 @@ class Database:
         CREATE TABLE IF NOT EXISTS sessions (
           _session_id TEXT PRIMARY KEY,          -- Unique session identifier
           _session_status TEXT NOT NULL DEFAULT 'ACTIVE'
-                CHECK (_session_status IN ('ACTIVE', 'EXPIRED', 'TERMINATED')),
+                CHECK (_session_status IN ('NEW', 'ACTIVE', 'EXPIRED', 'TERMINATED')),
+          _x_x_csrf_token TEXT,             -- CSRF protection token
+          _x_dpop_nonce TEXT,             -- DPoP nonce
+          _x_dpop_bind TEXT,             -- DPoP bind token
+          _access_token TEXT,           -- Access token
+          _refresh_token TEXT,          -- Refresh token
+          _id_token TEXT,               -- ID token
+          _dpop_jkt TEXT,                        -- DPoP key thumbprint
+          _dpop_jwk TEXT,                 -- DPoP public key (JSON)
+          _signal_data TEXT,                 -- Signal data
+          _signal_hash TEXT,                 -- Signal hash
           session_flag TEXT NOT NULL DEFAULT 'GREEN'
                 CHECK (session_flag IN ('RED', 'AMBER', 'GREEN')),
           session_flag_comment TEXT,       -- Session flag comment
           auth_method TEXT,             -- Authentication method
           auth_status TEXT,             -- Authentication status
           auth_username TEXT,           -- Authentication username
-          _access_token TEXT,           -- Access token
-          _refresh_token TEXT,          -- Refresh token
-          _id_token TEXT,               -- ID token
           device_id TEXT,              -- Foreign key to devices.device_id
-          user_id TEXT,                         -- User identifier (NULL if not authenticated)
           state TEXT,                  -- 'pending-bind', 'bound-bik', 'bound', 'authenticated'
-          dpop_jkt TEXT,                        -- DPoP key thumbprint
-          dpop_jwk TEXT,                 -- DPoP public key (JSON)
           dpop_bind_expires_at INTEGER,              -- Binding token expiration timestamp
-          _x_x_csrf_token TEXT,             -- CSRF protection token
-          _x_dpop_nonce TEXT,             -- DPoP nonce
-          _x_dpop_bind TEXT,             -- DPoP bind token
           client_ip TEXT,                   -- Client IP address
-          signal_data TEXT,                 -- Signal data
-          signal_hash TEXT,                 -- Signal hash
           created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),              -- Unix timestamp of session creation
           updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),          -- Unix timestamp of last session update
           expires_at INTEGER,                   -- Session expiration timestamp
@@ -155,17 +154,17 @@ class Database:
         else:
             await self.exec(
                 """INSERT INTO sessions(_session_id, _session_status, session_flag, session_flag_comment, auth_method, auth_status, auth_username, 
-                                        _access_token, _refresh_token, _id_token, device_id, user_id, state, 
-                                        dpop_jkt, dpop_jwk, dpop_bind_expires_at, _x_x_csrf_token, 
-                                        _x_dpop_nonce, _x_dpop_bind, client_ip, signal_data, signal_hash, created_at, 
+                                        _access_token, _refresh_token, _id_token, device_id, state, 
+                                        _dpop_jkt, _dpop_jwk, dpop_bind_expires_at, _x_x_csrf_token, 
+                                        _x_dpop_nonce, _x_dpop_bind, client_ip, _signal_data, _signal_hash, created_at, 
                                         updated_at, expires_at, geolocation) 
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
                     (session_id, data.get("_session_status"), data.get("session_flag"), data.get("session_flag_comment"), data.get("auth_method"), data.get("auth_status"), data.get("auth_username"), 
                      data.get("_access_token"), data.get("_refresh_token"), data.get("_id_token"), 
-                     data.get("device_id"), data.get("user_id"), data.get("state"), data.get("dpop_jkt"), 
-                     data.get("dpop_jwk"), data.get("dpop_bind_expires_at"), data.get("_x_x-csrf-token"), 
+                     data.get("device_id"), data.get("state"), data.get("_dpop_jkt"), 
+                     data.get("_dpop_jwk"), data.get("dpop_bind_expires_at"), data.get("_x_x-csrf-token"), 
                      data.get("_x_dpop-nonce"), data.get("_x_dpop-bind"), data.get("client_ip"), 
-                     data.get("signal_data"), data.get("signal_hash"), now(), now(), data.get("expires_at"), data.get("geolocation"))
+                     data.get("_signal_data"), data.get("_signal_hash"), now(), now(), data.get("expires_at"), data.get("geolocation"))
             )
 
     async def terminate_session(self, session_id: str) -> bool:
@@ -206,7 +205,18 @@ class Database:
                         VALUES(?,?,?,?,?)""", 
                         (session_id, nonce, nonce_status, expires_at, now))  
         
-        
+    async def get_active_user_sessions(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get active user sessions by user_id"""
+        rows = await self.fetchall("SELECT * FROM sessions WHERE auth_username=? AND _session_status='ACTIVE'", (user_id))
+        return [dict(row) for row in rows]
+
+
+    async def get_session_history(self, authenticated_username: str, created_at: int) -> List[Dict[str, Any]]:
+        """Get session history for an authenticated user"""
+        rows = await self.fetchall("SELECT * FROM sessions WHERE auth_username=? AND _session_status='ACTIVE'" and "created_at > ?", (authenticated_username, created_at))
+        return [dict(row) for row in rows]
+
+
 
 
 # --- low-level helpers -------------------------------------------------

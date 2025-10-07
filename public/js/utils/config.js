@@ -28,6 +28,7 @@ export const CONFIG = {
     CURVE: 'P-256',
     JWT_TYPES: {
       DPOP: 'dpop+jwt',
+      DPOP_PROOF: 'dpop+jwt',
       BIK_REG: 'bik-reg+jws',
       BIK_RESUME: 'bik-resume+jws',
       DPOP_BIND: 'dpop-bind+jws',

@@ -1,14 +1,14 @@
 // src/jose-lite.js
 import { logger } from './logging.js';
-import { CryptoError } from './errors.js';
 import { validateJwk } from './validation.js';
+import { CONFIG } from './config.js';
 
 export const b64u = (bytes) => {
   try {
     const bin = String.fromCharCode(...(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)));
     return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');
   } catch (error) {
-    throw new CryptoError('Failed to encode bytes to base64url', { originalError: error.message });
+    throw new Error('Failed to encode bytes to base64url', { originalError: error.message });
   }
 };
 
@@ -16,7 +16,7 @@ export const b64uJSON = (obj) => {
   try {
     return b64u(new TextEncoder().encode(JSON.stringify(obj)));
   } catch (error) {
-    throw new CryptoError('Failed to encode JSON to base64url', { originalError: error.message });
+    throw new Error('Failed to encode JSON to base64url', { originalError: error.message });
   }
 };
 
@@ -29,7 +29,7 @@ export const b64uToBuf = (s) => {
     for (let i = 0; i < b.length; i++) buf[i] = b.charCodeAt(i);
     return buf.buffer;
   } catch (error) {
-    throw new CryptoError('Failed to decode base64url to buffer', { originalError: error.message });
+    throw new Error('Failed to decode base64url to buffer', { originalError: error.message });
   }
 };
 
@@ -40,7 +40,7 @@ export const bufToB64u = (buf) => {
     for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
     return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
   } catch (error) {
-    throw new CryptoError('Failed to encode buffer to base64url', { originalError: error.message });
+    throw new Error('Failed to encode buffer to base64url', { originalError: error.message });
   }
 };
 
@@ -67,7 +67,7 @@ export function sigToJoseEcdsa(sig, size=32) {
         error.message.includes('DER s')) {
       throw error; // Re-throw original error for tests
     }
-    throw new CryptoError('Failed to convert signature to JOSE format', { originalError: error.message });
+    throw new Error('Failed to convert signature to JOSE format', { originalError: error.message });
   }
 }
 
@@ -85,7 +85,7 @@ export async function createJwsES256({ protectedHeader, payload, privateKey }) {
     return jws;
   } catch (error) {
     logger.error('Failed to create JWS:', error);
-    throw new CryptoError('Failed to create JWS', { originalError: error.message });
+    throw new Error('Failed to create JWS', { originalError: error.message });
   }
 }
 
@@ -98,6 +98,37 @@ export async function jwkThumbprint(jwk) {
     return b64u(hash);
   } catch (error) {
     if (error.name === 'DPopFunError') throw error;
-    throw new CryptoError('Failed to create JWK thumbprint', { originalError: error.message });
+    throw new Error('Failed to create JWK thumbprint', { originalError: error.message });
+  }
+}
+
+export async function generateES256KeyPair() {
+  try {
+    logger.info('Generating new ES256 key pair');
+    const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: CONFIG.CRYPTO.CURVE }, false, ['sign', 'verify']);
+    const publicJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
+    logger.info('ES256 key pair generated successfully');
+    return { privateKey: kp.privateKey, publicKey: kp.publicKey, publicJwk };
+  } catch (error) {
+    logger.error('Failed to generate ES256 key pair:', error);
+    throw new Error('Failed to generate key pair', { originalError: error.message });
+  }
+}
+
+export async function createJwsWithDefaults({ typ, payload, privateKey, publicJwk }) {
+  try {
+    const protectedHeader = { 
+      alg: CONFIG.CRYPTO.ALGORITHM, 
+      typ, 
+      jwk: publicJwk 
+    };
+    const fullPayload = { 
+      ...payload, 
+      iat: Math.floor(Date.now()/1000) 
+    };
+    return await createJwsES256({ protectedHeader, payload: fullPayload, privateKey });
+  } catch (error) {
+    logger.error('Failed to create JWS with defaults:', error);
+    throw Error('Failed to create JWS', { originalError: error.message });
   }
 }

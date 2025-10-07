@@ -8,6 +8,9 @@ import time
 from typing import Dict, Any, Optional
 import jose.jws as jose_jws
 import jose.utils as jose_utils
+from typing import List, Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
+from fastapi import Request
 
 # Logger instance
 log = logging.getLogger(__name__)
@@ -192,3 +195,48 @@ def now() -> int:
 def _new_nonce() -> str:
     """Generate a new nonce for session security."""
     return base64.urlsafe_b64encode(secrets.token_bytes(18)).rstrip(b"=").decode()
+
+
+"""
+URL canonicalization and validation utilities
+"""
+
+
+def canonicalize_origin_and_url(request: Request, external_origin: Optional[str] = None) -> Tuple[str, str]:
+    """Canonicalize origin and URL from a request, handling IPv6 and proxy headers"""
+    if external_origin:
+        origin = external_origin.rstrip("/")
+    else:
+        scheme = (request.headers.get("x-forwarded-proto") or request.url.scheme or "").lower()
+        host = request.headers.get("x-forwarded-host")
+        port = request.headers.get("x-forwarded-port")
+        if host:
+            if host.startswith("["):
+                if "]:" in host:
+                    h, p = host.split("]:", 1)
+                    host = h.strip("[]"); port = port or p
+                else:
+                    host = host.strip("[]")
+            else:
+                if ":" in host and host.count(":") == 1:
+                    h, p = host.split(":", 1)
+                    host, port = h, (port or p)
+        else:
+            host = request.url.hostname or ""
+            if request.url.port:
+                port = str(request.url.port)
+        host = host.lower()
+        if port and ((scheme == "https" and port == "443") or (scheme == "http" and port == "80")):
+            netloc = _bracket_host(host)
+        elif port:
+            netloc = f"{_bracket_host(host)}:{port}"
+        else:
+            netloc = _bracket_host(host)
+        origin = f"{scheme}://{netloc}"
+    
+    parts = urlsplit(str(request.url))
+    o_parts = urlsplit(origin)
+    path = parts.path or "/"
+    query = parts.query
+    full = urlunsplit((o_parts.scheme, o_parts.netloc, path, query, ""))
+    return origin, full
