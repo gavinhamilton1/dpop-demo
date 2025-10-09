@@ -186,20 +186,39 @@ def load_settings(path: Optional[str] = None) -> Settings:
     
     print(f"DEBUG: pem_env exists: {pem_env is not None}")
     print(f"DEBUG: pem_env length: {len(pem_env) if pem_env else 0}")
-    print(f"DEBUG: pem_inline: {pem_inline}")
+    if pem_env:
+        print(f"DEBUG: pem_env preview: {pem_env[:50]}..." if len(pem_env) > 50 else f"DEBUG: pem_env: {pem_env}")
+    print(f"DEBUG: pem_inline exists: {pem_inline is not None}")
+    if pem_inline:
+        print(f"DEBUG: pem_inline length: {len(pem_inline)}")
+        print(f"DEBUG: pem_inline preview: {pem_inline[:50]}..." if len(pem_inline) > 50 else f"DEBUG: pem_inline: {pem_inline}")
     print(f"DEBUG: pem_file: {pem_file}")
     
     if pem_env:
-        pem = pem_env
+        # Handle escaped newlines in environment variables (e.g., \n as literal text)
+        if '\\n' in pem_env:
+            pem = pem_env.replace('\\n', '\n')
+            print(f"DEBUG: Converted escaped newlines in pem_env")
+        else:
+            pem = pem_env
+        print(f"DEBUG: Using pem_env (length: {len(pem)})")
         log.info("Loaded ES256 private key from environment variable DPOP_FUN_SERVER_EC_PRIVATE_KEY_PEM")
     elif pem_inline:
         pem = pem_inline
+        print(f"DEBUG: Using pem_inline (length: {len(pem)})")
+        log.info("Loaded ES256 private key from config inline")
     elif pem_file:
         p = Path(pem_file)
         if not p.is_absolute():
             p = _resolve_path(pem_file, base_dir) or (base_dir / p)
         if p and p.exists():
             pem = p.read_text(encoding="utf-8")
+            print(f"DEBUG: Using pem_file (length: {len(pem)})")
+            log.info("Loaded ES256 private key from file: %s", pem_file)
+    
+    print(f"DEBUG: Final pem value exists: {pem is not None}")
+    if pem:
+        print(f"DEBUG: Final pem length: {len(pem)}")
 
     # Normalize db path
     db_path = (cfg.get("db") or {}).get("path") or "/tmp/dpop-fun.db"
