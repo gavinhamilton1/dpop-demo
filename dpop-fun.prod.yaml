@@ -3,6 +3,7 @@ server:
   external_origin: "https://dpop.fun"  # Update with your actual Render URL
   allowed_origins:                                 # List of allowed origins for multi-domain support
     - https://dpop.fun
+  ec_private_key_pem: "${DPOP_FUN_SERVER_EC_PRIVATE_KEY_PEM}"  # Server signing key from env var
 
 session:
   cookie_name: "dpop-fun_session"

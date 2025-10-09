@@ -152,7 +152,28 @@ def load_settings(path: Optional[str] = None) -> Settings:
         with open(cfg_file_used, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         print(f"DEBUG: Loaded config from: {str(cfg_file_used)}")
-        print(f"DEBUG: Config data: {data}")
+        print(f"DEBUG: Config data (before env substitution): {data}")
+        
+        # Substitute environment variables in the format ${VAR_NAME}
+        def substitute_env_vars(obj):
+            if isinstance(obj, dict):
+                return {k: substitute_env_vars(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [substitute_env_vars(item) for item in obj]
+            elif isinstance(obj, str) and obj.startswith("${") and obj.endswith("}"):
+                var_name = obj[2:-1]
+                env_value = os.getenv(var_name)
+                if env_value:
+                    print(f"DEBUG: Substituted ${{{var_name}}} with env value (length: {len(env_value)})")
+                    return env_value
+                else:
+                    print(f"DEBUG: Environment variable {var_name} not found, keeping placeholder")
+                    return obj
+            else:
+                return obj
+        
+        data = substitute_env_vars(data)
+        print(f"DEBUG: Config data (after env substitution): {data}")
         log.info("Loaded config from: %s", str(cfg_file_used))
 
     cfg = _merge(_DEFAULTS, data)
@@ -162,6 +183,11 @@ def load_settings(path: Optional[str] = None) -> Settings:
     pem_inline = (cfg.get("server") or {}).get("ec_private_key_pem")
     pem_file   = (cfg.get("server") or {}).get("ec_private_key_pem_file")
     pem: Optional[str] = None
+    
+    print(f"DEBUG: pem_env exists: {pem_env is not None}")
+    print(f"DEBUG: pem_env length: {len(pem_env) if pem_env else 0}")
+    print(f"DEBUG: pem_inline: {pem_inline}")
+    print(f"DEBUG: pem_file: {pem_file}")
     
     if pem_env:
         pem = pem_env
