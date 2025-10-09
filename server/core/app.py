@@ -4,7 +4,7 @@ from typing import Dict, Any, Tuple, List, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.responses import JSONResponse, HTMLResponse, Response
+from fastapi.responses import JSONResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware import Middleware
@@ -19,18 +19,17 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from server.core.config import load_settings
 from server.db.session import SessionDB  # singlet
 from server.utils.geolocation import GeolocationService
-from server.services.passkeys import get_router as get_passkeys_router
-from server.services.linking import get_router as get_linking_router
-from server.utils.helpers import ec_p256_thumbprint, now, b64u, canonicalize_origin_and_url
+from server.utils.helpers import (ec_p256_thumbprint, now, b64u, canonicalize_origin_and_url, b64u_dec,
+                                   cose_to_jwk, jwk_to_public_key, parse_authenticator_data)
 from typing import Tuple, Optional, Dict
 from server.services.session_service import SessionService
+from server.services.passkeys import PasskeyService
 
 # ---------------- Config ----------------
 SETTINGS = load_settings()
 
-
-logging.basicConfig(level=SETTINGS.log_level, format="%(asctime)s %(levelname)s dpop-fun %(message)s")
-log = logging.getLogger("dpop-fun")
+logging.basicConfig(level=SETTINGS.log_level, format="%(asctime)s %(levelname)s [%(name)s.%(funcName)s] %(message)s")
+log = logging.getLogger(__name__)
 log.info("Loaded config from: %s", SETTINGS.cfg_file_used or "<defaults>")
 log.info("Allowed origins: %s", SETTINGS.allowed_origins)
 
@@ -206,56 +205,6 @@ app = FastAPI(
     title="DPoP-Fun API",
     description="""Browser Identity & DPoP Security API documentation""",
     version="1.0.0",
-    contact={
-        "name": "DPoP-Fun Demo",
-        "url": "https://dpop.fun",
-    },
-    license_info={
-        "name": "MIT License",
-        "url": "https://opensource.org/licenses/MIT",
-    },
-    tags_metadata=[
-        {
-            "name": "session",
-            "description": "Session management and initialization endpoints",
-        },
-        {
-            "name": "authentication",
-            "description": "Authentication and user binding endpoints",
-        },
-        {
-            "name": "browser-identity",
-            "description": "Browser Identity Key (BIK) registration and management",
-        },
-        {
-            "name": "dpop",
-            "description": "DPoP (Demonstration of Proof-of-Possession) binding and validation",
-        },
-        {
-            "name": "face-auth",
-            "description": "Face authentication and biometric verification",
-        },
-        {
-            "name": "passkeys",
-            "description": "WebAuthn/FIDO2 passkey authentication",
-        },
-        {
-            "name": "device-linking",
-            "description": "Device-to-device linking and QR code authentication",
-        },
-        {
-            "name": "fingerprinting",
-            "description": "Device fingerprinting and signal collection",
-        },
-        {
-            "name": "admin",
-            "description": "Administrative endpoints for debugging and maintenance",
-        },
-        {
-            "name": "demo",
-            "description": "Demo and testing endpoints",
-        },
-    ],
     middleware=[
         Middleware(RequestIDMiddleware),
         Middleware(FetchMetadataMiddleware),
@@ -317,13 +266,14 @@ async def face_verify():
 async def favicon():
     return FileResponse("public/favicon.ico")
 
-@app.get("/mobile-login",
+@app.get("/mobile",
+         response_class=HTMLResponse,
          tags=["demo"],
-         summary="Mobile Login Page",
-         description="Serves the mobile login page for device linking")
-async def mobile_login():
-    """Serve the mobile login page"""
-    with open(os.path.join(BASE_DIR, "..", "public", "mobile-login.html"), "r", encoding="utf-8") as f:
+         summary="Mobile Device Page",
+         description="Serves the mobile device page for linking and authentication")
+async def mobile():
+    """Serve the mobile device page"""
+    with open(os.path.join(BASE_DIR, "..", "public", "mobile.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
 @app.get("/manifest.json",
@@ -346,172 +296,470 @@ async def jwks(): return {"keys": [SERVER_PUBLIC_JWK]}
           description="Endpoint that handles session initialization, BIK registration, and DPoP binding in a single call. Supports incremental setup or complete setup in one request.")
 async def session_init(req: Request, response: Response):
     """Route handler for session initialization"""
-    body = await req.json()
-    result = await SessionService.session_init(req, body, response)
+    result = await SessionService.session_init(req, response)
+    return result
+
+
+@app.post("/session/logout",
+          tags=["session"],
+          summary="Logout Session",
+          description="Logout the current user and set session state to TERMINATED")
+async def session_logout(req: Request, response: Response):
+    """Route handler for session logout"""
+    try:
+        # Get session data (requires response parameter)
+        session_data = await SessionService.get_session_data(req, response)
+        session_id = req.session.get("session_id")
+        
+        if not session_id:
+            raise HTTPException(status_code=400, detail="No session ID found")
+        
+        # Logout the session
+        await SessionService.logout_session(session_id)
+        
+        return {"ok": True, "message": "Logged out successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Session logout failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---- Mobile Linking Endpoints ----
+
+# In-memory link storage (temporary solution)
+_LINK_STORAGE = {}
+
+@app.post("/link/start",
+          tags=["mobile-linking"],
+          summary="Start Mobile Linking",
+          description="Start cross-device linking process (desktop side)")
+async def link_start(req: Request, response: Response):
+    """Start mobile device linking"""
+    try:
+        # Get session data
+        session_data = await SessionService.get_session_data(req, response)
+        session_id = req.session.get("session_id")
+        
+        if not session_id:
+            raise HTTPException(status_code=401, detail="No session ID found")
+        
+        # Get flow type and username from request body
+        body = await req.json()
+        flow_type = body.get("flow_type", "registration")
+        username = body.get("username")  # Username from desktop
+        
+        # Generate link ID
+        import secrets
+        link_id = secrets.token_urlsafe(12)
+        created_at = now()
+        expires_at = created_at + 300  # 5 minutes
+        
+        # Generate QR URL
+        origin = f"{req.url.scheme}://{req.url.netloc}"
+        qr_url = f"{origin}/mobile?lid={link_id}&flow={flow_type}"
+        
+        # Store link data in memory with username
+        _LINK_STORAGE[link_id] = {
+            "link_id": link_id,
+            "desktop_session_id": session_id,
+            "username": username,  # Store username in link properties
+            "flow_type": flow_type,
+            "created_at": created_at,
+            "expires_at": expires_at,
+            "status": "pending"
+        }
+        
+        log.info(f"Link created: {link_id}, flow: {flow_type}, username: {username}, qr_url: {qr_url}")
+        
+        return {
+            "linkId": link_id,
+            "qr_url": qr_url,
+            "flow_type": flow_type,
+            "expires_at": expires_at
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Link start failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/link/events/{link_id}",
+         tags=["mobile-linking"],
+         summary="Link Status Events",
+         description="Server-sent events for mobile linking status updates")
+async def link_events(link_id: str, req: Request):
+    """SSE endpoint for link status updates"""
+    import asyncio
     
-    # loop round the headers and body
-    for header, value in result["headers"].items():
-        log.info("Setting header: %s: %s", header, value)
-        response.headers[header] = value
-    return result["body"] 
+    async def event_generator():
+        # Send status updates based on link storage
+        try:
+            while True:
+                link_data = _LINK_STORAGE.get(link_id)
+                if link_data:
+                    status = link_data.get("status", "pending")
+                    yield f"data: {json.dumps({'status': status, 'link_id': link_id})}\n\n"
+                    
+                    # Stop sending if link is completed or failed
+                    if status in ["linked", "completed", "failed", "expired"]:
+                        break
+                else:
+                    yield f"data: {json.dumps({'status': 'expired', 'link_id': link_id})}\n\n"
+                    break
+                
+                await asyncio.sleep(2)  # Check every 2 seconds
+        except asyncio.CancelledError:
+            pass
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
 
 
-
-
-
-@app.get("/reg-link/{link_id}")
-async def reg_link(link_id: str):
-    try:
-        _test_link_storage[link_id] = str(time.time())
-        html = f"""<!doctype html><html><body><h1>Registered</h1><p>{link_id}</p></body></html>"""
-        return HTMLResponse(html)
-    except Exception as e:
-        raise HTTPException(500, f"reg-link failed: {e}")
-
-@app.get("/link-verify/{link_id}")
-async def link_verify(link_id: str):
-    try:
-        found = link_id in _test_link_storage
-        return {"ok": True, "link_id": link_id, "found": found}
-    except Exception as e:
-        raise HTTPException(500, f"link-verify failed: {e}")
-
-
-def _require_top_level_post(request: Request):
-    site = (request.headers.get("sec-fetch-site") or "").lower()
-    dest = (request.headers.get("sec-fetch-dest") or "").lower()
-    if site not in ("same-origin", "none"):
-        raise HTTPException(403, "cross-site blocked")
-    if dest not in ("document", "empty"):
-        raise HTTPException(400, "bad destination")
-
-
-# ---- POST /device/redeem (accept BC -> issue short-lived DPoP nonce) ----
-@app.post("/device/redeem",
-          tags=["device-linking"],
-          summary="Redeem Device Code",
-          description="Redeem a device linking code (BC) to establish connection between devices")
-async def verify_device_redeem(req: Request):
-    _require_top_level_post(req)
-
-    # Require DPoP proof for this protected endpoint
-    try:
-        auth_data = await SessionService.require_dpop_proof(req)
-        dpop_payload = auth_data["dpop_payload"]
-        session_data = auth_data["session_data"]
-        session_id = auth_data["session_id"]
-        log.info("DPoP validation successful for device redeem - Session ID: %s", session_id)
-    except HTTPException as e:
-        log.warning("DPoP validation failed for device redeem: %s", e.detail)
-        raise e
-
+@app.post("/get-apriltags",
+          tags=["mobile-linking"],
+          summary="Get AprilTag Numbers",
+          description="Generate AprilTag numbers for QR code overlay")
+async def get_apriltags(req: Request):
+    """Generate AprilTag numbers for QR overlay"""
     try:
         body = await req.json()
-        bc = (body.get("bc") or "").upper().replace("-", "").strip()
-        if not (6 <= len(bc) <= 16):
-            raise HTTPException(400, "invalid_or_expired_code")
+        link_id = body.get("linkId", "")
         
-        # Validate BC against link storage
-        from server.linking import _LINKS, _LINKS_LOCK
-        bc_valid = False
-        link_id = None
+        # Generate deterministic AprilTag IDs from link ID
+        import hashlib
+        hash_obj = hashlib.sha256(link_id.encode())
+        hash_bytes = hash_obj.digest()
         
-        with _LINKS_LOCK:
-            for lid, rec in _LINKS.items():
-                if rec.get("bc") == bc:
-                    # Check if BC is still valid (not expired)
-                    if now() <= rec.get("bc_exp", 0):
-                        bc_valid = True
-                        link_id = lid
-                        # Mark BC as consumed
-                        rec["bc_consumed"] = True
-                        log.info("BC consumed - lid=%s bc=%s", lid, bc)
-                        
-                        # Notify SSE watchers that BC was consumed
-                        from server.linking import _notify_watchers, _public_view
-                        # Compute the status the same way /link/state does
-                        computed_status = "confirmed" if rec.get("bc_consumed") else rec["status"]
-                        notification_data = _public_view(rec)
-                        notification_data["status"] = computed_status
-                        _notify_watchers(lid, {"type": "status", **notification_data})
+        # Generate 4 tag IDs from hash (use first 16 bytes, 4 bytes each)
+        tag_ids = []
+        for i in range(4):
+            offset = i * 4
+            tag_id = int.from_bytes(hash_bytes[offset:offset+4], byteorder='big') % 587  # 36h11 family has 587 tags
+            tag_ids.append(tag_id)
+        
+        log.info(f"Generated AprilTag IDs for link {link_id}: {tag_ids}")
+        
+        return {"tags": tag_ids}
+        
+    except Exception as e:
+        log.error(f"AprilTag generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/link/mobile/start",
+          tags=["mobile-linking"],
+          summary="Mobile Start Linking",
+          description="Mobile device scans QR and starts linking process")
+async def link_mobile_start(req: Request):
+    """Mobile device starts linking"""
+    try:
+        body = await req.json()
+        link_id = body.get("lid")
+        
+        if not link_id:
+            raise HTTPException(status_code=400, detail="Link ID is required")
+        
+        # Get link data from storage
+        link_data = _LINK_STORAGE.get(link_id)
+        
+        if not link_data:
+            raise HTTPException(status_code=404, detail="Link ID not found or expired")
+        
+        # Check if link has expired
+        if now() > link_data.get("expires_at", 0):
+            # Clean up expired link
+            _LINK_STORAGE.pop(link_id, None)
+            raise HTTPException(status_code=400, detail="Link has expired")
+        
+        # Update link status to scanned
+        link_data["status"] = "scanned"
+        
+        # Get username from link data
+        desktop_username = link_data.get("username")
+        
+        log.info(f"Mobile device started linking - link_id: {link_id}, username: {desktop_username}")
+        
+        return {
+            "ok": True,
+            "link_id": link_id,
+            "desktop_username": desktop_username
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Mobile link start failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/link/mobile/complete",
+          tags=["mobile-linking"],
+          summary="Complete Mobile Linking",
+          description="Complete the mobile device linking process")
+async def link_mobile_complete(req: Request, response: Response):
+    """Complete mobile device linking"""
+    try:
+        # Get session data
+        session_data = await SessionService.get_session_data(req, response)
+        
+        body = await req.json()
+        link_id = body.get("link_id")
+        
+        if not link_id:
+            raise HTTPException(status_code=400, detail="Link ID is required")
+        
+        # Get link data from storage
+        link_data = _LINK_STORAGE.get(link_id)
+        
+        if not link_data:
+            raise HTTPException(status_code=404, detail="Link ID not found")
+        
+        # Update link status to completed
+        link_data["status"] = "linked"
+        link_data["mobile_session_id"] = req.session.get("session_id")
+        
+        log.info(f"Mobile linking completed: {link_id}")
+        
+        return {
+            "ok": True,
+            "message": "Mobile linking completed successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Mobile link complete failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/link/mobile/issue-bc",
+          tags=["mobile-linking"],
+          summary="Issue Bootstrap Code",
+          description="Issue bootstrap code for desktop verification")
+async def link_mobile_issue_bc(req: Request, response: Response):
+    """Issue bootstrap code for desktop verification"""
+    try:
+        # Get session data
+        session_data = await SessionService.get_session_data(req, response)
+        
+        body = await req.json()
+        link_id = body.get("lid")
+        
+        if not link_id:
+            raise HTTPException(status_code=400, detail="Link ID is required")
+        
+        # Get link data from storage
+        link_data = _LINK_STORAGE.get(link_id)
+        
+        if not link_data:
+            raise HTTPException(status_code=404, detail="Link ID not found")
+        
+        # Generate bootstrap code (8 alphanumeric characters only)
+        import secrets
+        import string
+        alphanumeric = string.ascii_uppercase + string.digits
+        bc = ''.join(secrets.choice(alphanumeric) for _ in range(8))
+        expires_at = now() + 60  # 60 seconds
+        
+        # Store BC in link data for validation
+        link_data["bc"] = bc
+        link_data["bc_expires_at"] = expires_at
+        link_data["bc_consumed"] = False
+        
+        log.info(f"Bootstrap code issued for link {link_id}: {bc}")
+        
+        return {
+            "ok": True,
+            "bc": bc,
+            "expires_at": expires_at
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Issue BC failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/link/status/{link_id}",
+         tags=["mobile-linking"],
+         summary="Get Link Status",
+         description="Get current status of a link (for mobile polling)")
+async def get_link_status(link_id: str):
+    """Get link status for mobile polling (fallback)"""
+    try:
+        link_data = _LINK_STORAGE.get(link_id)
+        
+        if not link_data:
+            raise HTTPException(status_code=404, detail="Link not found")
+        
+        # Check if link has expired
+        if now() > link_data.get("expires_at", 0):
+            status = "expired"
+        else:
+            status = link_data.get("status", "pending")
+        
+        return {
+            "link_id": link_id,
+            "status": status
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Get link status failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/link/status/{link_id}/stream",
+         tags=["mobile-linking"],
+         summary="Stream Link Status (SSE)",
+         description="Stream link status updates via Server-Sent Events")
+async def stream_link_status(link_id: str):
+    """Stream link status updates to mobile device via SSE"""
+    async def event_generator():
+        try:
+            link_data = _LINK_STORAGE.get(link_id)
+            
+            if not link_data:
+                yield f"data: {json.dumps({'error': 'Link not found'})}\n\n"
+                return
+            
+            # Send initial status
+            initial_status = link_data.get("status", "pending")
+            yield f"data: {json.dumps({'link_id': link_id, 'status': initial_status})}\n\n"
+            
+            # Poll for status changes (server-side, much more efficient)
+            last_status = initial_status
+            max_duration = 300  # 5 minutes max
+            start_time = now()
+            
+            while (now() - start_time) < max_duration:
+                await asyncio.sleep(1)  # Check every second
+                
+                link_data = _LINK_STORAGE.get(link_id)
+                if not link_data:
+                    yield f"data: {json.dumps({'status': 'expired'})}\n\n"
+                    break
+                
+                current_status = link_data.get("status", "pending")
+                
+                # Check if status changed
+                if current_status != last_status:
+                    yield f"data: {json.dumps({'link_id': link_id, 'status': current_status})}\n\n"
+                    last_status = current_status
+                    
+                    # If completed or confirmed, close the connection
+                    if current_status in ['completed', 'confirmed', 'verified']:
                         break
-                    else:
-                        log.warning("BC expired - lid=%s bc=%s", lid, bc)
-        
-        if not bc_valid:
-            raise HTTPException(400, "invalid_or_expired_code")
+                
+                # Check if link expired
+                if now() > link_data.get("expires_at", 0):
+                    yield f"data: {json.dumps({'status': 'expired'})}\n\n"
+                    break
+            
+            # Send final keepalive
+            yield f"data: {json.dumps({'status': 'timeout'})}\n\n"
+            
+        except asyncio.CancelledError:
+            log.info(f"SSE connection cancelled for link: {link_id}")
+        except Exception as e:
+            log.error(f"SSE stream error for link {link_id}: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
-        # Mark link consumed if you have server-side state; then mint nonce
-        next_nonce = _new_nonce()
-        await DB.add_nonce(sid, next_nonce, SETTINGS.nonce_ttl)
-        log.info("device_redeem ok sid=%s rid=%s link_id=%s", sid, req.state.request_id, link_id)
-        return JSONResponse({"dpop_nonce": next_nonce, "exp": now() + SETTINGS.nonce_ttl, "link_id": link_id})
+
+@app.post("/device/redeem",
+          tags=["mobile-linking"],
+          summary="Redeem Bootstrap Code",
+          description="Desktop redeems bootstrap code to verify mobile device")
+async def device_redeem(req: Request, response: Response):
+    """Redeem bootstrap code from mobile device"""
+    try:
+        # Get session data
+        session_data = await SessionService.get_session_data(req, response)
+        session_id = req.session.get("session_id")
+        
+        if not session_id:
+            raise HTTPException(status_code=401, detail="No session ID found")
+        
+        body = await req.json()
+        bc = body.get("bc", "").upper().strip()
+        
+        if len(bc) != 8:
+            raise HTTPException(status_code=400, detail="Invalid bootstrap code format")
+        
+        # Find and validate BC in link storage
+        link_id = None
+        for lid, link_data in _LINK_STORAGE.items():
+            if link_data.get("bc") == bc:
+                # Check if BC is still valid
+                if now() <= link_data.get("bc_expires_at", 0):
+                    if not link_data.get("bc_consumed"):
+                        link_id = lid
+                        link_data["bc_consumed"] = True
+                        link_data["status"] = "confirmed"
+                        log.info(f"BC consumed - link_id: {lid}, bc: {bc}")
+                        break
+                else:
+                    log.warning(f"BC expired - link_id: {lid}, bc: {bc}")
+        
+        if not link_id:
+            raise HTTPException(status_code=400, detail="Invalid or expired bootstrap code")
+        
+        log.info(f"Bootstrap code redeemed successfully for link: {link_id}")
+        
+        return {
+            "ok": True,
+            "link_id": link_id,
+            "message": "Bootstrap code verified successfully"
+        }
+        
     except HTTPException:
         raise
     except Exception as e:
-        log.exception("device_redeem failed sid=%s rid=%s", sid, req.state.request_id)
-        raise HTTPException(400, f"redeem failed: {e}")
+        log.error(f"Device redeem failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-# ---- POST /link/finalize (verify raw DPoP; bind session to jkt) ----
-@app.post("/link/finalize",
-          tags=["device-linking"],
-          summary="Finalize Device Link",
-          description="Finalize device linking by verifying DPoP proof and binding the session")
-async def verify_link_finalize(req: Request, resp: Response):
 
-    # Require DPoP proof for this protected endpoint
-    try:
-        auth_data = await SessionService.require_dpop_proof(req)
-        dpop_payload = auth_data["dpop_payload"]
-        session_data = auth_data["session_data"]
-        session_id = auth_data["session_id"]
-        log.info("DPoP validation successful for link finalize - Session ID: %s", session_id)
-    except HTTPException as e:
-        log.warning("DPoP validation failed for link finalize: %s", e.detail)
-        # For this endpoint, we might want to return a nonce challenge instead of failing
-        if e.status_code == 401 and "Missing DPoP header" in e.detail:
-            sid = req.session.get("sid")
-            if sid:
-                n = _new_nonce(); await DB.add_nonce(sid, n, SETTINGS.nonce_ttl)
-                raise HTTPException(428, "dpop required", headers={"DPoP-Nonce": n})
-        raise e
 
-    try:
-        # DPoP validation is now handled by require_dpop_proof above
-        # Extract the DPoP data from the validated payload
-        n = dpop_payload.get("nonce")
-        if not n or not (await DB.nonce_valid(session_id, n)):
-            raise HTTPException(401, "nonce missing/expired")
-        jti = dpop_payload.get("jti")
-        if not jti or not (await DB.add_jti(session_id, jti, SETTINGS.jti_ttl)):
-            raise HTTPException(401, "jti replay")
 
-        # Get the JWK from the DPoP header (we need to extract it from the original header)
-        dpop_header = req.headers.get("dpop")
-        dpop_data = validate_jws_token(dpop_header, "dpop+jwt", ["htm", "htu", "iat", "jti", "nonce"])
-        jwk = dpop_data["header"].get("jwk", {})
 
-        # Compute jkt and bind to session
-        dpop_jkt = ec_p256_thumbprint(jwk)
-        
-        # Always allow new DPoP key binding for /link/finalize endpoint
-        # This allows verify page to bind its own DPoP key
-        await DB.update_session(session_id, {"dpop_jkt": dpop_jkt, "state": "active"})
-        if session_data.get("dpop_jkt") and session_data.get("dpop_jkt") != dpop_jkt:
-            log.info("DPoP key updated - sid=%s old_jkt=%s new_jkt=%s", 
-                    session_id, session_data.get("dpop_jkt", "")[:8], dpop_jkt[:8])
 
-        # Next nonce for caller
-        next_nonce = _new_nonce()
-        await DB.add_nonce(session_id, next_nonce, SETTINGS.nonce_ttl)
-        resp.headers["DPoP-Nonce"] = next_nonce
-        log.info("link_finalize ok sid=%s jkt=%s rid=%s", session_id, dpop_jkt[:8], req.state.request_id)
-        return JSONResponse({"ok": True, "session_state": "active", "jkt": dpop_jkt})
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.exception("link_finalize failed sid=%s rid=%s", session_id, req.state.request_id)
-        raise HTTPException(400, f"finalize failed: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ---- Example protected endpoint with DPoP validation ----
@@ -544,4 +792,113 @@ async def protected_endpoint(req: Request):
         log.warning("Protected endpoint access denied: %s", e.detail)
         raise e
 
+
+# ---- Passkey Endpoints ----
+@app.post("/webauthn/registration/options",
+          tags=["passkeys"],
+          summary="Get Passkey Registration Options",
+          description="Get challenge and options for registering a new passkey")
+async def webauthn_registration_options(req: Request, response: Response):
+    """Get passkey registration challenge"""
+    try:
+        # Get session data (requires response parameter)
+        session_data = await SessionService.get_session_data(req, response)
+        session_id = req.session.get("session_id")
+        log.info("Passkey registration options - Session Data: %s", session_data)
+
+        # Parse request body to get username
+        request_body = await req.json()
+        
+        # Pass session_id, session_data, request, and body
+        body = await PasskeyService.get_registration_options(session_id, session_data, req, request_body)
+        return body
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Passkey registration options failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/webauthn/registration/verify",
+          tags=["passkeys"],
+          summary="Verify Passkey Registration",
+          description="Verify attestation and complete passkey registration")
+async def webauthn_registration_verify(req: Request, response: Response):
+    """Verify passkey registration"""
+    try:
+        # Get session data (requires response parameter)
+        session_data = await SessionService.get_session_data(req, response)
+        session_id = req.session.get("session_id")
+
+        # Parse request body
+        attestation_data = await req.json()
+        
+        result = await PasskeyService.verify_registration(
+            session_id, req, attestation_data
+        )
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Passkey registration verify failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/webauthn/authentication/options",
+          tags=["passkeys"],
+          summary="Get Passkey Authentication Options",
+          description="Get challenge and options for authenticating with a passkey")
+async def webauthn_authentication_options(req: Request, response: Response):
+    """Get passkey authentication challenge"""
+    try:
+        # Get session data (requires response parameter)
+        session_data = await SessionService.get_session_data(req, response)
+        session_id = req.session.get("session_id")
+        log.info('HERE')
+        
+        # Parse request body to get username (optional)
+        request_body = await req.json()
+
+        body = await PasskeyService.get_authentication_options(session_id, session_data, req, request_body)
+        return body
+        
+    except Exception as e:
+        log.error(f"Passkey auth options failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/webauthn/authentication/verify",
+          tags=["passkeys"],
+          summary="Verify Passkey Authentication",
+          description="Verify assertion and complete passkey authentication")
+async def webauthn_authentication_verify(req: Request, response: Response):
+    """Verify passkey authentication"""
+    try:
+        # Get session data (requires response parameter)
+        session_data = await SessionService.get_session_data(req, response)
+        session_id = req.session.get("session_id")
+        
+        # Parse request body
+        assertion_data = await req.json()
+        
+        # Get username from assertion data (client should include it)
+        username = assertion_data.get("username")
+        if not username:
+            raise HTTPException(status_code=400, detail="Username is required for passkey authentication")
+        
+        result = await PasskeyService.verify_authentication(
+            session_id, session_data, req, assertion_data, username
+        )
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Passkey auth verify failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+log.info("Passkey endpoints registered")
 

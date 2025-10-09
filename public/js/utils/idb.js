@@ -107,8 +107,8 @@ async function run(storeName, mode, fn, attempt = 0) {
       e?.name === 'TransactionInactiveError' ||
       e?.name === 'NotFoundError'
     )) {
-      logger.warn('IndexedDB transaction failed, attempting auto-heal:', e);
-      idbReset();
+      logger.warn('IndexedDB transaction failed, attempting auto-heal by wiping database:', e);
+      await idbWipe();
       return run(storeName, mode, fn, 1);
     }
     logger.error('IndexedDB operation failed:', e);
@@ -123,7 +123,7 @@ async function run(storeName, mode, fn, attempt = 0) {
 
 export async function idbPut(storeName, record) {
   try {
-    logger.info('Putting record in store:', { storeName, recordId: record.id });
+    logger.info('Putting record in store:', { storeName, recordId: record.id, value: record.value });
     const result = await run(storeName, 'readwrite', (store) => store.put(record));
     logger.info('Record put successfully');
     return result;
@@ -150,6 +150,25 @@ export async function idbGet(storeName, id) {
   } catch (error) {
     if (error.name === 'StorageError') throw error;
     throw new Error('Failed to get record from IndexedDB', { 
+      originalError: error.message, 
+      storeName, 
+      id 
+    });
+  }
+}
+
+export async function idbDelete(storeName, id) {
+  try {
+    logger.info('Deleting record from store:', { storeName, id });
+    await run(storeName, 'readwrite', (store) => new Promise((resolve, reject) => {
+      const req = store.delete(id);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    }));
+    logger.info('Record deleted successfully:', { storeName, id });
+  } catch (error) {
+    if (error.name === 'StorageError') throw error;
+    throw new Error('Failed to delete record from IndexedDB', { 
       originalError: error.message, 
       storeName, 
       id 

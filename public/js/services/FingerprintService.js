@@ -128,11 +128,40 @@ export class FingerprintService {
   }
 
   /**
+   * Detect device type based on user agent client hints
+   * @param {Object} uaCh - User Agent Client Hints data
+   * @returns {string} 'mobile', 'tablet', or 'desktop'
+   */
+  static detectDeviceType(uaCh) {
+    // Check client hints first (most reliable)
+    if (uaCh && uaCh.mobile === true) {
+      return 'mobile';
+    }
+    
+    // Check user agent as fallback
+    const ua = navigator.userAgent.toLowerCase();
+    if (/mobile|android|iphone|ipod|blackberry|iemobile|opera mini/i.test(ua)) {
+      return 'mobile';
+    }
+    
+    if (/tablet|ipad/i.test(ua)) {
+      return 'tablet';
+    }
+    
+    // Check screen size as additional hint
+    if (screen.width <= 768) {
+      return 'mobile';
+    }
+    
+    return 'desktop';
+  }
+
+  /**
    * Collect comprehensive device fingerprint
-   * @param {string} deviceType - 'desktop' or 'mobile'
+   * @param {string} deviceType - 'desktop' or 'mobile' (auto-detected if not provided)
    * @returns {Promise<Object>} Complete fingerprint data
    */
-  static async collectFingerprint(deviceType = 'unknown') {
+  static async collectFingerprint(deviceType = null) {
     try {
       
       // Collect User Agent Client Hints data
@@ -140,6 +169,11 @@ export class FingerprintService {
       
       // Collect automation detection data
       const automation = await this.collectAutomationData();
+      
+      // Auto-detect device type if not provided
+      if (!deviceType) {
+        deviceType = this.detectDeviceType(uaCh);
+      }
       
       // Collect basic device information
       const fingerprint = {

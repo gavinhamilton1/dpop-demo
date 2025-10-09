@@ -12,8 +12,8 @@ from typing import List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 from fastapi import Request
 
-# Logger instance
 log = logging.getLogger(__name__)
+
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -86,7 +86,7 @@ def jwk_to_ec_public_key(jwk: Dict[str, Any]) -> ec.EllipticCurvePublicKey:
     return public_numbers.public_key()
 
 
-def validate_key_jws(jws_token: str, expected_typ: str, expected_payload_fields: list, expected_device_id: str, key_type: str) -> tuple[str, dict, dict]:
+def validate_key_jws(jws_token: str, expected_typ: str, expected_payload_fields: list, key_type: str) -> tuple[str, dict, dict]:
     """
     Generic validation function for BIK and DPoP JWS tokens
     
@@ -94,7 +94,6 @@ def validate_key_jws(jws_token: str, expected_typ: str, expected_payload_fields:
         jws_token: The JWS token to validate
         expected_typ: Expected JWT type (e.g., "bik-reg+jws", "dpop-bind+jws")
         expected_payload_fields: List of required payload field names (e.g., ["device_id"] or ["htm", "htu", "iat", "jti", "nonce"])
-        expected_device_id: Expected device ID for validation
         key_type: Type of key for error messages (e.g., "BIK", "DPoP")
         
     Returns:
@@ -107,7 +106,7 @@ def validate_key_jws(jws_token: str, expected_typ: str, expected_payload_fields:
         ValueError: If validation fails
     """
     try:
-        # Validate the JWS token with the specified payload fields
+        # Validate the JWS token with the specified payload fields (validates field presence)
         key_data = validate_jws_token(jws_token, expected_typ, expected_payload_fields)
         public_jwk = key_data["header"].get("jwk", {})
         
@@ -115,17 +114,10 @@ def validate_key_jws(jws_token: str, expected_typ: str, expected_payload_fields:
         if public_jwk.get("kty") != "EC" or public_jwk.get("crv") != "P-256" or not public_jwk.get("x") or not public_jwk.get("y"):
             raise ValueError(f"bad {key_type.lower()} jwk")
         
-        # Generate JKT from JWK (since JKT is not in payload anymore)
+        # Generate JKT from JWK
         jkt = ec_p256_thumbprint(public_jwk)
         
-        # Validate device ID if it's in the expected fields
-        if "device_id" in expected_payload_fields:
-            device_id = key_data["payload"].get("device_id")
-            log.info("Got %s JKT: %s, Device ID: %s", key_type, jkt, device_id)
-            if device_id != expected_device_id:
-                raise ValueError("Device ID mismatch")
-        else:
-            log.info("Got %s JKT: %s", key_type, jkt)
+        log.info("Validated %s JKT: %s", key_type, jkt)
         
         # Additional validation for DPoP-specific claims
         if "htm" in expected_payload_fields:
@@ -201,6 +193,12 @@ def _new_nonce() -> str:
 URL canonicalization and validation utilities
 """
 
+def _bracket_host(host: str) -> str:
+    """Wrap IPv6 addresses in brackets if needed"""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
 
 def canonicalize_origin_and_url(request: Request, external_origin: Optional[str] = None) -> Tuple[str, str]:
     """Canonicalize origin and URL from a request, handling IPv6 and proxy headers"""
@@ -240,3 +238,79 @@ def canonicalize_origin_and_url(request: Request, external_origin: Optional[str]
     query = parts.query
     full = urlunsplit((o_parts.scheme, o_parts.netloc, path, query, ""))
     return origin, full
+
+
+# -------- Passkey / WebAuthn utilities --------
+import struct
+import cbor2
+from cryptography.hazmat.primitives.asymmetric import rsa, padding, ed25519
+from fastapi import HTTPException
+
+def cose_to_jwk(cbor_bytes: bytes) -> dict:
+    """Convert COSE key to JWK format"""
+    m = cbor2.loads(cbor_bytes)
+    kty = m.get(1)  # 1=OKP, 2=EC2, 3=RSA
+    if kty == 2:  # EC2
+        crv = m.get(-1); x = m.get(-2); y = m.get(-3)
+        if crv != 1:
+            raise HTTPException(status_code=400, detail="unsupported EC curve")
+        return {"kty": "EC", "crv": "P-256", "x": b64u(x), "y": b64u(y), "alg": "ES256"}
+    if kty == 3:  # RSA
+        n = m.get(-1); e = m.get(-2)
+        return {"kty": "RSA", "n": b64u(n), "e": b64u(e), "alg": "RS256"}
+    if kty == 1:  # OKP (Ed25519)
+        crv = m.get(-1); x = m.get(-2)
+        if crv == 6 and x:
+            return {"kty": "OKP", "crv": "Ed25519", "x": b64u(x), "alg": "EdDSA"}
+        raise HTTPException(status_code=400, detail="unsupported OKP curve")
+    raise HTTPException(status_code=400, detail="unsupported COSE key")
+
+def jwk_to_public_key(jwk: dict):
+    """Convert JWK to cryptography public key object
+    
+    Returns:
+        Tuple of (public_key, algorithm_name)
+    """
+    if jwk.get("kty") == "EC" and jwk.get("crv") == "P-256":
+        x = int.from_bytes(b64u_dec(jwk["x"]), "big")
+        y = int.from_bytes(b64u_dec(jwk["y"]), "big")
+        numbers = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1())
+        return numbers.public_key(), "ES256"
+    if jwk.get("kty") == "RSA":
+        n = int.from_bytes(b64u_dec(jwk["n"]), "big")
+        e = int.from_bytes(b64u_dec(jwk["e"]), "big")
+        pub = rsa.RSAPublicNumbers(e, n).public_key()
+        return pub, "RS256"
+    if jwk.get("kty") == "OKP" and jwk.get("crv") == "Ed25519":
+        pub = ed25519.Ed25519PublicKey.from_public_bytes(b64u_dec(jwk["x"]))
+        return pub, "EdDSA"
+    raise HTTPException(status_code=400, detail="unsupported JWK")
+
+def parse_authenticator_data(ad: bytes) -> Dict[str, Any]:
+    """Parse WebAuthn authenticator data
+    
+    Returns dict with:
+        - rpIdHash: bytes
+        - flags: int
+        - signCount: int
+        - aaguid: bytes (if AT flag set)
+        - credId: bytes (if AT flag set)
+        - rest: bytes (remaining data after credId, typically COSE key)
+    """
+    if len(ad) < 37:
+        raise HTTPException(status_code=400, detail="authData too short")
+    rpIdHash = ad[0:32]
+    flags = ad[32]
+    signCount = struct.unpack(">I", ad[33:37])[0]
+    off = 37
+    res: Dict[str, Any] = {"rpIdHash": rpIdHash, "flags": flags, "signCount": signCount}
+    AT = (flags & 0x40) != 0
+    if AT:
+        if len(ad) < off + 16 + 2:
+            raise HTTPException(status_code=400, detail="attestedCredentialData truncated")
+        aaguid = ad[off:off+16]; off += 16
+        cred_len = struct.unpack(">H", ad[off:off+2])[0]; off += 2
+        credId = ad[off:off+cred_len]; off += cred_len
+        res.update({"aaguid": aaguid, "credId": credId})
+        res["rest"] = ad[off:]
+    return res

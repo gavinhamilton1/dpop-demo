@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
 import yaml
 
-log = logging.getLogger("dpop-fun")
+log = logging.getLogger(__name__)
+
 
 @dataclass
 class Settings:

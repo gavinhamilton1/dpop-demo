@@ -3,7 +3,8 @@ import requests
 import logging
 from typing import Dict, Optional
 
-log = logging.getLogger("dpop-fun")
+log = logging.getLogger(__name__)
+
 
 class GeolocationService:
     """Service for IP-based geolocation lookup"""

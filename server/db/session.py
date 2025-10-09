@@ -9,9 +9,9 @@ from server.core.config import load_settings
 _SETTINGS = load_settings()
 
 
-log = logging.getLogger("dpop-fun")
+log = logging.getLogger(__name__)
 
-class Database:
+class SessionDB:
     _instance = None
     _initialized = False
     
@@ -68,18 +68,18 @@ class Database:
 
         CREATE TABLE IF NOT EXISTS sessions (
           _session_id TEXT PRIMARY KEY,          -- Unique session identifier
-          _session_status TEXT NOT NULL DEFAULT 'ACTIVE'
-                CHECK (_session_status IN ('NEW', 'ACTIVE', 'EXPIRED', 'TERMINATED')),
+          session_status TEXT NOT NULL DEFAULT 'ACTIVE'
+                CHECK (session_status IN ('NEW', 'ACTIVE', 'EXPIRED', 'TERMINATED')),
           _x_x_csrf_token TEXT,             -- CSRF protection token
           _x_dpop_nonce TEXT,             -- DPoP nonce
           _x_dpop_bind TEXT,             -- DPoP bind token
           _access_token TEXT,           -- Access token
           _refresh_token TEXT,          -- Refresh token
           _id_token TEXT,               -- ID token
-          _dpop_jkt TEXT,                        -- DPoP key thumbprint
-          _dpop_jwk TEXT,                 -- DPoP public key (JSON)
-          _signal_data TEXT,                 -- Signal data
-          _signal_hash TEXT,                 -- Signal hash
+          signal_data TEXT,                 -- Signal data
+          signal_hash TEXT,                 -- Signal hash
+          dpop_jkt TEXT,                        -- DPoP key thumbprint
+          dpop_jwk TEXT,                 -- DPoP public key (JSON)
           session_flag TEXT NOT NULL DEFAULT 'GREEN'
                 CHECK (session_flag IN ('RED', 'AMBER', 'GREEN')),
           session_flag_comment TEXT,       -- Session flag comment
@@ -117,6 +117,28 @@ class Database:
           PRIMARY KEY (session_id, jti),
           FOREIGN KEY (session_id) REFERENCES sessions(session_id)
         );
+        
+        CREATE TABLE IF NOT EXISTS passkeys (
+          principal TEXT NOT NULL,
+          cred_id   TEXT PRIMARY KEY,
+          public_key_jwk TEXT NOT NULL, -- JSON
+          sign_count INTEGER NOT NULL DEFAULT 0,
+          aaguid TEXT,
+          transports TEXT,              -- JSON array
+          created_at INTEGER NOT NULL
+        );
+        -- Optional index for frequent lookups
+        CREATE INDEX IF NOT EXISTS idx_passkeys_principal ON passkeys(principal);
+
+        CREATE TABLE IF NOT EXISTS links (
+          id TEXT PRIMARY KEY,
+          owner_sid TEXT NOT NULL,
+          status TEXT NOT NULL,         -- pending|scanned|completed
+          principal TEXT,
+          expires_at INTEGER NOT NULL,
+          applied INTEGER NOT NULL DEFAULT 0
+        );
+        
         """)
 
     async def get_device(self, device_id: str) -> Optional[Dict[str, Any]]:
@@ -153,24 +175,24 @@ class Database:
             raise ValueError("Session already exists")
         else:
             await self.exec(
-                """INSERT INTO sessions(_session_id, _session_status, session_flag, session_flag_comment, auth_method, auth_status, auth_username, 
+                """INSERT INTO sessions(_session_id, session_status, session_flag, session_flag_comment, auth_method, auth_status, auth_username, 
                                         _access_token, _refresh_token, _id_token, device_id, state, 
-                                        _dpop_jkt, _dpop_jwk, dpop_bind_expires_at, _x_x_csrf_token, 
-                                        _x_dpop_nonce, _x_dpop_bind, client_ip, _signal_data, _signal_hash, created_at, 
+                                        dpop_jkt, dpop_jwk, dpop_bind_expires_at, _x_x_csrf_token, 
+                                        _x_dpop_nonce, _x_dpop_bind, client_ip, signal_data, signal_hash, created_at, 
                                         updated_at, expires_at, geolocation) 
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
-                    (session_id, data.get("_session_status"), data.get("session_flag"), data.get("session_flag_comment"), data.get("auth_method"), data.get("auth_status"), data.get("auth_username"), 
+                    (session_id, data.get("session_status"), data.get("session_flag"), data.get("session_flag_comment"), data.get("auth_method"), data.get("auth_status"), data.get("auth_username"), 
                      data.get("_access_token"), data.get("_refresh_token"), data.get("_id_token"), 
-                     data.get("device_id"), data.get("state"), data.get("_dpop_jkt"), 
-                     data.get("_dpop_jwk"), data.get("dpop_bind_expires_at"), data.get("_x_x-csrf-token"), 
+                     data.get("device_id"), data.get("state"), data.get("dpop_jkt"), 
+                     data.get("dpop_jwk"), data.get("dpop_bind_expires_at"), data.get("_x_x-csrf-token"), 
                      data.get("_x_dpop-nonce"), data.get("_x_dpop-bind"), data.get("client_ip"), 
-                     data.get("_signal_data"), data.get("_signal_hash"), now(), now(), data.get("expires_at"), data.get("geolocation"))
+                     data.get("signal_data"), data.get("signal_hash"), now(), now(), data.get("expires_at"), data.get("geolocation"))
             )
 
     async def terminate_session(self, session_id: str) -> bool:
         """Terminate session by session_id"""
         log.info("Terminating session: %s", session_id)
-        row = await self.fetchone("UPDATE sessions SET _session_status='TERMINATED' WHERE _session_id=?", (session_id,))
+        row = await self.fetchone("UPDATE sessions SET session_status='TERMINATED' WHERE _session_id=?", (session_id,))
         if not row:
             return False
         return True
@@ -188,35 +210,169 @@ class Database:
         row = await self.fetchone("SELECT * FROM nonces WHERE session_id=? AND nonce=?", (session_id, nonce))
         if not row:
             return None
-        if row.get("expires_at") < int(time.time()):
+        
+        # Convert to dict first
+        row_dict = dict(row)
+        
+        # Check if expired and update both database and dict
+        if row_dict["expires_at"] < int(now()):
             await self.exec("UPDATE nonces SET nonce_status='EXPIRED' WHERE session_id=? AND nonce=?", (session_id, nonce))
-            row["nonce_status"] = "EXPIRED"
-        return dict(row) 
+            row_dict["nonce_status"] = "EXPIRED"
+        
+        return row_dict 
 
-    
+        
     async def set_nonce(self, session_id: str, nonce: str, nonce_status: str, ttl_sec: int):
         """Set a nonce for a session"""
         if nonce_status not in ["PENDING", "REDEEMED", "EXPIRED", None]:
             raise ValueError("Invalid nonce status")
         
-        now = int(time.time())
-        expires_at = now + ttl_sec
-        await self.exec("""INSERT INTO nonces(session_id, nonce, nonce_status, expires_at, created_at) 
-                        VALUES(?,?,?,?,?)""", 
-                        (session_id, nonce, nonce_status, expires_at, now))  
+        #if nonce already exists, update it, if not creat a new one
+        if await self.get_nonce(session_id, nonce):
+            await self.exec("UPDATE nonces SET nonce_status=?, expires_at=? WHERE session_id=? AND nonce=?", (nonce_status, now() + ttl_sec, session_id, nonce))
+            return
+        else:
+            expires_at = now() + ttl_sec
+            await self.exec("""INSERT INTO nonces(session_id, nonce, nonce_status, expires_at, created_at) 
+                            VALUES(?,?,?,?,?)""", 
+                            (session_id, nonce, nonce_status, expires_at, now()))  
         
     async def get_active_user_sessions(self, user_id: str) -> List[Dict[str, Any]]:
         """Get active user sessions by user_id"""
-        rows = await self.fetchall("SELECT * FROM sessions WHERE auth_username=? AND _session_status='ACTIVE'", (user_id))
+        rows = await self.fetchall("SELECT * FROM sessions WHERE auth_username=? AND session_status='ACTIVE'", [user_id])
         return [dict(row) for row in rows]
 
 
     async def get_session_history(self, authenticated_username: str, created_at: int) -> List[Dict[str, Any]]:
         """Get session history for an authenticated user"""
-        rows = await self.fetchall("SELECT * FROM sessions WHERE auth_username=? AND _session_status='ACTIVE'" and "created_at > ?", (authenticated_username, created_at))
+        rows = await self.fetchall("SELECT * FROM sessions WHERE auth_username=? AND session_status='ACTIVE'" and "created_at > ?", (authenticated_username, created_at))
         return [dict(row) for row in rows]
 
 
+# --- Passkeys
+
+    async def pk_get_for_principal(self, principal: str) -> List[Dict[str, Any]]:
+        rows = await self.fetchall("SELECT * FROM passkeys WHERE principal=?", (principal,))
+        out = []
+        for r in rows:
+            out.append({
+                "principal": r["principal"],
+                "cred_id": r["cred_id"],
+                "public_key_jwk": json.loads(r["public_key_jwk"]),
+                "sign_count": r["sign_count"],
+                "aaguid": r["aaguid"],
+                "transports": json.loads(r["transports"]) if r["transports"] else [],
+                "created_at": r["created_at"],
+            })
+        return out
+
+    async def pk_upsert(self, principal: str, rec: Dict[str, Any]) -> None:
+        await self.exec(
+            """INSERT INTO passkeys(principal, cred_id, public_key_jwk, sign_count, aaguid, transports, created_at)
+               VALUES(?,?,?,?,?,?,?)
+               ON CONFLICT(cred_id) DO UPDATE SET
+                 principal=excluded.principal,
+                 public_key_jwk=excluded.public_key_jwk,
+                 sign_count=excluded.sign_count,
+                 aaguid=excluded.aaguid,
+                 transports=excluded.transports""",
+            (
+                principal,
+                rec["cred_id"],
+                json.dumps(rec["public_key_jwk"], separators=(",", ":")),
+                int(rec.get("sign_count") or 0),
+                rec.get("aaguid"),
+                json.dumps(rec.get("transports") or [], separators=(",", ":")),
+                int(rec.get("created_at") or 0),
+            ),
+        )
+
+    async def pk_find_by_cred_id(self, principal: str, cred_id: str) -> Optional[Dict[str, Any]]:
+        r = await self.fetchone("SELECT * FROM passkeys WHERE principal=? AND cred_id=?", (principal, cred_id))
+        if not r:
+            return None
+        return {
+            "principal": r["principal"],
+            "cred_id": r["cred_id"],
+            "public_key_jwk": json.loads(r["public_key_jwk"]),
+            "sign_count": r["sign_count"],
+            "aaguid": r["aaguid"],
+            "transports": json.loads(r["transports"]) if r["transports"] else [],
+            "created_at": r["created_at"],
+        }
+
+    async def pk_get_by_cred_id(self, cred_id: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+        r = await self.fetchone("SELECT * FROM passkeys WHERE cred_id=?", (cred_id,))
+        if not r:
+            return None
+        rec = {
+            "principal": r["principal"],
+            "cred_id": r["cred_id"],
+            "public_key_jwk": json.loads(r["public_key_jwk"]),
+            "sign_count": r["sign_count"],
+            "aaguid": r["aaguid"],
+            "transports": json.loads(r["transports"]) if r["transports"] else [],
+            "created_at": r["created_at"],
+        }
+        return r["principal"], rec
+
+    async def pk_update_sign_count(self, cred_id: str, new_count: int):
+        await self.exec("UPDATE passkeys SET sign_count=? WHERE cred_id=?", (int(new_count), cred_id))
+
+    async def pk_remove(self, principal: str, cred_id: str) -> bool:
+        await self.exec("DELETE FROM passkeys WHERE principal=? AND cred_id=?", (principal, cred_id))
+        # We can't easily tell rows affected with aiosqlite here without extra work; return True for simplicity
+        return True
+
+    # --- Passkey Challenge Management ---
+    
+    async def store_webauthn_challenge(self, session_id: str, challenge_type: str, challenge: str, expires_at: int) -> None:
+        """Store WebAuthn challenge for validation"""
+        # Store in nonces table for simplicity (challenges are like nonces)
+        await self.exec(
+            "INSERT INTO nonces(session_id, nonce, nonce_status, expires_at, created_at) VALUES(?,?,?,?,?)",
+            (session_id, f"{challenge_type}:{challenge}", "PENDING", expires_at, now())
+        )
+    
+    async def validate_webauthn_challenge(self, session_id: str, challenge_type: str, challenge: str) -> bool:
+        """Validate WebAuthn challenge"""
+        nonce = f"{challenge_type}:{challenge}"
+        row = await self.fetchone(
+            "SELECT * FROM nonces WHERE session_id=? AND nonce=? AND nonce_status='PENDING'",
+            (session_id, nonce)
+        )
+        if not row:
+            return False
+        
+        # Check if expired
+        if row["expires_at"] < now():
+            await self.exec("UPDATE nonces SET nonce_status='EXPIRED' WHERE session_id=? AND nonce=?", (session_id, nonce))
+            return False
+        
+        # Mark as redeemed
+        await self.exec("UPDATE nonces SET nonce_status='REDEEMED' WHERE session_id=? AND nonce=?", (session_id, nonce))
+        return True
+    
+    async def update_session_auth_status(self, session_id: str, auth_method: str, auth_status: str, username: str = None) -> None:
+        """Update session authentication method, status, and username"""
+        if username:
+            await self.exec(
+                "UPDATE sessions SET auth_method=?, auth_status=?, auth_username=? WHERE _session_id=?",
+                (auth_method, auth_status, username, session_id)
+            )
+        else:
+            await self.exec(
+                "UPDATE sessions SET auth_method=?, auth_status=? WHERE _session_id=?",
+                (auth_method, auth_status, session_id)
+            )
+
+    async def logout_session(self, session_id: str) -> None:
+        """Logout session by setting auth_status to logged_out and session_status to TERMINATED"""
+        log.info("Logging out session in database: %s", session_id)
+        await self.exec(
+            "UPDATE sessions SET auth_status=?, session_status=? WHERE _session_id=?",
+            ("logged_out", "TERMINATED", session_id)
+        )
 
 
 # --- low-level helpers -------------------------------------------------
@@ -259,4 +415,4 @@ class Database:
             return rows
 
 # Create singleton instance
-SessionDB = Database(_SETTINGS.db_path)
+SessionDB = SessionDB(_SETTINGS.db_path)

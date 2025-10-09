@@ -1,6 +1,7 @@
 import { logger } from '../js/utils/logging.js';
-import { CONFIG } from '../js/utils/config.js';
 import * as DpopFun from '../js/core/dpop-fun.js';
+import * as Passkeys from '../js/core/passkeys.js';
+import { MobileLinkService } from '../js/mobilelink.js';
 
 
 class AppController {
@@ -23,13 +24,23 @@ class AppController {
         this.sessionWarning = document.getElementById('sessionWarning');
         this.moreDetailsLink = document.getElementById('moreDetailsLink');
         this.authMethod = document.getElementById('authMethod');
-        this.endSessionBtn = document.getElementById('endSessionBtn');
         this.reportActivityBtn = document.getElementById('reportActivityBtn');
+        this.sessionHistoryList = document.getElementById('sessionHistoryList');
+        this.passkeyAuthBtn = document.getElementById('passkeyAuthBtn');
+        this.mobileLinkBtn = document.getElementById('mobileLinkBtn');
+        this.usernameInput = document.getElementById('usernameInput');
+        this.checkUsernameBtn = document.getElementById('checkUsernameBtn');
+        
+        // Mobile linking service
+        this.mobileLinkService = null;
         
         // Session details modal
         this.sessionDetailsModal = document.getElementById('sessionDetailsModal');
         this.sessionsList = document.getElementById('sessionsList');
         this.closeSessionDetailsBtn = document.querySelector('[data-close-session-details]');
+        
+        // Current username for authentication
+        this.username = null;
 
         this.TOTAL_SESSION_MINUTES = 60;
         this.IDLE_TIMEOUT_MINUTES = 15;
@@ -48,6 +59,9 @@ class AppController {
         this.initializeEventListeners();
         this.initializeDisplayValues();
         this.setupActivityListeners();
+        
+        // Initialize passkey button
+        await this.initializePasskeyButton();
 
         try {
             const SESSION_DATA = await DpopFun.setupSession();
@@ -71,6 +85,9 @@ class AppController {
                 
                 // Populate UI with real session data
                 this.populateSessionUI(SESSION_DATA);
+                
+                // Restore authentication state if user is logged in
+                this.restoreAuthenticationState(SESSION_DATA);
                 
                 // Start timers only after session is properly set up
                 this.startTimers();
@@ -110,10 +127,34 @@ class AppController {
             this.showSessionDetails();
         });
 
-        // Control buttons
-        this.endSessionBtn.addEventListener('click', () => {
-            this.endCurrentSession();
+        // Username input - enable/disable auth buttons based on username presence
+        this.usernameInput.addEventListener('input', () => {
+            this.handleUsernameChange();
         });
+
+        // Username input - check on Enter key
+        this.usernameInput.addEventListener('keypress', async (e) => {
+            if (e.key === 'Enter' && this.username) {
+                await this.checkUsernameForPasskeys();
+            }
+        });
+
+        // Check username button
+        this.checkUsernameBtn.addEventListener('click', async () => {
+            await this.checkUsernameForPasskeys();
+        });
+
+        // Passkey Auth button
+        this.passkeyAuthBtn.addEventListener('click', async () => {
+            await this.handlePasskeyAuth();
+        });
+
+        // Mobile Link button
+        this.mobileLinkBtn.addEventListener('click', async () => {
+            await this.handleMobileLink();
+        });
+
+        // Control buttons removed - using Logout button in passkey flow instead
 
         this.reportActivityBtn.addEventListener('click', () => {
             this.reportSuspiciousActivity();
@@ -224,7 +265,10 @@ class AppController {
         // Update overview section
         this.updateOverviewSection(sessionData);
         
-        // Update session history
+        // Update session history in third column
+        this.updateSessionHistoryList(sessionData);
+        
+        // Update session history (old section - can be removed later)
         this.updateSessionHistory(sessionData);
         
         // Mock multiple sessions for demonstration
@@ -296,6 +340,386 @@ class AppController {
             this.sessionWarning.style.display = 'none';
             this.moreDetailsLink.style.display = 'none';
         }
+    }
+
+    updateSessionHistoryList(sessionData) {
+        if (!this.sessionHistoryList) return;
+
+        // TODO: Replace with actual session history from server
+        // For now, check if there's any history data in sessionData
+        const hasHistory = sessionData.session_history && sessionData.session_history.length > 0;
+
+        if (!hasHistory) {
+            // Show "no previous sessions" message
+            this.sessionHistoryList.innerHTML = '<p class="no-history">No previous sessions</p>';
+            return;
+        }
+
+        // Populate with actual history
+        this.sessionHistoryList.innerHTML = '';
+        sessionData.session_history.forEach(session => {
+            const historyItem = document.createElement('div');
+            historyItem.className = 'history-session-item';
+            
+            const timeAgo = this.formatTimeAgo(session.created_at);
+            const location = session.geolocation ? 
+                `${session.geolocation.city}, ${session.geolocation.country}` : 
+                'Unknown location';
+            const authMethod = session.auth_method || 'Unknown';
+
+            historyItem.innerHTML = `
+                <span class="history-time">${timeAgo}</span>
+                <span class="history-location">${location}</span>
+                <span class="history-method">${authMethod}</span>
+            `;
+
+            this.sessionHistoryList.appendChild(historyItem);
+        });
+    }
+
+    formatTimeAgo(timestamp) {
+        if (!timestamp) return 'Unknown time';
+        
+        const now = Math.floor(Date.now() / 1000);
+        const diff = now - timestamp;
+        
+        if (diff < 60) return 'Just now';
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+        if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+        
+        const date = new Date(timestamp * 1000);
+        return date.toLocaleDateString();
+    }
+
+    handleUsernameChange() {
+        const username = this.usernameInput.value.trim();
+        this.username = username || null;
+        
+        // Enable/disable buttons based on username presence
+        const hasUsername = username.length > 0;
+        
+        // Enable check username button if username is present
+        this.checkUsernameBtn.disabled = !hasUsername;
+        
+        // Disable passkey button until "Go" is clicked
+        this.passkeyAuthBtn.disabled = true;
+        
+        // Enable/disable mobile link button based on username
+        this.mobileLinkBtn.disabled = !hasUsername;
+        
+        logger.info('Username changed:', { username: this.username, hasUsername });
+    }
+
+    restoreAuthenticationState(sessionData) {
+        // Check if user is authenticated
+        if (sessionData.auth_status === 'authenticated' && sessionData.auth_username) {
+            logger.info('Restoring authenticated state for user:', sessionData.auth_username);
+            
+            // Set username field
+            this.usernameInput.value = sessionData.auth_username;
+            this.username = sessionData.auth_username;
+            
+            // Update button to logout mode
+            const btnText = this.passkeyAuthBtn.querySelector('.btn-text');
+            const btnIcon = this.passkeyAuthBtn.querySelector('.btn-icon');
+            
+            btnText.textContent = 'Logout';
+            btnIcon.textContent = '🚪';
+            this.passkeyAuthBtn.classList.add('logout-mode');
+            this.passkeyAuthBtn.disabled = false;
+            
+            // Enable the check username button
+            this.checkUsernameBtn.disabled = false;
+            
+            logger.info('Authentication state restored');
+        } else {
+            logger.info('No authenticated session found');
+        }
+    }
+
+    async checkUsernameForPasskeys() {
+        if (!this.username) {
+            logger.warn('No username provided');
+            return;
+        }
+
+        const btnText = this.checkUsernameBtn.querySelector('.btn-text');
+        const originalText = btnText.textContent;
+        
+        try {
+            btnText.textContent = '...';
+            this.checkUsernameBtn.disabled = true;
+            
+            logger.info('Checking for passkeys for username:', this.username);
+            
+            // Call authentication options endpoint to check if passkeys exist for this username
+            const options = await Passkeys.getAuthOptions(this.username);
+            
+            const hasPasskeys = options._meta?.hasCredentials || false;
+            const passkeyCount = options._meta?.registeredCount || 0;
+            
+            logger.info('Passkey check result:', { username: this.username, hasPasskeys, count: passkeyCount });
+            
+            // Update passkey button based on result
+            const passkeyBtnText = this.passkeyAuthBtn.querySelector('.btn-text');
+            if (hasPasskeys) {
+                passkeyBtnText.textContent = 'Login with Passkey';
+                this.passkeyAuthBtn.disabled = false;
+            } else {
+                passkeyBtnText.textContent = 'Create Passkey';
+                this.passkeyAuthBtn.disabled = false;
+            }
+            
+            // Restore Go button
+            btnText.textContent = originalText;
+            this.checkUsernameBtn.disabled = false;
+            
+        } catch (error) {
+            logger.error('Failed to check for passkeys:', error);
+            btnText.textContent = originalText;
+            this.checkUsernameBtn.disabled = false;
+            
+            // On error, default to create mode
+            this.passkeyAuthBtn.querySelector('.btn-text').textContent = 'Create Passkey';
+            this.passkeyAuthBtn.disabled = false;
+        }
+    }
+
+    async initializePasskeyButton() {
+        try {
+            // Check if passkeys are supported
+            const supportStatus = await Passkeys.getBasicSupportStatus();
+            
+            logger.info('Passkey support status:', supportStatus);
+            
+            if (!supportStatus.isSupported || !supportStatus.hasUVPA) {
+                // Platform doesn't support passkeys
+                this.passkeyAuthBtn.disabled = true;
+                this.passkeyAuthBtn.querySelector('.btn-text').textContent = 'Passkeys Not Supported';
+                logger.warn('Passkeys not supported on this platform');
+                return;
+            }
+            
+            // Check if user has existing passkeys (requires authenticated session)
+            let hasCredentials = false;
+            if (this.sessionData && this.sessionData.auth_method === 'Passkey') {
+                hasCredentials = await Passkeys.hasExistingPasskeys();
+            }
+            
+            // Set button label based on credential existence
+            if (hasCredentials) {
+                this.passkeyAuthBtn.querySelector('.btn-text').textContent = 'Login with Passkey';
+            } else {
+                this.passkeyAuthBtn.querySelector('.btn-text').textContent = 'Create Passkey';
+            }
+            
+            // Button remains disabled until username is entered
+            this.passkeyAuthBtn.disabled = true;
+            
+            logger.info('Passkey button initialized:', hasCredentials ? 'Login mode' : 'Create mode');
+        } catch (error) {
+            logger.error('Failed to initialize passkey button:', error);
+            this.passkeyAuthBtn.disabled = true;
+            this.passkeyAuthBtn.querySelector('.btn-text').textContent = 'Passkey Error';
+        }
+    }
+
+    async handlePasskeyAuth() {
+        if (!this.username) {
+            alert('Please enter a username first');
+            return;
+        }
+        
+        const btnText = this.passkeyAuthBtn.querySelector('.btn-text');
+        const originalText = btnText.textContent;
+        
+        try {
+            btnText.textContent = 'Processing...';
+            this.passkeyAuthBtn.disabled = true;
+            
+            if (originalText === 'Create Passkey') {
+                // Register new passkey with username
+                logger.info('Starting passkey registration for user:', this.username);
+                const result = await Passkeys.registerPasskey(this.username);
+                logger.info('Passkey registration successful:', result);
+                
+                // Update button to login mode
+                btnText.textContent = 'Login with Passkey';
+                
+                // Re-enable if username still present
+                this.passkeyAuthBtn.disabled = !this.username;
+                
+                logger.info(`Passkey created successfully for ${this.username}`);
+            } else if (originalText === 'Login with Passkey') {
+                // Authenticate with existing passkey
+                logger.info('Starting passkey authentication for user:', this.username);
+                const result = await Passkeys.authenticatePasskey(this.username);
+                logger.info('Passkey authentication successful:', result);
+                
+                // Update button to logout mode
+                btnText.textContent = 'Logout';
+                this.passkeyAuthBtn.querySelector('.btn-icon').textContent = '🚪';
+                this.passkeyAuthBtn.classList.add('logout-mode');
+                this.passkeyAuthBtn.disabled = false;
+                
+                logger.info(`Authenticated as ${this.username}`);
+                
+                // Fetch fresh session data to show authenticated state
+                try {
+                    const freshSessionData = await DpopFun.setupSession();
+                    if (freshSessionData) {
+                        this.populateSessionUI(freshSessionData);
+                    }
+                } catch (error) {
+                    logger.error('Failed to refresh session data after login:', error);
+                }
+            } else if (originalText === 'Logout') {
+                // Handle logout
+                logger.info('Logging out user:', this.username);
+                btnText.textContent = 'Logging out...';
+                
+                // Call logout endpoint
+                try {
+                    const response = await DpopFun.dpopFetch('POST', '/session/logout', {
+                        body: JSON.stringify({})
+                    });
+                    const result = await response.json();
+                    logger.info('Logout successful:', result);
+                } catch (error) {
+                    logger.error('Logout request failed:', error);
+                    // Continue with UI cleanup even if server call fails
+                }
+                
+                // Reset button state
+                btnText.textContent = 'Create Passkey';
+                this.passkeyAuthBtn.querySelector('.btn-icon').textContent = '🔑';
+                this.passkeyAuthBtn.classList.remove('logout-mode');
+                this.passkeyAuthBtn.disabled = true;
+                
+                // Clear username
+                this.usernameInput.value = '';
+                this.username = null;
+                
+                // Refresh session data to show logged out state
+                try {
+                    const freshSessionData = await DpopFun.setupSession();
+                    if (freshSessionData) {
+                        this.populateSessionUI(freshSessionData);
+                    }
+                } catch (error) {
+                    logger.error('Failed to refresh session data after logout:', error);
+                }
+            }
+        } catch (error) {
+            logger.error('Passkey operation failed:', error);
+            alert(`Passkey operation failed: ${error.message}`);
+            
+            // Restore button state
+            btnText.textContent = originalText;
+            this.passkeyAuthBtn.disabled = !this.username;
+        }
+    }
+
+    async handleMobileLink() {
+        if (!this.username) {
+            alert('Please enter a username and click Go first');
+            return;
+        }
+        
+        logger.info('Mobile link button clicked for username:', this.username);
+        
+        try {
+            // Show mobile linking modal
+            this.showMobileLinkingModal();
+            
+            // Initialize mobile link service
+            if (!this.mobileLinkService) {
+                this.mobileLinkService = new MobileLinkService();
+            }
+            
+            // Set username on the service so it can be sent with the link request
+            this.mobileLinkService.desktopUsername = this.username;
+            
+            // Determine flow type based on authentication status
+            const flowType = this.sessionData?.auth_status === 'authenticated' ? 'login' : 'registration';
+            
+            // Render the mobile linking UI
+            this.mobileLinkService.renderMobileLinkingStep(
+                'mobileLinkingModalContent',
+                false, // not optional
+                () => this.onMobileLinkComplete(),
+                null,
+                flowType
+            );
+            
+        } catch (error) {
+            logger.error('Failed to start mobile linking:', error);
+            alert(`Failed to start mobile linking: ${error.message}`);
+        }
+    }
+    
+    showMobileLinkingModal() {
+        // Create modal if it doesn't exist
+        let modal = document.getElementById('mobileLinkingModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'mobileLinkingModal';
+            modal.className = 'modal-overlay';
+            modal.innerHTML = `
+                <div class="modal-content mobile-linking-content">
+                    <div class="modal-header">
+                        <h2>Link Mobile Device</h2>
+                        <button class="close-btn" id="closeMobileLinkBtn">&times;</button>
+                    </div>
+                    <div class="modal-body" id="mobileLinkingModalContent">
+                        <!-- Mobile linking UI will be rendered here -->
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            
+            // Add close button handler
+            document.getElementById('closeMobileLinkBtn').addEventListener('click', () => {
+                this.closeMobileLinkingModal();
+            });
+        }
+        
+        // Show the modal
+        modal.classList.add('active');
+        modal.style.display = 'flex';
+    }
+    
+    closeMobileLinkingModal() {
+        const modal = document.getElementById('mobileLinkingModal');
+        if (modal) {
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+        }
+        
+        // Clean up mobile link service
+        if (this.mobileLinkService) {
+            this.mobileLinkService.cleanup();
+        }
+    }
+    
+    async onMobileLinkComplete() {
+        logger.info('Mobile linking completed successfully');
+        
+        // Close the modal
+        this.closeMobileLinkingModal();
+        
+        // Refresh session data
+        try {
+            const freshSessionData = await DpopFun.setupSession();
+            if (freshSessionData) {
+                this.populateSessionUI(freshSessionData);
+            }
+        } catch (error) {
+            logger.error('Failed to refresh session data after mobile linking:', error);
+        }
+        
+        alert('Mobile device linked successfully!');
     }
 
     updateAuthMethod(sessionData) {
@@ -446,15 +870,6 @@ class AppController {
             // In real app, this would make an API call
             logger.info(`Reported suspicious session: ${sessionId}`);
             alert('Session reported. Security team will investigate.');
-        }
-    }
-
-    endCurrentSession() {
-        if (confirm('Are you sure you want to end your current session?')) {
-            // In real app, this would make an API call to end the session
-            logger.info('Ending current session');
-            alert('Session ended. You will be redirected to login.');
-            // window.location.href = '/logout';
         }
     }
 

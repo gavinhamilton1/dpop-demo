@@ -23,13 +23,15 @@ from server.utils.geolocation import GeolocationService
 # Removed schemas for development simplicity
 
 # Import constants from main
-BIND_TTL = 120  # 2 minutes
-NONCE_TTL = 60  # 1 minute
-SESSION_TTL = 120  # 2 minutes
-
-log = logging.getLogger("dpop-fun")
+BIND_TTL = 2 * 60  # 2 minutes
+NONCE_TTL = 10 * 60  # 10 minutes
+SESSION_TTL = 30 * 60  # 30 minutes
 
 SETTINGS = load_settings()
+logging.basicConfig(level=SETTINGS.log_level, format="%(asctime)s %(levelname)s [%(name)s.%(funcName)s (%(lineno)d)] %(message)s")
+log = logging.getLogger(__name__)
+
+
 
 #naming convention: _x_<name> is for headrs, x_<name> is internal, anything else is for client use
 
@@ -44,30 +46,22 @@ class SessionService:
     """Service class for handling session-related operations"""
     
     @staticmethod
-    async def session_init(req: Request, body: dict, response: Response = None) -> dict:
-        """
-        Unified session initialization orchestrator that coordinates the 4 parts:
-        1. Session creation/restoration
-        2. BIK registration (if needed)
-        3. DPoP binding (if needed) 
-        4. Signal data registration (if needed)
-        """
-        
-        # Create fresh SESSION object for this request
+    def _get_default_session_object() -> dict:
+    
         SESSION = {
             "_x_x-csrf-token": None,
             "_x_dpop-nonce": None,
             "_x_dpop-bind": None,
             "dpop_bind_expires_at": None,
             "_session_id": None,
-            "_session_status": SessionStatus.ACTIVE.name,
+            "session_status": SessionStatus.ACTIVE.name,
             "_access_token": None,
             "_refresh_token": None,
             "_id_token": None,
-            "_signal_data": None,
-            "_signal_hash": None,
-            "_bik_jkt": None,
-            "_dpop_jkt": None,
+            "signal_data": None,
+            "signal_hash": None,
+            "bik_jkt": None,
+            "dpop_jkt": None,
             "session_flag": None,
             "session_flag_comment": None,
             "device_id": None,
@@ -84,23 +78,39 @@ class SessionService:
             "geolocation": None,
             "active_user_sessions": 0
         }
+        return SESSION
+    
+    @staticmethod
+    async def session_init(req: Request, response: Response = None) -> dict:
+        """
+        Unified session initialization orchestrator that coordinates the 4 parts:
+        1. Session creation/restoration
+        2. BIK registration (if needed)
+        3. DPoP binding (if needed) 
+        4. Signal data registration (if needed)
+        """
+        body = await req.json()
+        # Create fresh SESSION object for this request
+
+        SESSION = SessionService._get_default_session_object()
 
         #check origin details from the https request against allow list
         log.info("Session initialization - Origin: %s", req.headers.get("origin"))
         if not req.headers.get("origin") in SETTINGS.allowed_origins:
             log.error("Session initialization - Origin not allowed: %s", req.headers.get("origin"), SETTINGS.allowed_origins)
             raise HTTPException(status_code=400, detail="Origin not allowed")
-        
+                
         payload = body.get("payload")
+        
         headers = req.headers
         #make sure we have a uuid, bik, and signal data
         # dpop_jws is now optional since we can extract DPoP key from DPoP header
-        if not payload.get("device_id") or not payload.get("bik_jws") or not payload.get("signal_data"):
+        if not payload.get("device_id") or not headers.get("BIK") or not payload.get("signal_data"):
             raise HTTPException(status_code=400, detail="Missing required fields")
                 
         # Validate BIK JWS token (always required)
         try:
-            bik_jkt, bik_jwk, bik_payload = validate_key_jws(payload.get("bik_jws"), "bik-reg+jws", ["device_id"], payload.get("device_id"), "BIK")   
+            bik_jkt, bik_jwk, bik_payload = validate_key_jws(headers.get("BIK"), "bik-reg+jws", ["device_id"], "BIK")   
         except HTTPException as e:
             raise HTTPException(status_code=400, detail=f"BIK JWS validation failed: {e}")
         
@@ -109,11 +119,12 @@ class SessionService:
         dpop_jwk = None
         dpop_payload = None
         
-        dpop_header = headers.get("dpop")
+        dpop_header = headers.get("DPoP")
+        
         if dpop_header:
             # Prefer DPoP header for key extraction (more secure, includes proper DPoP claims)
             try:
-                dpop_payload = SessionService._validate_dpop_header(dpop_header, req.method, str(req.url), payload.get("device_id"))
+                dpop_payload = SessionService._validate_dpop_header(dpop_header, req.method, str(req.url))
                 # Extract JWK from the DPoP header
                 dpop_data = validate_jws_token(dpop_header, "dpop+jwt", ["htm", "htu", "iat", "jti", "nonce", "device_id"])
                 dpop_jwk = dpop_data["header"].get("jwk", {})
@@ -125,7 +136,7 @@ class SessionService:
         elif payload.get("dpop_jws"):
             # Fall back to dpop_jws in body for initial session setup
             try:
-                dpop_jkt, dpop_jwk, dpop_payload = validate_key_jws(payload.get("dpop_jws"), "dpop-bind+jws", ["htm", "htu", "iat", "jti", "nonce", "device_id"], payload.get("device_id"), "DPoP")
+                dpop_jkt, dpop_jwk, dpop_payload = validate_key_jws(payload.get("dpop_jws"), "dpop-bind+jws", ["htm", "htu", "iat", "jti", "nonce", "device_id"], "DPoP")
                 log.info("Session initialization - DPoP key extracted from dpop_jws in body")
             except HTTPException as e:
                 raise HTTPException(status_code=400, detail=f"DPoP JWS validation failed: {e}")
@@ -136,10 +147,10 @@ class SessionService:
         session_id = req.session.get("session_id")
         
         session_db = await SessionDB.get_session(session_id)
-        session_status = session_db.get("_session_status") if session_db else None
+        session_status = session_db.get("session_status") if session_db else None
         log.info("Session initialization - Session ID: %s, Session Status: %s", session_id, session_status)
         
-        if not session_id or not session_db or session_db.get("_session_status") != SessionStatus.ACTIVE.name:
+        if not session_id or not session_db or session_db.get("session_status") != SessionStatus.ACTIVE.name:
             #create a new session
             log.info("Session initialization - No session found, creating new session")
             session_id = secrets.token_urlsafe(18)
@@ -148,7 +159,7 @@ class SessionService:
             nonce_valid, new_nonce = await SessionService._do_nonce_sense(session_id, None)
             log.info("Session initialization - Session ID: %s, CSRF: %s, Bind Token: %s", session_id, csrf, bind_token)
             SESSION["_session_id"] = session_id
-            SESSION["_session_status"] = SessionStatus.ACTIVE.name
+            SESSION["session_status"] = SessionStatus.ACTIVE.name
             SESSION["session_flag"] = SessionFlag.GREEN.name
             SESSION["session_flag_comment"] = None
             SESSION["_access_token"] = None
@@ -176,11 +187,10 @@ class SessionService:
             SESSION["expires_at"] = now() + SESSION_TTL
             SESSION["geolocation"] = None
             SESSION["active_user_sessions"] = 0
-            log.info("Session initialization - Session ID: %s created, CSRF: %s", session_id, csrf)
+            log.info("Session initialization - Session ID: %s created, SESSION: %s", session_id, SESSION)
             req.session.update({
                 "session_id": session_id,
-                "expires_at": now(),
-                "gavin": "was here"
+                "expires_at": now()
             })
             
             
@@ -198,7 +208,7 @@ class SessionService:
                 else:
                     log.info("Session initialization - Device already exists: %s", payload.get("device_id"))
 
-                await SessionDB.set_session(session_id, SESSION)
+                log.info("Session initialization - Setting session: %s", SESSION)
             except Exception as e:
                 log.error("Session initialization - Error setting device or session: %s", e)
                 await SessionDB.terminate_session(session_id)
@@ -221,165 +231,250 @@ class SessionService:
                     log.info("Session initialization - Browser fingerprint: %s", fingerprint_result)
             except Exception as e:
                 log.error("Session initialization - Error generating browser fingerprint: %s", e)
+                
+            try:
+                await SessionDB.set_session(session_id, SESSION)
+            except Exception as e:
+                log.error("Session initialization - Error setting session: %s", e)
+                await SessionDB.terminate_session(session_id)
+                raise HTTPException(status_code=400, detail="Error setting session")
             
         else:
-            log.info("Session initialization - FOUND a session of some sort")
-            
-            # Calculate signal hash for comparison
-            try:
-                if payload.get("signal_data"):
-                    signal_data_json = json.dumps(payload.get("signal_data"))
-                    fingerprint_result = SessionService._generate_browser_fingerprint(signal_data_json)
-                    SESSION["signal_hash"] = fingerprint_result["hash"]
-                    
-                    # Compare with stored fingerprint if available
-                    stored_signal_hash = session_db.get("signal_hash")
-                    if stored_signal_hash and stored_signal_hash != fingerprint_result["hash"]:
-                        log.warning("Session initialization - Browser fingerprint mismatch detected")
-                        log.warning("Stored hash: %s", stored_signal_hash)
-                        log.warning("Current hash: %s", fingerprint_result["hash"])
-                        SESSION["session_flag"] = SessionFlag.AMBER.name
-                        SESSION["session_flag_comment"] = "Browser fingerprint mismatch"
-                    else:
-                        log.info("Session initialization - Browser fingerprint matches stored fingerprint")
-                    
-                    log.info("Session initialization - Browser fingerprint: %s", fingerprint_result)
-            except Exception as e:
-                log.error("Session initialization - Error comparing browser fingerprint: %s", e)
-            
-            # Validate CSRF token for existing session
-            if headers.get("x-csrf-token") != session_db.get("_x_x_csrf_token"):
-                log.info("Session initialization - Session ID: %s, CSRF Token: %s, stored CSRF Token: %s, CSRF Token mismatch", session_id, headers.get("x-csrf-token"), session_db.get("_x_x_csrf_token"))
-                await SessionDB.terminate_session(session_id)
-                raise HTTPException(status_code=400, detail="CSRF Token mismatch")
-            
-            # Validate DPoP bind token for existing session
-            if headers.get("x-dpop-bind") != session_db.get("_x_dpop-bind"):
-                log.info("Session initialization - Session ID: %s, DPoP Bind Token: %s, DPoP Bind Token mismatch", session_id, headers.get("x-dpop-bind"))
-                await SessionDB.terminate_session(session_id)
-                raise HTTPException(status_code=400, detail="DPoP Bind Token mismatch")
-
-            log.info("Session initialization - Session ID: %s, SESSION: %s", session_id, SESSION)
-            
-            # Validate nonce for existing session
-            nonce_valid, new_nonce = await SessionService._do_nonce_sense(session_id, payload.get("nonce"))
-            if not nonce_valid:
-                await SessionDB.terminate_session(session_id)
-                raise HTTPException(status_code=400, detail="Nonce is invalid")
-            
-            try:
-                geolocation = GeolocationService.get_ip_geolocation(req.client.host)
-                geolocation_db = session_db.get("geolocation")
-
-                if geolocation and geolocation_db:
-                    SESSION["geolocation"] = json.dumps(geolocation)
-                    log.info("Session initialization - GeolocationIP City: %s, Country: %s", geolocation.get("city"), geolocation.get("country"))
-                    geolocation_db_parsed = json.loads(geolocation_db)
-                    log.info("Session initialization - GeolocationDB City: %s, Country: %s", geolocation_db_parsed.get("city"), geolocation_db_parsed.get("country"))
-                else:
-                    log.warning("Session initialization - No geolocation data returned")
-            except Exception as e:
-                log.error("Session initialization - Error getting geolocation: %s", e)
-
-            # For existing sessions, we primarily validate the DPoP header
-            # BIK validation is still needed for consistency, but DPoP key comes from header
-            try:
-                bik_jkt, bik_jwk, bik_payload = validate_key_jws(payload.get("bik_jws"), "bik-reg+jws", ["device_id"], payload.get("device_id"), "BIK")   
-                
-            except HTTPException as e:
-                await SessionDB.terminate_session(session_id)
-                raise HTTPException(status_code=400, detail=f"BIK or Bind Token JWS validation failed: {e}")
-            
-            # For existing sessions, DPoP key should come from the DPoP header
-            dpop_header = headers.get("dpop")
-            if not dpop_header:
-                await SessionDB.terminate_session(session_id)
-                raise HTTPException(status_code=401, detail="DPoP header required for existing sessions")
-            
-            try:
-                dpop_payload = SessionService._validate_dpop_header(dpop_header, req.method, str(req.url), payload.get("device_id"))
-                # Extract JWK from the DPoP header
-                dpop_data = validate_jws_token(dpop_header, "dpop+jwt", ["htm", "htu", "iat", "jti", "nonce", "device_id"])
-                dpop_jwk = dpop_data["header"].get("jwk", {})
-                dpop_jkt = ec_p256_thumbprint(dpop_jwk)
-                log.info("Session initialization - DPoP key extracted from DPoP header for existing session")
-            except Exception as e:
-                log.warning("Session initialization - DPoP header validation failed for existing session: %s", e)
-                await SessionDB.terminate_session(session_id)
-                raise HTTPException(status_code=401, detail=f"DPoP header validation failed: {e}")
-            
-            #check bik and dpop jkt match - only for existing sessions that already have keys
-            if session_db and session_db.get("bik_jkt") and session_db.get("bik_jkt") != bik_jkt:
-                log.info("Session initialization - Session ID: %s, BIK JKT: %s, BIK JKT mismatch", session_id, bik_jkt)
-                await SessionDB.terminate_session(session_id)
-                raise HTTPException(status_code=400, detail="BIK JKT mismatch")
-            
-            if session_db and session_db.get("dpop_jkt") and session_db.get("dpop_jkt") != dpop_jkt:
-                log.info("Session initialization - Session ID: %s, DPoP JKT: %s, DPoP JKT mismatch", session_id, dpop_jkt)
-                await SessionDB.terminate_session(session_id)
-                raise HTTPException(status_code=400, detail="DPoP JKT mismatch")
-            
-            #check device id matches session and BIK JWS device id and DPoP JWS device id
-            if session_db.get("device_id") != payload.get("device_id") or bik_payload.get("device_id") != payload.get("device_id") or dpop_payload.get("device_id") != payload.get("device_id"):
-                log.info("Session initialization - Session ID: %s, Device ID: %s, Device ID mismatch", session_id, payload.get("device_id"))
-                await SessionDB.terminate_session(session_id)
-                raise HTTPException(status_code=400, detail="Device ID mismatch")
-
-
-            # Validate bind token (server-signed, not client JWS) - optional on first request
-            bind_token = headers.get("Dpop-Bind")
-            log.info("Got Bind Token: %s", bind_token)
-            bind_payload = None
-            if bind_token:
-                try:
-                    bind_payload = SessionService.verify_binding_token(bind_token, bik_jkt, dpop_jkt)
-                except Exception as e:
-                    log.warning(f"Bind token validation failed: {e}")
-
-
-            #hydrate SESSION with session from db and add headers
-            #if key starts with _x_, then replace all _ after position 3 with - // this gets around the db naming constraints
-            SESSION.update(session_db)
-            
-            #check for other sessions for the authenticated user
-            if SESSION.get("auth_username"):
-                active_user_sessions = await SessionDB.get_active_user_sessions(SESSION.get("auth_username"))
-                SESSION["active_user_sessions"] = len(active_user_sessions)
-            else:
-                SESSION["active_user_sessions"] = 0
-            
-            
-            for key, value in session_db.items():
-                if key.startswith("_x_"):
-                    #remove original key
-                    del SESSION[key]
-                    #add in with new name    
-                    key = key[:3] + key[3:].replace("_", "-")
-                    SESSION[key] = value
-                    log.info("Session initialization - Session ID: %s, Added key: %s, Value: %s", session_id, key, value)
-                else:
-                    SESSION[key] = value
-            log.info("Session initialization - Session ID: %s, CSRF Token: %s", session_id, SESSION['_x_x-csrf-token'])
-            SESSION["_x_dpop-nonce"] = new_nonce
-
+            SESSION = await SessionService.get_session_data(req, response)
                 
         #add HTTPS headers
-        body = SessionService._sendable_session_data(SESSION)
+        ret_body = SessionService._sendable_session_data(SESSION)
         headers = SessionService._session_headers(SESSION)
-        response_data = {
-            "headers": headers,
-            "body": body
-        }
-        return response_data
-
+        for header, value in headers.items():
+            response.headers[header] = value
+            log.info("Session initialization - Setting header: %s: %s", header, value)
+            
+        return ret_body
 
     
+    @staticmethod
+    async def get_session_data(req: Request, response: Response = None) -> dict:
+        log.info("Session initialization - FOUND a session of some sort")
+
+        body = await req.json()
+        payload = body.get("payload")
+        headers = req.headers
+        
+        log.info("Session initialization - Headers: %s", headers)
+        
+        session_id = req.session.get("session_id")
+        session_db = await SessionDB.get_session(session_id)
+        session_status = session_db.get("session_status") if session_db else None
+        log.info("Session initialization - Session ID: %s, Session Status: %s, DB DPoP Bind Token: %s", session_id, session_status, session_db.get("_x_dpop_bind"))
+
+        SESSION = SessionService._get_default_session_object()
+
+        try:
+            if payload and payload.get("signal_data"):
+                signal_data_json = json.dumps(payload.get("signal_data"))
+                fingerprint_result = SessionService._generate_browser_fingerprint(signal_data_json)
+                SESSION["signal_hash"] = fingerprint_result["hash"]
+                
+                # Compare with stored fingerprint if available
+                stored_signal_hash = session_db.get("signal_hash")
+                if stored_signal_hash and stored_signal_hash != fingerprint_result["hash"]:
+                    log.warning("Session initialization - Browser fingerprint mismatch detected")
+                    log.warning("Stored hash: %s", stored_signal_hash)
+                    log.warning("Current hash: %s", fingerprint_result["hash"])
+                    SESSION["session_flag"] = SessionFlag.AMBER.name
+                    SESSION["session_flag_comment"] = "Browser fingerprint mismatch"
+            else:
+                log.info("Session initialization - No signal_data in payload or payload is None")
+                
+        except Exception as e:
+            log.error("Session initialization - Error comparing browser fingerprint: %s", e)
+        
+        log.info("Completed browser fingerprint validation for existing session")
+        
+        # Validate nonce FIRST for existing session so we always have a new nonce to return
+        log.info("Session initialization - Validating nonce for existing session, nonce: %s", headers.get("Dpop-Nonce"))
+        nonce_valid, new_nonce = await SessionService._do_nonce_sense(session_id, headers.get("Dpop-Nonce"))
+
+        log.info("Session initialization - Nonce valid: %s, New Nonce: %s", nonce_valid, new_nonce)
+        
+        # Always set the new nonce in response, even if validation fails
+        SESSION["_x_dpop_nonce"] = new_nonce
+        
+        if not nonce_valid:
+            await SessionDB.terminate_session(session_id)
+            # Include new nonce in error response headers so client can retry
+            raise HTTPException(
+                status_code=400, 
+                detail="Nonce is invalid",
+                headers={"Dpop-Nonce": new_nonce}
+            )
+        
+        # Validate CSRF token for existing session
+        if headers.get("x-csrf-token") != session_db.get("_x_x_csrf_token"):
+            log.info("Session initialization - Session ID: %s, CSRF Token: %s, stored CSRF Token: %s, CSRF Token mismatch", session_id, headers.get("x-csrf-token"), session_db.get("_x_x_csrf_token"))
+            await SessionDB.terminate_session(session_id)
+            # Include new nonce in error response so client can retry
+            raise HTTPException(
+                status_code=400, 
+                detail="CSRF Token mismatch",
+                headers={"Dpop-Nonce": new_nonce}
+            )
+        
+        try:
+            geolocation = GeolocationService.get_ip_geolocation(req.client.host)
+            geolocation_db = session_db.get("geolocation")
+
+            if geolocation and geolocation_db:
+                SESSION["geolocation"] = json.dumps(geolocation)
+                log.info("Session initialization - GeolocationIP City: %s, Country: %s", geolocation.get("city"), geolocation.get("country"))
+                geolocation_db_parsed = json.loads(geolocation_db)
+                log.info("Session initialization - GeolocationDB City: %s, Country: %s", geolocation_db_parsed.get("city"), geolocation_db_parsed.get("country"))
+            else:
+                log.warning("Session initialization - No geolocation data returned")
+        except Exception as e:
+            log.error("Session initialization - Error getting geolocation: %s", e)
+
+        log.info("Completed geolocation validation for existing session")
+        
+        # For existing sessions, we primarily validate the DPoP header
+        # BIK validation is still needed for consistency, but DPoP key comes from header
+        try:
+            bik_jkt, bik_jwk, bik_payload = validate_key_jws(headers.get("BIK"), "bik-reg+jws", ["device_id"], "BIK")   
+            
+        except HTTPException as e:
+            await SessionDB.terminate_session(session_id)
+            raise HTTPException(
+                status_code=400, 
+                detail=f"BIK or Bind Token JWS validation failed: {e}",
+                headers={"Dpop-Nonce": new_nonce}
+            )
+        
+        log.info("Completed BIK JWS validation for existing session")
+        
+        # For existing sessions, DPoP key should come from the DPoP header
+        dpop_header = headers.get("Dpop")
+        if not dpop_header:
+            await SessionDB.terminate_session(session_id)
+            raise HTTPException(
+                status_code=401, 
+                detail="DPoP header required for existing sessions",
+                headers={"Dpop-Nonce": new_nonce}
+            )
+        
+        try:
+            log.info("Session initialization - Validating DPoP header for existing session: %s %s %s", req.method, str(req.url), dpop_header[:50])
+            dpop_payload = SessionService._validate_dpop_header(dpop_header, req.method, str(req.url))
+            dpop_data = validate_jws_token(dpop_header, "dpop+jwt", ["htm", "htu", "iat", "jti", "nonce", "device_id"])
+            log.info("Session initialization - DPoP header validation successful for existing session: %s", dpop_data)
+            dpop_jwk = dpop_data["header"].get("jwk", {})
+            dpop_jkt = ec_p256_thumbprint(dpop_jwk)
+            log.info("Session initialization - DPoP key extracted from DPoP header for existing session")
+        except Exception as e:
+            log.warning("Session initialization - DPoP header validation failed for existing session: %s", e)
+            await SessionDB.terminate_session(session_id)
+            raise HTTPException(
+                status_code=401, 
+                detail=f"DPoP header validation failed: {e}",
+                headers={"Dpop-Nonce": new_nonce}
+            )
+        
+        log.info("Completed DPoP header validation for existing session")
+        
+        #check bik and dpop jkt match - only for existing sessions that already have keys
+        if session_db and session_db.get("bik_jkt") and session_db.get("bik_jkt") != bik_jkt:
+            log.info("Session initialization - Session ID: %s, BIK JKT: %s, BIK JKT mismatch", session_id, bik_jkt)
+            await SessionDB.terminate_session(session_id)
+            raise HTTPException(
+                status_code=400, 
+                detail="BIK JKT mismatch",
+                headers={"Dpop-Nonce": new_nonce}
+            )
+        
+        log.info("Completed BIK JKT validation for existing session")
+        
+        if session_db and session_db.get("dpop_jkt") and session_db.get("dpop_jkt") != dpop_jkt:
+            log.info("Session initialization - Session ID: %s, DPoP JKT: %s, DPoP JKT mismatch", session_id, dpop_jkt)
+            await SessionDB.terminate_session(session_id)
+            raise HTTPException(
+                status_code=400, 
+                detail="DPoP JKT mismatch",
+                headers={"Dpop-Nonce": new_nonce}
+            )
+        
+        log.info("Completed DPoP JKT validation for existing session")
+        
+        #check device id matches session and BIK JWS device id and DPoP JWS device id
+        if session_db.get("device_id") != bik_payload.get("device_id") or session_db.get("device_id") != dpop_payload.get("device_id"):
+            log.info("Session initialization - Session ID: %s, Device ID: %s, Device ID mismatch", session_id, session_db.get("device_id"))
+            await SessionDB.terminate_session(session_id)
+            raise HTTPException(
+                status_code=400, 
+                detail="Device ID mismatch",
+                headers={"Dpop-Nonce": new_nonce}
+            )
+
+        log.info("Completed device ID validation for existing session")
+
+        #get bind token from SESSION
+        bind_token = session_db.get("_x_dpop_bind")
+        log.info("Got Bind Token: %s", bind_token)
+        bind_payload = None
+        if bind_token:
+            try:
+                bind_payload = SessionService.verify_binding_token(bind_token, bik_jkt, dpop_jkt)
+            except Exception as e:
+                log.warning(f"Bind token validation failed: {e}")
+
+        log.info("Completed bind token validation for existing session")
+        #hydrate SESSION with session from db and add headers
+        #if key starts with _x_, then replace all _ after position 3 with - // this gets around the db naming constraints
+        SESSION.update(session_db)
+        #check for other sessions for the authenticated user
+        if SESSION.get("auth_username"):
+            log.info("Session initialization - Getting active user sessions for username: %s", SESSION.get("auth_username"))
+            active_user_sessions = await SessionDB.get_active_user_sessions(SESSION.get("auth_username"))
+            log.info("Session initialization - Active user sessions: %s", active_user_sessions)
+            SESSION["active_user_sessions"] = len(active_user_sessions)
+        else:
+            SESSION["active_user_sessions"] = 0
+        
+        
+        
+        
+        SESSION["_x_dpop_nonce"] = new_nonce
+        
+        #add HTTPS headers
+        ret_body = SessionService._sendable_session_data(SESSION)
+        headers = SessionService._session_headers(SESSION)
+        for header, value in headers.items():
+            response.headers[header] = value
+            log.info("Session initialization - Setting header for URL: %s, %s: %s", str(req.url), header, value)
+            
+
+        # for header, value in SESSION["headers"].items():
+        # log.info("Setting header: %s: %s", header, value)
+        # response.headers[header] = value
+        return ret_body
+            
+        
+        
+        
     @staticmethod
     async def _terminate_session(session_id: str) -> bool:
         """Check if session is active and return True if it is, False if it is not"""
         log.info("Terminating session: %s", session_id)
         return await SessionDB.terminate_session(session_id)
 
+    @staticmethod
+    async def logout_session(session_id: str) -> bool:
+        """Logout user and set session state to TERMINATED"""
+        log.info("Logging out session: %s", session_id)
+        
+        # Update session auth_status to logged_out and state to TERMINATED
+        await SessionDB.logout_session(session_id)
+        
+        log.info("Session logged out successfully: %s", session_id)
+        return True
     
     @staticmethod
     def _generate_browser_fingerprint(signal_data_json: str) -> dict:
@@ -472,41 +567,52 @@ class SessionService:
     async def _do_nonce_sense(session_id: str, nonce: str) -> tuple[bool, str]:
 
         new_nonce = _new_nonce()
+        
+        log.info("Nonce validation for session: %s, nonce: %s, new nonce: %s", session_id, nonce, new_nonce)
 
         if not nonce:
             # No nonce provided - this is a first-time request
+            log.info("Session initialization - No nonce provided - this is a first-time request")
             await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
             return True, new_nonce
         else:
             # Validate existing nonce
             nonce_record = await SessionDB.get_nonce(session_id, nonce)
+            
             if not nonce_record:
                 log.warning("Nonce validation failed - nonce not found: %s", nonce)
                 await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
                 return False, new_nonce
-                
-            if nonce_record.get("nonce_status") == NonceStatus.EXPIRED.name:
-                log.warning("Nonce validation failed - nonce expired: %s", nonce)
-                await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
-                return False, new_nonce
-                
-            if nonce_record.get("nonce_status") == NonceStatus.REDEEMED.name:
-                log.warning("Nonce validation failed - nonce already redeemed: %s", nonce)
-                await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
-                return False, new_nonce
             
-            # Valid nonce - mark as redeemed and issue new one
-            if nonce_record.get("nonce_status") == NonceStatus.PENDING.name:
-                await SessionDB.set_nonce(session_id, nonce, NonceStatus.REDEEMED.name, NONCE_TTL)
-            
-            await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
-            return True, new_nonce
+            # Use match/case for nonce status validation
+            match nonce_record.get("nonce_status"):
+                case NonceStatus.EXPIRED.name:
+                    log.warning("Nonce validation failed - nonce expired: %s", nonce)
+                    await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
+                    return False, new_nonce
+                
+                case NonceStatus.REDEEMED.name:
+                    log.warning("Nonce validation failed - nonce already redeemed: %s", nonce)
+                    await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
+                    return False, new_nonce
+                
+                case NonceStatus.PENDING.name:
+                    # Valid nonce - mark as redeemed and issue new one
+                    await SessionDB.set_nonce(session_id, nonce, NonceStatus.REDEEMED.name, NONCE_TTL)
+                    await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.PENDING.name, NONCE_TTL)
+                    return True, new_nonce
+                
+                case _:
+                    # Unknown status - treat as invalid
+                    log.warning("Nonce validation failed - unknown status: %s", nonce_record.get("nonce_status"))
+                    await SessionDB.set_nonce(session_id, new_nonce, NonceStatus.REDEEMED.name, NONCE_TTL)
+                    return False, new_nonce
     
     
     @staticmethod
     def _session_headers(session_data: dict) -> dict:
-        """Return a dictionary of session headers that can be sent to the client.  anything that starts with _x_"""
-        return {key[3:]: value for key, value in session_data.items() if key.startswith("_x_") and value is not None}
+        """Return a dictionary of session headers that can be sent to the client.  anything that starts with _x_ and replace_ with -"""
+        return {key[3:].replace("_", "-"): value for key, value in session_data.items() if key.startswith("_x_") and value is not None}
 
 
     @staticmethod
@@ -559,22 +665,7 @@ class SessionService:
             raise ValueError("bind token invalid - please refresh session")
     
     @staticmethod
-    def _validate_dpop_header(dpop_header: str, http_method: str, http_uri: str, expected_device_id: str) -> dict:
-        """
-        Validate a DPoP header for ongoing requests
-        
-        Args:
-            dpop_header: The DPoP proof from the DPoP header
-            http_method: The HTTP method of the request
-            http_uri: The HTTP URI of the request
-            expected_device_id: The expected device ID
-            
-        Returns:
-            dict: The validated DPoP payload
-            
-        Raises:
-            ValueError: If validation fails
-        """
+    def _validate_dpop_header(dpop_header: str, http_method: str, http_uri: str) -> dict:
         try:
             # Validate the DPoP proof using the generic JWS validator
             dpop_data = validate_jws_token(dpop_header, "dpop+jwt", ["htm", "htu", "iat", "jti", "nonce", "device_id"])
@@ -589,11 +680,7 @@ class SessionService:
             expected_uri = http_uri.split("?")[0]
             if dpop_payload.get("htu") != expected_uri:
                 raise ValueError(f"HTTP URI mismatch: expected {expected_uri}, got {dpop_payload.get('htu')}")
-            
-            # Validate device ID
-            if dpop_payload.get("device_id") != expected_device_id:
-                raise ValueError(f"Device ID mismatch: expected {expected_device_id}, got {dpop_payload.get('device_id')}")
-            
+                        
             # Validate issued at time (should not be too old)
             iat = dpop_payload.get("iat")
             if iat and (now() - iat) > 300:  # 5 minutes max age
@@ -603,10 +690,7 @@ class SessionService:
             jti = dpop_payload.get("jti")
             if not jti:
                 raise ValueError("Missing JTI in DPoP proof")
-            
-            log.info("DPoP header validation successful for device: %s, method: %s, uri: %s", 
-                    expected_device_id, http_method, expected_uri)
-            
+                        
             return dpop_payload
             
         except Exception as e:
@@ -621,90 +705,4 @@ class SessionService:
         created_at = int(time.time()) - (7 * 24 * 60 * 60) #  7 days ago
         return await SessionDB.get_session_history(authenticated_username, created_at)
     
-    @staticmethod
-    async def validate_dpop_for_request(req: Request, session_id: str) -> dict:
-        """
-        Validate DPoP header for a protected request
-        
-        Args:
-            req: The FastAPI request object
-            session_id: The session ID
-            
-        Returns:
-            dict: The validated DPoP payload
-            
-        Raises:
-            HTTPException: If validation fails
-        """
-        # Get DPoP header
-        dpop_header = req.headers.get("dpop")
-        if not dpop_header:
-            raise HTTPException(status_code=401, detail="Missing DPoP header")
-            
-            # Get session data
-        session_db = await SessionDB.get_session(session_id)
-        if not session_db:
-                raise HTTPException(status_code=401, detail="Session not found")
-            
-        device_id = session_db.get("device_id")
-        if not device_id:
-            raise HTTPException(status_code=401, detail="Device ID not found in session")
-        
-        # Validate DPoP header
-        try:
-            dpop_payload = SessionService._validate_dpop_header(
-                dpop_header, 
-                req.method, 
-                str(req.url), 
-                device_id
-            )
-            
-            # Validate nonce if present
-            nonce = dpop_payload.get("nonce")
-            if nonce:
-                nonce_valid, _ = await SessionService._do_nonce_sense(session_id, nonce)
-                if not nonce_valid:
-                    raise HTTPException(status_code=401, detail="Invalid nonce")
-            
-            return dpop_payload
-            
-        except ValueError as e:
-            raise HTTPException(status_code=401, detail=str(e))
-        except Exception as e:
-            log.error("Unexpected error during DPoP validation: %s", e)
-            raise HTTPException(status_code=500, detail="DPoP validation error")
-    
-    @staticmethod
-    async def require_dpop_proof(req: Request) -> dict:
-        """
-        Middleware function to require DPoP proof for protected endpoints
-        
-        Args:
-            req: The FastAPI request object
-            
-        Returns:
-            dict: The validated DPoP payload and session data
-            
-        Raises:
-            HTTPException: If validation fails
-        """
-        # Get session ID from session cookie
-        session_id = req.session.get("session_id")
-        if not session_id:
-            raise HTTPException(status_code=401, detail="No session found")
-        
-        # Validate DPoP header
-        dpop_payload = await SessionService.validate_dpop_for_request(req, session_id)
-        
-        # Get session data
-        session_db = await SessionDB.get_session(session_id)
-        if not session_db:
-            raise HTTPException(status_code=401, detail="Session not found")
-            
-            return {
-            "dpop_payload": dpop_payload,
-            "session_data": session_db,
-            "session_id": session_id
-        }
-        
 

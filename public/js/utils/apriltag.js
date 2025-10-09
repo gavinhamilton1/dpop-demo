@@ -3,6 +3,48 @@
  * Provides rotating AprilTag overlay functionality for existing QR codes
  */
 
+/**
+ * AprilTag Family class
+ * Handles AprilTag family configuration and tag generation
+ */
+class AprilTagFamily {
+    constructor(config) {
+        this.size = config.nbits || 6;  // Grid size (e.g., 6x6 for 36h11)
+        this.minHammingDistance = config.h || 11;
+        this.codes = config.codes || [];
+        this.name = config.name || 'unknown';
+    }
+    
+    /**
+     * Get tag pattern for a specific tag ID
+     * @param {number} tagId - Tag ID to get pattern for
+     * @returns {Array<Array<number>>} 2D array of 0s and 1s representing the tag pattern
+     */
+    getTagPattern(tagId) {
+        if (tagId >= this.codes.length) {
+            console.warn(`Tag ID ${tagId} out of range for family ${this.name}`);
+            return null;
+        }
+        
+        const code = this.codes[tagId];
+        const gridSize = this.size;
+        const pattern = [];
+        
+        // Convert code to binary pattern
+        for (let y = 0; y < gridSize; y++) {
+            const row = [];
+            for (let x = 0; x < gridSize; x++) {
+                const bitIndex = y * gridSize + x;
+                const bit = (code >> bitIndex) & 1;
+                row.push(bit);
+            }
+            pattern.push(row);
+        }
+        
+        return pattern;
+    }
+}
+
 if (typeof QRGenerator === 'undefined') {
 class QRGenerator {
     constructor() {
@@ -50,9 +92,10 @@ class QRGenerator {
     /**
      * Generate QR code with AprilTag overlay for existing QRCode element
      */
-    async generateQRWithAprilTag(qrElementId, qrData) {
+    async generateQRWithAprilTag(qrElementId, qrData, linkId = null) {
         console.log('Starting QR generation with AprilTag for element:', qrElementId);
         console.log('QR Code data to encode:', qrData);
+        console.log('Link ID:', linkId);
         
         try {
             // Verify domain first
@@ -77,7 +120,7 @@ class QRGenerator {
             }
 
             // Get AprilTag numbers from server
-            await this.getAprilTagNumbers();
+            await this.getAprilTagNumbers(linkId);
 
             // Create canvas overlay
             this.createCanvasOverlay(qrElement);
@@ -102,6 +145,13 @@ class QRGenerator {
      * Create canvas overlay on top of QR code element
      */
     createCanvasOverlay(qrElement) {
+        // Remove any existing overlay first
+        const existingOverlay = qrElement.querySelector('#apriltag-overlay');
+        if (existingOverlay) {
+            existingOverlay.remove();
+            console.log('Removed existing AprilTag overlay');
+        }
+        
         // Find the actual QR code canvas/image within the element
         const qrCanvas = qrElement.querySelector('canvas');
         const qrImg = qrElement.querySelector('img');
@@ -122,17 +172,25 @@ class QRGenerator {
             console.log('Using element bounding box:', qrRect.width, 'x', qrRect.height);
         }
         
+        // Get padding from element (to account for QR code padding)
+        const computedStyle = window.getComputedStyle(qrElement);
+        const paddingTop = parseInt(computedStyle.paddingTop) || 0;
+        const paddingLeft = parseInt(computedStyle.paddingLeft) || 0;
+        
         // Create canvas overlay
         const canvas = document.createElement('canvas');
         canvas.id = 'apriltag-overlay';
         canvas.width = qrSize;
         canvas.height = qrSize;
         canvas.style.position = 'absolute';
+        canvas.style.top = `${paddingTop}px`;  // Account for padding
+        canvas.style.left = `${paddingLeft}px`;  // Account for padding
         canvas.style.pointerEvents = 'none'; // Allow clicks to pass through
         canvas.style.zIndex = '10';
         
         // Make QR element container relative positioned
         qrElement.style.position = 'relative';
+        qrElement.style.display = 'inline-block'; // Ensure proper sizing
         
         // Add canvas to QR element
         qrElement.appendChild(canvas);
@@ -284,10 +342,13 @@ class QRGenerator {
         const ctx = this.overlayCanvas.getContext('2d');
         this.configureCanvas(ctx);
 
+        // Draw the first AprilTag immediately
+        this.drawAprilTag(ctx);
+
         // Start new animation
         this.animationInterval = setInterval(() => {
-            this.drawAprilTag(ctx);
             this.currentApriltagIndex = (this.currentApriltagIndex + 1) % this.apriltagNumbers.length;
+            this.drawAprilTag(ctx);
         }, this.apriltagAnimationInterval);
     }
 
@@ -306,41 +367,70 @@ class QRGenerator {
         const apriltagNumber = this.apriltagNumbers[this.currentApriltagIndex];
         const pattern = this.generateAprilTagPattern(apriltagNumber);
         
-        const apriltagSize = Math.min(50, this.canvasSize * 0.20); // Responsive size - increased from 40 to 60 and 0.2 to 0.25
+        const totalSize = Math.min(50, this.canvasSize * 0.18); // Slightly bigger size
         const gridSize = pattern.length;
-        const cellSize = apriltagSize / gridSize;
-        const whiteBorderWidth = 2;
-        const startX = this.canvasSize - apriltagSize + (whiteBorderWidth*2); // Account for white border
-        const startY = this.canvasSize - apriltagSize + (whiteBorderWidth*2); // Account for white border
-        // Draw white background
+        
+        // Calculate sizes
+        // Structure: white border (top/left, = cellSize) + black border (all sides, = cellSize) + AprilTag pattern
+        // totalSize = whiteBorder + blackBorder + (gridSize * cellSize) + blackBorder
+        // Since both whiteBorder and blackBorder = cellSize:
+        // totalSize = cellSize + cellSize + (gridSize * cellSize) + cellSize
+        // totalSize = (gridSize + 3) * cellSize
+        const cellSize = totalSize / (gridSize + 3); // +3 for white border and both black borders
+        const whiteBorderWidth = cellSize;  // White border = one AprilTag pixel
+        const blackBorderWidth = cellSize;  // Black border = one AprilTag pixel
+        
+        const apriltagSize = gridSize * cellSize;
+        
+        // Position in bottom-right corner
+        const startX = this.canvasSize - totalSize;
+        const startY = this.canvasSize - totalSize;
+        
+        // Draw top white border
         ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(startX, startY, apriltagSize, apriltagSize);
+        ctx.fillRect(startX, startY, totalSize, whiteBorderWidth);
+        
+        // Draw left white border
+        ctx.fillRect(startX, startY + whiteBorderWidth, whiteBorderWidth, totalSize - whiteBorderWidth);
+        
+        // Draw black border all around (inside the white border area)
+        ctx.fillStyle = '#000000';
+        const blackBorderStart = startX + whiteBorderWidth;
+        const blackBorderTop = startY + whiteBorderWidth;
+        const blackBorderSize = totalSize - whiteBorderWidth;
+        
+        // Top black border
+        ctx.fillRect(blackBorderStart, blackBorderTop, blackBorderSize, blackBorderWidth);
+        // Right black border
+        ctx.fillRect(blackBorderStart + blackBorderSize - blackBorderWidth, blackBorderTop, blackBorderWidth, blackBorderSize);
+        // Bottom black border
+        ctx.fillRect(blackBorderStart, blackBorderTop + blackBorderSize - blackBorderWidth, blackBorderSize, blackBorderWidth);
+        // Left black border
+        ctx.fillRect(blackBorderStart, blackBorderTop, blackBorderWidth, blackBorderSize);
+        
+        // Draw white background for AprilTag area
+        ctx.fillStyle = '#FFFFFF';
+        const patternStartX = startX + whiteBorderWidth + blackBorderWidth;
+        const patternStartY = startY + whiteBorderWidth + blackBorderWidth;
+        ctx.fillRect(patternStartX, patternStartY, apriltagSize, apriltagSize);
 
-        // Draw AprilTag pattern using apriltag-js format
+        // Draw AprilTag pattern (supports both 0/1 and 'b'/'w' formats)
         ctx.fillStyle = '#000000';
         for (let y = 0; y < gridSize; y++) {
             for (let x = 0; x < gridSize; x++) {
                 const pixel = pattern[y][x];
-                // apriltag-js uses 'b' for black, 'w' for white, 'x' for transparent
-                if (pixel === 'b') { // Black cell
+                // Support both numeric (1 = black, 0 = white) and string ('b' = black, 'w' = white) formats
+                const isBlack = pixel === 1 || pixel === 'b';
+                if (isBlack) {
                     ctx.fillRect(
-                        startX + x * cellSize,
-                        startY + y * cellSize,
+                        patternStartX + x * cellSize,
+                        patternStartY + y * cellSize,
                         cellSize,
                         cellSize
                     );
                 }
             }
         }
-
-        // Draw white border on left and top sides only
-        ctx.fillStyle = '#FFFFFF';
-        
-        // Left border
-        ctx.fillRect(startX - whiteBorderWidth, startY - whiteBorderWidth, whiteBorderWidth, apriltagSize + whiteBorderWidth);
-        
-        // Top border
-        ctx.fillRect(startX - whiteBorderWidth, startY - whiteBorderWidth, apriltagSize + whiteBorderWidth, whiteBorderWidth);
     }
 
     /**
@@ -386,14 +476,14 @@ class QRGenerator {
     /**
      * Get AprilTag numbers from server
      */
-    async getAprilTagNumbers() {
+    async getAprilTagNumbers(linkId = null) {
         try {
             const response = await fetch('/get-apriltags', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({})
+                body: JSON.stringify({ linkId: linkId || '' })
             });
 
             if (!response.ok) {
@@ -408,14 +498,17 @@ class QRGenerator {
                 throw new Error(result.error || 'AprilTag generation failed');
             }
             
-            // Use the AprilTag numbers from the server
-            if (result.apriltag_numbers) {
-                console.log('Server-provided AprilTag numbers:', result.apriltag_numbers);
-                console.log('AprilTag numbers breakdown:', result.apriltag_numbers.map((num, i) => `Pattern ${i + 1}: ${num}`).join(', '));
+            // Use the AprilTag numbers from the server (check both 'tags' and 'apriltag_numbers')
+            const tagNumbers = result.tags || result.apriltag_numbers;
+            if (tagNumbers && tagNumbers.length > 0) {
+                console.log('Server-provided AprilTag numbers:', tagNumbers);
+                console.log('AprilTag numbers breakdown:', tagNumbers.map((num, i) => `Pattern ${i + 1}: ${num}`).join(', '));
                 
                 // Store the AprilTag numbers for rendering
-                this.apriltagNumbers = result.apriltag_numbers;
+                this.apriltagNumbers = tagNumbers;
                 console.log('Stored AprilTag numbers:', this.apriltagNumbers.length, 'numbers');
+            } else {
+                console.warn('No AprilTag numbers in server response');
             }
             
             return result;
@@ -436,10 +529,15 @@ class QRGenerator {
         }
 
         try {
-            // Use the apriltag-js library to generate the actual pattern
-            const pattern = this.apriltagFamily.render(number);
+            // Use the AprilTagFamily to generate the actual pattern
+            const pattern = this.apriltagFamily.getTagPattern(number);
+            if (!pattern) {
+                console.warn(`Failed to get pattern for tag ${number}, using fallback`);
+                return this.generateFallbackPattern(number);
+            }
             return pattern;
         } catch (error) {
+            console.error('Error generating AprilTag pattern:', error);
             return this.generateFallbackPattern(number);
         }
     }

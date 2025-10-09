@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Session Status Control</title>
     <link rel="stylesheet" href="./style.css">
+    <!-- QR Code and AprilTag libraries for mobile linking -->
+    <script src="/public/vendor/qrcode.min.js"></script>
+    <script src="/public/vendor/jsQR.js"></script>
+    <script src="/public/js/utils/apriltag.js"></script>
     <script defer type="module" src="./script.js"></script>
 </head>
 <body>
@@ -58,9 +62,38 @@
                 </div>
 
                 <div class="overview-column controls-column">
-                    <h3>Controls</h3>
-                    <button class="control-btn end-session" id="endSessionBtn">End Session</button>
-                    <button class="control-btn report-activity" id="reportActivityBtn">Report Suspicious Activity</button>
+                    <h3>Authentication</h3>
+                    <div class="username-input-container">
+                        <label for="usernameInput">Username:</label>
+                        <div class="username-input-group">
+                            <input type="text" id="usernameInput" placeholder="Enter username" autocomplete="username">
+                            <button class="check-username-btn" id="checkUsernameBtn" disabled>
+                                <span class="btn-text">Go</span>
+                            </button>
+                        </div>
+                    </div>
+                    <button class="control-btn auth-btn passkey-btn" id="passkeyAuthBtn" disabled>
+                        <span class="btn-icon">🔑</span>
+                        <span class="btn-text">Checking...</span>
+                    </button>
+                    <button class="control-btn auth-btn mobile-btn" id="mobileLinkBtn" disabled>
+                        <span class="btn-icon">📱</span>
+                        <span class="btn-text">Link Mobile Device</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Session History Section -->
+            <div class="status-section session-history-section">
+                <div class="history-header">
+                    <h3>Session History</h3>
+                    <button class="control-btn report-activity" id="reportActivityBtn">
+                        <span class="btn-icon">⚠️</span>
+                        <span class="btn-text">Report Suspicious Activity</span>
+                    </button>
+                </div>
+                <div id="sessionHistoryList" class="session-history-list">
+                    <p class="no-history">No previous sessions</p>
                 </div>
             </div>
 
@@ -77,24 +110,6 @@
                 </div>
             </div>
 
-            <div class="status-section session-history">
-                <h3>History & Controls</h3>
-                <div class="history-item" id="historyItem1">
-                    <span id="historyTime1">Yesterday, 3:00 PM</span>
-                    <span id="historyLocation1">London</span>
-                    <span class="history-auth" id="historyAuth1">Firefox</span>
-                </div>
-                <div class="history-item" id="historyItem2">
-                    <span id="historyTime2">2 days ago, 9:00 AM</span>
-                    <span id="historyLocation2">London AM</span>
-                    <span class="history-auth" id="historyAuth2">Mobile, Chrome</span>
-                </div>
-            </div>
-
-            <div class="modal-footer">
-                <button class="control-btn end-session">End Session</button>
-                <button class="control-btn report-activity">Report Suspicious Activity</button>
-            </div>
             
             </div> <!-- End modal-body -->
         </div>

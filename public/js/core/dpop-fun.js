@@ -1,7 +1,7 @@
 // DPop-Fun core: keys, bind, DPoP proof, signed fetch, client flush
 
 import { jwkThumbprint, generateES256KeyPair, createJwsWithDefaults, b64u } from '../utils/jose-lite.js';
-import { idbPut, idbGet, idbWipe, STORES } from '../utils/idb.js';
+import { idbPut, idbGet, idbWipe, idbDelete, STORES } from '../utils/idb.js';
 import { logger } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { FingerprintService } from '../services/FingerprintService.js';
@@ -39,6 +39,7 @@ const KEY_TYPES = {
 let DPOP_SESSION = {
   device_id: null,
   bik: null, 
+  bik_jws: null,
   dpop: null,
   dpop_nonce: null,         
   auth_method: null,
@@ -61,10 +62,10 @@ let DPOP_SESSION = {
 
 
 //Main entry point for session setup
-export async function setupSession() {
+export async function setupSession(retryAttempted = false) {
   let newSession = false;
   try {
-    logger.info('Setting up session');
+    logger.info('Setting up session', retryAttempted ? '(retry)' : '');
 
     logger.info('STEP 1. Check for device ID');
     const deviceIdRecord = await idbGet(STORES.SESSION, CONFIG.STORAGE.SESSION.DEVICE_ID);
@@ -132,8 +133,9 @@ export async function setupSession() {
     }
 
     logger.info('STEP 6. Collect signal data');
-    DPOP_SESSION.signal_data = await FingerprintService.collectFingerprint('desktop');
+    DPOP_SESSION.signal_data = await FingerprintService.collectFingerprint(); // Auto-detect device type
     logger.info('Signal data collected: ', DPOP_SESSION.signal_data);
+    logger.info('Detected device type: ', DPOP_SESSION.signal_data.deviceType);
 
 
     logger.info('STEP 7. Create new server session');
@@ -147,12 +149,13 @@ export async function setupSession() {
       publicJwk: DPOP_SESSION.bik.publicJwk
     });
 
+    DPOP_SESSION.bik_jws = bikJws;
+
     const dpopJws = await createDPoPProof("POST", window.location.origin + "/session/init");
 
     const body = JSON.stringify({
       payload: {
         device_id: DPOP_SESSION.device_id,
-        bik_jws: bikJws,
         signal_data: DPOP_SESSION.signal_data
       }
     });
@@ -209,8 +212,23 @@ export async function setupSession() {
 
     logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Response headers csrf:`, DPOP_SESSION.csrf);
     logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Response headers dpop nonce:`, DPOP_SESSION.dpop_nonce);
+    logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Response headers dpop bind:`, DPOP_SESSION.dpop_bind);
+    
     if (!r.ok) {
-      logger.error(`${CONFIG.ENDPOINTS.SESSION_INIT} failed:`, r.status);
+      logger.error(`${CONFIG.ENDPOINTS.SESSION_INIT} failed:`, r.status, responseData);
+      
+      // If session init failed due to invalid nonce/csrf, clear stale data and retry once
+      if ((r.status === 400 || r.status === 401) && !retryAttempted) {
+        logger.info('Session init failed with auth error, clearing stale session data and retrying...');
+        await idbDelete(STORES.SESSION, CONFIG.STORAGE.SESSION.DPOP_BIND);
+        await idbDelete(STORES.SESSION, CONFIG.STORAGE.SESSION.CSRF);
+        await idbDelete(STORES.SESSION, CONFIG.STORAGE.SESSION.DPOP_NONCE);
+        
+        // Retry the session init
+        return await setupSession(true);
+      }
+      
+      throw new Error(`Session init failed: ${r.status} - ${responseData.detail || 'Unknown error'}`);
     }
     
     await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.CSRF, value: DPOP_SESSION.csrf });
@@ -349,24 +367,50 @@ export async function dpopFetch(method, url, options = {}) {
       throw new Error('DPoP key not available. Call setupSession() first.');
     }
 
-    // Create DPoP proof
-    const dpopProof = await createDPoPProof(method, url);
+    // Convert relative URL to absolute URL for DPoP proof
+    const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+
+    // Create DPoP proof with full URL
+    const dpopProof = await createDPoPProof(method, fullUrl);
 
     // Prepare headers
     const headers = {
       'Content-Type': 'application/json',
+      'BIK': DPOP_SESSION.bik_jws,
       'DPoP': dpopProof,
+      'Dpop-Nonce': DPOP_SESSION.dpop_nonce,
       'X-CSRF-Token': DPOP_SESSION.csrf,
       ...options.headers
     };
 
-    // Make the request
+    // Make the request (can use relative or absolute URL)
     const response = await fetch(url, {
       method,
       headers,
       credentials: 'include',
       ...options
     });
+
+    // Update nonce from response headers for next request
+    const newNonce = response.headers.get('Dpop-Nonce');
+    if (newNonce) {
+      DPOP_SESSION.dpop_nonce = newNonce;
+      await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DPOP_NONCE, value: newNonce });
+      logger.info('Updated DPoP nonce from response:', newNonce);
+    }
+
+    // Update other session headers if present
+    const newCsrf = response.headers.get('X-Csrf-Token');
+    if (newCsrf) {
+      DPOP_SESSION.csrf = newCsrf;
+      await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.CSRF, value: newCsrf });
+    }
+
+    const newBind = response.headers.get('Dpop-Bind');
+    if (newBind) {
+      DPOP_SESSION.dpop_bind = newBind;
+      await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DPOP_BIND, value: newBind });
+    }
 
     logger.info('Authenticated request made:', { method, url, status: response.status });
     return response;

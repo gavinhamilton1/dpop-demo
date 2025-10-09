@@ -3,6 +3,48 @@ import * as DpopFun from './dpop-fun.js';
 import { b64uToBuf, bufToB64u } from '../utils/jose-lite.js';
 import { logger } from '../utils/logging.js';
 
+/**
+ * Check if WebAuthn is supported in this browser
+ * @returns {boolean} Whether WebAuthn is supported
+ */
+export function isSupported() {
+  return !!(window.PublicKeyCredential && 
+           typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function');
+}
+
+/**
+ * Check if user-verifying platform authenticator is available
+ * @returns {Promise<boolean>} Whether UVPA is available
+ */
+export async function isUserVerifyingPlatformAuthenticatorAvailable() {
+  if (!isSupported()) {
+    return false;
+  }
+  
+  try {
+    return await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch (error) {
+    logger.warn('UVPA check failed:', error);
+    return false;
+  }
+}
+
+/**
+ * Get basic passkey support status (browser capabilities only)
+ * @returns {Promise<Object>} Support status with isSupported and hasUVPA
+ */
+export async function getBasicSupportStatus() {
+  return {
+    isSupported: isSupported(),
+    hasUVPA: await isUserVerifyingPlatformAuthenticatorAvailable(),
+    hasCredentials: false // Will be checked later when authenticated
+  };
+}
+
+/**
+ * Legacy checkSupport function for backward compatibility
+ * @returns {Promise<Object>} Support status
+ */
 export async function checkSupport() {
   try {
     logger.debug('Checking WebAuthn support');
@@ -13,17 +55,20 @@ export async function checkSupport() {
     return result;
   } catch (error) {
     logger.error('Failed to check WebAuthn support:', error);
-    throw new AuthenticationError('Failed to check WebAuthn support', { originalError: error.message });
+    throw new Error('Failed to check WebAuthn support: ' + error.message);
   }
 }
 
 // ----- Registration -----
-export async function registerPasskey() {
+export async function registerPasskey(username) {
   try {
-    logger.debug('Starting passkey registration');
+    logger.debug('Starting passkey registration for username:', username);
     
-    // 1) get options
-    const opts = await DpopFun.dpopFunFetch('/webauthn/registration/options', { method: 'POST' });
+    // 1) get options with username
+    const optionsResponse = await DpopFun.dpopFetch('POST', '/webauthn/registration/options', {
+      body: JSON.stringify({ username })
+    });
+    const opts = await optionsResponse.json();
     logger.debug('Registration options received:', { 
       username: opts.user?.name, 
       userId: opts.user?.id,
@@ -61,13 +106,14 @@ export async function registerPasskey() {
         attestationObject: bufToB64u(cred.response.attestationObject),
       },
       transports: cred.response.getTransports?.() || ['internal'],
+      username: username  // Include username for server-side storage
     };
 
     logger.debug('Sending attestation to server for verification');
-    const result = await DpopFun.dpopFunFetch('/webauthn/registration/verify', {
-      method: 'POST',
-      body: att,
+    const verifyResponse = await DpopFun.dpopFetch('POST', '/webauthn/registration/verify', {
+      body: JSON.stringify(att),
     });
+    const result = await verifyResponse.json();
     
     logger.debug('Passkey registration completed successfully');
     return result;
@@ -99,10 +145,14 @@ export async function registerPasskey() {
 
 // ----- Authentication (preflight-able) -----
 
-export async function getAuthOptions() {
+export async function getAuthOptions(username = null) {
   try {
-    logger.debug('Getting authentication options');
-    const options = await DpopFun.dpopFunFetch('/webauthn/authentication/options', { method: 'POST' });
+    logger.debug('Getting authentication options', username ? `for username: ${username}` : '');
+    const body = username ? JSON.stringify({ username }) : undefined;
+    const optionsResponse = await DpopFun.dpopFetch('POST', '/webauthn/authentication/options', 
+      body ? { body } : {}
+    );
+    const options = await optionsResponse.json();
     logger.debug('Authentication options received');
     return options;
   } catch (error) {
@@ -112,13 +162,28 @@ export async function getAuthOptions() {
   }
 }
 
-export async function authenticatePasskey(passedOpts) {
+/**
+ * Check if passkeys exist for the current user
+ * Note: This requires an authenticated session
+ * @returns {Promise<boolean>} Whether passkeys exist
+ */
+export async function hasExistingPasskeys() {
   try {
-    logger.debug('Starting passkey authentication');
+    const options = await getAuthOptions();
+    return options.allowCredentials && options.allowCredentials.length > 0;
+  } catch (error) {
+    logger.warn('Failed to check existing passkeys:', error);
+    return false;
+  }
+}
+
+export async function authenticatePasskey(username = null, passedOpts = null) {
+  try {
+    logger.debug('Starting passkey authentication', username ? `for username: ${username}` : '');
     logger.debug('Passed options:', passedOpts);
     
-    // allow caller to pass pre-fetched options
-    const opts = passedOpts || await getAuthOptions();
+    // allow caller to pass pre-fetched options, otherwise fetch with username
+    const opts = passedOpts || await getAuthOptions(username);
     logger.debug('Using authentication options:', opts);
 
     const allow = Array.isArray(opts.allowCredentials) ? opts.allowCredentials : [];
@@ -178,13 +243,14 @@ export async function authenticatePasskey(passedOpts) {
         signature: bufToB64u(assertion.response.signature),
         userHandle: assertion.response.userHandle ? bufToB64u(assertion.response.userHandle) : undefined,
       },
+      username: username  // Include username for server-side verification
     };
 
     logger.debug('Sending assertion to server for verification');
-    const result = await DpopFun.dpopFunFetch('/webauthn/authentication/verify', {
-      method: 'POST',
-      body: payload,
+    const verifyResponse = await DpopFun.dpopFetch('POST', '/webauthn/authentication/verify', {
+      body: JSON.stringify(payload),
     });
+    const result = await verifyResponse.json();
     
     logger.debug('Passkey authentication completed successfully');
     return result;

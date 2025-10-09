@@ -11,7 +11,8 @@ from server.core.config import load_settings
 from server.utils.helpers import b64u, b64u_dec, jws_es256_sign, now
 from server.db.database import DB
 
-log = logging.getLogger("dpop-fun")
+log = logging.getLogger(__name__)
+
 SETTINGS = load_settings()
 
 # ---------------- utils ----------------
@@ -193,9 +194,9 @@ def get_router(
         
         # Generate different QR URLs based on flow type
         if flow_type == "login":
-            qr_url = f"{qr_origin}/public/mobile-login.html?lid={rid}"
+            qr_url = f"{qr_origin}/mobile?lid={rid}&flow=login"
         else:
-            qr_url = f"{qr_origin}/public/link.html?lid={rid}"
+            qr_url = f"{qr_origin}/mobile?lid={rid}&flow=registration"
         
         # Log the QR generation for debugging
         log.info("QR generation - desktop_origin=%s qr_origin=%s flow_type=%s qr_url=%s", origin, qr_origin, flow_type, qr_url)
@@ -711,7 +712,7 @@ def get_router(
         payload = {"iss":"dpop-fun","aud":"link","iat":now_ts,"exp":rec["exp"],"lid":link_id}
         token = jws_es256_sign(payload)
         origin, _ = canonicalize_origin_and_url(req)
-        uri = f"{origin}/public/link.html?lid={link_id}"
+        uri = f"{origin}/mobile?lid={link_id}&flow=registration"
         img = qrcode.make(uri)
         import io
         buf = io.BytesIO(); img.save(buf, format="PNG")
