@@ -1234,11 +1234,7 @@ export class MobileLinkService {
         throw new Error('No username provided for login flow');
       }
       
-      // Store the username in the mobile session for passkey authentication
-      await DpopFun.dpopFetch('POST', '/onboarding/signin', {
-        body: JSON.stringify({ username: this.username })
-      });
-      
+      // Username is already set in this.username - no server call needed
       logger.info('Username set in mobile session for authentication');
       
     } catch (error) {
