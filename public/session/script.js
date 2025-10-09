@@ -1327,23 +1327,23 @@ class AppController {
                 
                 logger.info(`Remove button element:`, removeBtn, 'isCurrentDevice:', isCurrentDevice);
                 
-                // if (removeBtn) {
-                //     if (isCurrentDevice) {
-                //         // Hide button for current device
-                //         removeBtn.style.setProperty('display', 'none', 'important');
-                //         logger.info(`Hiding remove button for current device ${deviceIdShort}`);
-                //     } else {
-                //         // Show button for other devices - use setProperty with important
-                //         removeBtn.style.setProperty('display', 'inline-block', 'important');
-                //         removeBtn.style.visibility = 'visible';
-                //         logger.info(`Showing remove button for device ${deviceIdShort}, final display:`, removeBtn.style.display);
-                //         removeBtn.addEventListener('click', () => {
-                //             this.removeDevice(device.device_id, device);
-                //         });
-                //     }
-                // } else {
-                //     logger.error(`Remove button not found in device item for ${deviceIdShort}`);
-                // }
+                if (removeBtn) {
+                    if (isCurrentDevice) {
+                        // Hide button for current device
+                        removeBtn.style.setProperty('display', 'none', 'important');
+                        logger.info(`Hiding remove button for current device ${deviceIdShort}`);
+                    } else {
+                        // Show button for other devices - use setProperty with important
+                        removeBtn.style.setProperty('display', 'inline-block', 'important');
+                        removeBtn.style.visibility = 'visible';
+                        logger.info(`Showing remove button for device ${deviceIdShort}, final display:`, removeBtn.style.display);
+                        removeBtn.addEventListener('click', () => {
+                            this.removeDevice(device.device_id, device);
+                        });
+                    }
+                } else {
+                    logger.error(`Remove button not found in device item for ${deviceIdShort}`);
+                }
             });
             
             logger.info(`Loaded ${devices.length} devices`);

@@ -88,31 +88,7 @@ export async function registerPasskey(username) {
     };
 
     // 2) create
-    logger.info('Creating credential with navigator.credentials.create');
-    logger.info('authenticatorSelection:', pub.authenticatorSelection);
-    logger.info('Full registration options:', pub);
-    
-    // Ensure user verification is required
-    if (pub.authenticatorSelection) {
-      pub.authenticatorSelection.userVerification = 'required';
-      logger.info('Authenticator selection settings:', pub.authenticatorSelection);
-    }
-    
-    // Check if browser supports platform authenticators
-    if (window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
-      const isAvailable = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-      logger.info('Platform authenticator available:', isAvailable);
-      if (!isAvailable) {
-        logger.warn('Platform authenticator not available, browser may show alternative options');
-      }
-    }
-    
-    // Check what transports are available
-    if (window.PublicKeyCredential && PublicKeyCredential.isConditionalMediationAvailable) {
-      const isConditionalMediationAvailable = await PublicKeyCredential.isConditionalMediationAvailable();
-      logger.info('Conditional mediation available:', isConditionalMediationAvailable);
-    }
-    
+    logger.debug('Creating credential with navigator.credentials.create');
     const cred = await navigator.credentials.create({ publicKey: pub });
     if (!cred) {
       logger.warn('User cancelled passkey registration');
@@ -228,12 +204,12 @@ export async function authenticatePasskey(username = null, passedOpts = null) {
       }));
     }
 
-    logger.info('Getting assertion with navigator.credentials.get');
-    logger.info('Authentication options:', pub);
-    logger.info('Number of allowCredentials:', pub.allowCredentials?.length || 0);
-    if (pub.allowCredentials && pub.allowCredentials.length > 0) {
-      logger.info('First credential transports:', pub.allowCredentials[0].transports);
-    }
+    logger.debug('Getting assertion with navigator.credentials.get');
+    logger.debug('Authentication options:', { 
+      allowCredentials: pub.allowCredentials?.length || 0,
+      challenge: pub.challenge ? 'present' : 'missing',
+      rpId: pub.rpId
+    });
     
     const assertion = await navigator.credentials.get({ publicKey: pub });
     logger.debug('Raw assertion result:', assertion);

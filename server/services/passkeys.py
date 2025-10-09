@@ -32,10 +32,6 @@ class PasskeyService:
     def _rp_id_from_origin(origin: str) -> str:
         """Extract RP ID (domain) from origin URL"""
         host = urlsplit(origin).hostname or "localhost"
-        # For localhost, always return just 'localhost' regardless of port
-        # This ensures platform authenticators work with http://localhost:8000
-        if host in ["localhost", "127.0.0.1", "::1"]:
-            return "localhost"
         return host
     
     @staticmethod
@@ -63,15 +59,12 @@ class PasskeyService:
             {
                 "id": cred["cred_id"],
                 "type": "public-key",
-                "transports": ["internal"]  # Force platform authenticators only
+                "transports": cred.get("transports", [])
             }
             for cred in existing_credentials
         ]
         
-        log.info(f"Excluding {len(exclude_credentials)} existing credentials for {username}")
-        log.info(f"Existing credentials transports: {[cred.get('transports', []) for cred in existing_credentials]}")
-        
-        options = {
+        return {
             "rp": {"id": rp_id, "name": "DPoP-Fun Demo"},
             "user": {
                 "id": b64u(username.encode()),
@@ -85,16 +78,14 @@ class PasskeyService:
                 {"type": "public-key", "alg": -8},    # EdDSA
             ],
             "authenticatorSelection": {
-                "authenticatorAttachment": "platform",  # <<— require platform
-                "residentKey": "required",              # <<— passkey / discoverable
-                "userVerification": "required"
+                "authenticatorAttachment": "platform",
+                "residentKey": "preferred",
+                "userVerification": "required",
+                "requireResidentKey": True
             },
             "attestation": "none",
             "excludeCredentials": exclude_credentials,
         }
-        
-        log.info(f"Registration options for {username}: authenticatorSelection={options['authenticatorSelection']}")
-        return options
     
     @staticmethod
     async def verify_registration(session_id: str, request: Request, attestation_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -196,7 +187,7 @@ class PasskeyService:
             {
                 "type": "public-key",
                 "id": cred["cred_id"],
-                "transports": ["internal"]  # Force platform authenticators only
+                "transports": cred.get("transports", ["internal"])
             }
             for cred in existing_credentials
         ]

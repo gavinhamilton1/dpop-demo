@@ -598,9 +598,9 @@ async def link_events(link_id: str, req: Request):
                     # Stop sending if link is completed or failed
                     if status in ["linked", "completed", "failed", "expired"]:
                         break
-                else:
-                    yield f"data: {json.dumps({'status': 'expired', 'link_id': link_id})}\n\n"
-                    break
+                    else:
+                        yield f"data: {json.dumps({'status': 'expired', 'link_id': link_id})}\n\n"
+                        break
                 
                 await asyncio.sleep(2)  # Check every 2 seconds
         except asyncio.CancelledError:
@@ -1086,7 +1086,10 @@ async def webauthn_authentication_options(req: Request, response: Response):
         log.info('HERE')
         
         # Parse request body to get username (optional)
-        request_body = await req.json()
+        try:
+            request_body = await req.json()
+        except:
+            request_body = {}
 
         body = await PasskeyService.get_authentication_options(session_id, session_data, req, request_body)
         return body
