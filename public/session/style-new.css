@@ -29,6 +29,20 @@ body {
     min-height: 100vh;
 }
 
+/* --- Typography --- */
+h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-dark);
+}
+
 /* --- Main Session Card --- */
 #sessionStatusModal {
     width: 100%;
@@ -48,6 +62,11 @@ body {
     padding: 16px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     border: 1px solid var(--color-border);
+    transition: padding 0.3s;
+}
+
+.modal-content.collapsed {
+    padding: 8px 16px;
 }
 
 .modal-header {
@@ -57,13 +76,19 @@ body {
     border-bottom: 1px solid var(--color-border);
     padding-bottom: 12px;
     margin-bottom: 12px;
+    transition: all 0.3s;
 }
 
-.modal-header h2 {
-    margin: 0;
-    font-size: 1.1rem;
-    font-weight: 600;
+.modal-content.collapsed .modal-header {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin-bottom: 0;
 }
+
+.modal-content.collapsed .modal-body {
+    display: none;
+}
+
 
 .close-btn {
     background: none;
@@ -112,11 +137,7 @@ body {
 }
 
 .overview-column h3 {
-    margin: 0 0 16px 0;
-    font-size: 16px;
-    font-weight: 600;
-    border-bottom: 2px solid var(--color-primary);
-    padding-bottom: 8px;
+    margin-bottom: 16px;
 }
 
 .status-item {
@@ -137,6 +158,10 @@ body {
     font-size: 0.85rem;
 }
 
+.status-bound {
+    color: var(--color-success);
+}
+
 /* Status colors */
 .status-flag.green { color: var(--color-success); }
 .status-flag.amber { color: var(--color-warning); }
@@ -150,17 +175,6 @@ body {
 
 .warning-icon {
     color: var(--color-warning);
-}
-
-.more-details-link {
-    color: var(--color-primary);
-    text-decoration: none;
-    font-size: 0.75rem;
-    cursor: pointer;
-}
-
-.more-details-link:hover {
-    text-decoration: underline;
 }
 
 /* Timer column */
@@ -303,14 +317,8 @@ body {
     color: #888;
 }
 
-/* --- Session History --- */
-.session-history-section {
-    margin-top: 16px;
-    padding-top: 16px;
-    border-top: 1px solid var(--color-border);
-}
-
-.history-header {
+/* --- Generic Section Styles --- */
+.section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -318,11 +326,22 @@ body {
     gap: 12px;
 }
 
-.history-header h3 {
-    margin: 0;
-    font-size: 0.95rem;
-    font-weight: 600;
+.section-title {
     flex: 1;
+    text-align: left;
+}
+
+.section-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+/* --- Session History --- */
+.session-history-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--color-border);
 }
 
 .report-activity {
@@ -352,30 +371,149 @@ body {
 }
 
 .history-session-item {
-    padding: 8px;
+    padding: 10px;
     background-color: rgba(255, 255, 255, 0.05);
     border-radius: 6px;
     border-left: 3px solid var(--color-primary);
     font-size: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.history-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .history-time {
-    display: block;
     color: var(--text-muted);
     font-size: 0.7rem;
-    margin-bottom: 4px;
 }
 
-.history-location {
-    display: block;
+.history-status-method {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.history-status {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.65rem;
     font-weight: 600;
-    margin-bottom: 2px;
+    text-transform: uppercase;
+}
+
+.history-status.current {
+    background-color: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+}
+
+.history-status.active {
+    background-color: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+}
+
+.history-status.expired {
+    background-color: rgba(156, 163, 175, 0.2);
+    color: #9ca3af;
 }
 
 .history-method {
-    display: block;
-    color: var(--text-muted);
+    color: var(--color-success);
+    font-weight: 600;
     font-size: 0.7rem;
+}
+
+.history-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.history-location {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.history-linked {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-primary);
+    font-size: 0.7rem;
+    padding: 6px 10px;
+    background: rgba(102, 126, 234, 0.1);
+    border-radius: 6px;
+    border: 1px solid rgba(102, 126, 234, 0.2);
+}
+
+.history-linked .linked-icon {
+    font-size: 0.85rem;
+}
+
+.history-linked .linked-text {
+    font-weight: 500;
+}
+
+.history-signal {
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.history-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-end;
+    min-width: 150px;
+}
+
+.history-action-btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.history-action-btn.kill-btn {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.history-action-btn.kill-btn:hover {
+    background-color: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+.history-action-btn.report-btn {
+    background-color: transparent;
+    color: var(--text-muted);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.65rem;
+}
+
+.history-action-btn.report-btn:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.2);
 }
 
 .no-history {
@@ -430,6 +568,13 @@ body {
     padding: 16px;
     max-height: calc(90vh - 100px);
     overflow-y: auto;
+}
+
+.close-countdown {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-right: 1rem;
+    font-weight: 500;
 }
 
 /* QR Code display */
@@ -621,6 +766,16 @@ body {
     font-size: 0.8rem;
     color: var(--text-muted);
     font-style: italic;
+}
+
+.verify-status.success {
+    color: var(--color-success);
+    font-weight: 600;
+}
+
+.verify-status.error {
+    color: var(--color-danger);
+    font-weight: 600;
 }
 
 /* --- Camera Scanning --- */
@@ -838,11 +993,20 @@ body {
         border-bottom: 1px solid var(--color-border);
     }
     
-    .history-header {
+    .section-header {
         flex-direction: column;
+        align-items: stretch;
     }
     
-    .report-activity {
+    .section-title {
+        text-align: center;
+    }
+    
+    .section-actions {
+        justify-content: center;
+    }
+    
+    .section-actions .control-btn {
         width: 100%;
     }
     

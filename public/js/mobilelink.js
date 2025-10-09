@@ -387,15 +387,28 @@ export class MobileLinkService {
         }
         break;
       case 'confirmed':
-        logger.info('Status is confirmed, completing step');
+        logger.info('Status is confirmed');
         statusEl.textContent = 'Mobile device linked successfully!';
         statusEl.className = 'qr-status success';
-        this.completeStep();
+        // Don't auto-close here - the success message has its own countdown
+        if (!this.closeCountdownInterval) {
+          // Only complete if we're not already showing success countdown
+          logger.info('No countdown active, completing immediately');
+          this.completeStep();
+        } else {
+          logger.info('Countdown already active, letting it complete naturally');
+        }
         break;
       case 'completed':
         statusEl.textContent = 'Mobile device linked successfully!';
         statusEl.className = 'qr-status success';
-        this.completeStep();
+        // Don't auto-close here - the success message has its own countdown
+        if (!this.closeCountdownInterval) {
+          logger.info('No countdown active, completing immediately');
+          this.completeStep();
+        } else {
+          logger.info('Countdown already active, letting it complete naturally');
+        }
         break;
       case 'failed':
         statusEl.textContent = 'Linking failed. Please try again.';
@@ -588,18 +601,77 @@ export class MobileLinkService {
 
       if (result && result.ok) {
         logger.info('BC code validation successful, response:', result);
-        this.updateCodeStatus('Code verified successfully!', 'success');
         
-        // Complete the step after successful verification
-        setTimeout(() => {
-          this.completeStep();
-        }, 1000);
+        // Show success and hide UI elements
+        this.showVerificationSuccess();
       } else {
         this.updateCodeStatus('Invalid code. Please try again.', 'error');
       }
     } catch (error) {
       logger.error('BC code verification error:', error);
       this.updateCodeStatus('Verification failed. Please try again.', 'error');
+    }
+  }
+
+  /**
+   * Show verification success with auto-close countdown (Desktop side)
+   */
+  showVerificationSuccess() {
+    // Hide code entry form
+    const codeForm = document.getElementById('codeForm');
+    if (codeForm) {
+      codeForm.style.display = 'none';
+    }
+    
+    // Hide camera card if visible
+    const camCard = document.getElementById('camCard');
+    if (camCard) {
+      camCard.style.display = 'none';
+    }
+    
+    // Show success message
+    const codeCard = document.getElementById('codeCard');
+    if (codeCard) {
+      codeCard.innerHTML = `
+        <div style="text-align: center; padding: 2rem;">
+          <div style="font-size: 3rem; margin-bottom: 1rem;">✓</div>
+          <h2 style="color: var(--color-success); margin-bottom: 1rem;">Device Linked Successfully!</h2>
+          <p style="color: var(--text-muted); font-size: 0.9rem;">
+            Your mobile device has been securely linked.
+          </p>
+        </div>
+      `;
+    }
+    
+    // Add countdown to modal header
+    const modalHeader = document.querySelector('#mobileLinkingModal .modal-header');
+    if (modalHeader) {
+      // Add countdown element if not already present
+      let countdownEl = modalHeader.querySelector('.close-countdown');
+      if (!countdownEl) {
+        countdownEl = document.createElement('span');
+        countdownEl.className = 'close-countdown';
+        countdownEl.style.cssText = 'font-size: 0.85rem; color: var(--text-muted); margin-right: 1rem;';
+        modalHeader.insertBefore(countdownEl, modalHeader.querySelector('.close-btn'));
+      }
+      
+      // Start countdown
+      let seconds = 3;
+      countdownEl.textContent = `Closing in ${seconds}s...`;
+      
+      const countdownInterval = setInterval(() => {
+        seconds--;
+        if (seconds > 0) {
+          countdownEl.textContent = `Closing in ${seconds}s...`;
+        } else {
+          clearInterval(countdownInterval);
+          // Auto-close modal
+          this.completeStep();
+        }
+      }, 1000);
+      
+      // Store interval for cleanup
+      this.closeCountdownInterval = countdownInterval;
     }
   }
 
@@ -794,6 +866,18 @@ export class MobileLinkService {
   completeStep() {
     if (!this.stepCompleted) {
       this.stepCompleted = true;
+      
+      // Clean up countdown interval
+      if (this.closeCountdownInterval) {
+        clearInterval(this.closeCountdownInterval);
+        this.closeCountdownInterval = null;
+      }
+      
+      // Remove countdown element from DOM
+      const countdownEl = document.querySelector('.close-countdown');
+      if (countdownEl) {
+        countdownEl.remove();
+      }
       
       // Call the callback if defined
       if (this.onStepComplete && typeof this.onStepComplete === 'function') {
@@ -1371,6 +1455,12 @@ export class MobileLinkService {
     this.stopStatusMonitoring();
     this.stopCamera();
     this.currentLinkId = null;
+    
+    // Clean up countdown interval
+    if (this.closeCountdownInterval) {
+      clearInterval(this.closeCountdownInterval);
+      this.closeCountdownInterval = null;
+    }
     
     if (this.containerElement) {
       this.containerElement.innerHTML = '';

@@ -33,15 +33,13 @@
                         <strong class="value" id="bindingState">Bound</strong>
                     </div>
                     <div class="status-item">
-                        <span class="label">Session Flag:</span>
+                        <span class="label">Risk Signals:</span>
                         <strong class="value status-flag" id="sessionFlag">GREEN</strong>
                     </div>
                     <div class="status-item">
                         <span class="label">Active Sessions:</span>
                         <div class="session-count-container">
                             <strong class="value" id="sessionCount">1</strong>
-                            <span class="warning-icon" id="sessionWarning" style="display: none;">⚠️</span>
-                            <a href="#" class="more-details-link" id="moreDetailsLink" style="display: none;">More Details</a>
                         </div>
                     </div>
                     <div class="status-item">
@@ -85,13 +83,13 @@
             </div>
 
             <!-- Session History Section -->
-            <div class="status-section session-history-section">
-                <div class="history-header">
-                    <h3>Session History</h3>
-                    <button class="control-btn report-activity" id="reportActivityBtn">
-                        <span class="btn-icon">⚠️</span>
-                        <span class="btn-text">Report Suspicious Activity</span>
-                    </button>
+            <div class="session-history-section">
+                <div class="section-header">
+                    <div class="section-title">
+                        <h3>Session History</h3>
+                    </div>
+                    <div class="section-actions">
+                    </div>
                 </div>
                 <div id="sessionHistoryList" class="session-history-list">
                     <p class="no-history">No previous sessions</p>
@@ -115,6 +113,67 @@
             </div> <!-- End modal-body -->
         </div>
     </div>
+
+    <!-- Templates -->
+    <template id="historyItemTemplate">
+        <div class="history-session-item">
+            <div class="history-main">
+                <div class="history-header">
+                    <span class="history-time" data-time></span>
+                    <div class="history-status-method">
+                        <span class="history-status" data-status></span>
+                        <span class="history-method" data-method></span>
+                    </div>
+                </div>
+                <div class="history-details">
+                    <span class="history-location" data-location></span>
+                </div>
+                <div class="history-linked" data-linked style="display: none;">
+                    <span class="linked-icon">🔗</span>
+                    <span class="linked-text" data-linked-text></span>
+                </div>
+                <div class="history-signal" data-signal style="display: none;"></div>
+            </div>
+            <div class="history-actions" data-actions>
+                <button class="history-action-btn kill-btn" data-kill-btn style="display: none;">Kill Session</button>
+                <button class="history-action-btn report-btn" data-report-btn>Report Suspicious Activity</button>
+            </div>
+        </div>
+    </template>
+
+    <template id="mobileLinkingModalTemplate">
+        <div class="modal-overlay" id="mobileLinkingModal">
+            <div class="modal-content mobile-linking-content">
+                <div class="modal-header">
+                    <h2>Link Mobile Device</h2>
+                    <button class="close-btn" id="closeMobileLinkBtn">&times;</button>
+                </div>
+                <div class="modal-body" id="mobileLinkingModalContent">
+                    <!-- Mobile linking UI will be rendered here -->
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <template id="sessionItemTemplate">
+        <div class="session-item">
+            <div class="session-info">
+                <div class="session-header">
+                    <span class="session-location" data-location></span>
+                    <span class="session-browser" data-browser></span>
+                    <span class="current-badge" data-current-badge style="display: none;">Current</span>
+                </div>
+                <div class="session-details">
+                    <span class="session-ip" data-ip></span>
+                    <span class="session-activity" data-activity></span>
+                </div>
+            </div>
+            <div class="session-actions" data-actions>
+                <button class="action-btn terminate-btn" data-terminate-btn>Terminate</button>
+                <button class="action-btn report-btn" data-report-btn>Report</button>
+            </div>
+        </div>
+    </template>
 
 </body>
 </html>

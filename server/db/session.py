@@ -94,9 +94,10 @@ class SessionDB:
           updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),          -- Unix timestamp of last session update
           expires_at INTEGER,                   -- Session expiration timestamp
           geolocation TEXT,                   -- Geolocation data
+          linked_session_id TEXT,           -- ID of linked session (mobile<->desktop)
           FOREIGN KEY (device_id) REFERENCES devices(device_id)
         );
-
+        
         CREATE TABLE IF NOT EXISTS nonces (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
@@ -238,14 +239,44 @@ class SessionDB:
                             (session_id, nonce, nonce_status, expires_at, now()))  
         
     async def get_active_user_sessions(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get active user sessions by user_id"""
-        rows = await self.fetchall("SELECT * FROM sessions WHERE auth_username=? AND session_status='ACTIVE'", [user_id])
+        """Get active user sessions by user_id that are not expired"""
+        current_time = now()
+        rows = await self.fetchall(
+            "SELECT * FROM sessions WHERE auth_username=? AND session_status='ACTIVE' AND expires_at > ?", 
+            [user_id, current_time]
+        )
         return [dict(row) for row in rows]
 
+    async def expire_old_sessions(self) -> int:
+        """Mark expired sessions as TERMINATED and update auth_status to logged_out"""
+        current_time = now()
+        # Update sessions that have passed their expiration time
+        await self.exec(
+            """UPDATE sessions 
+               SET session_status='TERMINATED', 
+                   auth_status='logged_out',
+                   state='expired'
+               WHERE session_status='ACTIVE' 
+               AND expires_at <= ?""",
+            [current_time]
+        )
+        # Return count of affected rows (if available)
+        return 0  # SQLite doesn't easily return affected row count in this setup
 
     async def get_session_history(self, authenticated_username: str, created_at: int) -> List[Dict[str, Any]]:
-        """Get session history for an authenticated user"""
-        rows = await self.fetchall("SELECT * FROM sessions WHERE auth_username=? AND session_status='ACTIVE'" and "created_at > ?", (authenticated_username, created_at))
+        """Get session history for an authenticated user with linked session info"""
+        rows = await self.fetchall(
+            """SELECT 
+                s.*,
+                linked_devices.device_type as linked_device_type,
+                linked.created_at as linked_created_at
+               FROM sessions s
+               LEFT JOIN sessions linked ON s.linked_session_id = linked._session_id
+               LEFT JOIN devices linked_devices ON linked.device_id = linked_devices.device_id
+               WHERE s.auth_username=? AND s.created_at > ? 
+               ORDER BY s.created_at DESC""", 
+            [authenticated_username, created_at]
+        )
         return [dict(row) for row in rows]
 
 
@@ -372,6 +403,19 @@ class SessionDB:
         await self.exec(
             "UPDATE sessions SET auth_status=?, session_status=? WHERE _session_id=?",
             ("logged_out", "TERMINATED", session_id)
+        )
+    
+    async def link_sessions(self, session_id_1: str, session_id_2: str) -> None:
+        """Create bidirectional link between two sessions (e.g., desktop and mobile)"""
+        log.info(f"Linking sessions: {session_id_1} <-> {session_id_2}")
+        # Update both sessions to reference each other
+        await self.exec(
+            "UPDATE sessions SET linked_session_id=? WHERE _session_id=?",
+            (session_id_2, session_id_1)
+        )
+        await self.exec(
+            "UPDATE sessions SET linked_session_id=? WHERE _session_id=?",
+            (session_id_1, session_id_2)
         )
 
 

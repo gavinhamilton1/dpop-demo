@@ -326,6 +326,107 @@ async def session_logout(req: Request, response: Response):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/session/kill",
+          tags=["session"],
+          summary="Kill Another Session",
+          description="Terminate another active session (not the current one)")
+async def session_kill(req: Request, response: Response):
+    """Kill/terminate another user's session"""
+    try:
+        # Get current session ID from cookie
+        current_session_id = req.session.get("session_id")
+        if not current_session_id:
+            raise HTTPException(status_code=401, detail="No session found")
+        
+        # Get current session from database
+        current_session = await SessionDB.get_session(current_session_id)
+        if not current_session:
+            raise HTTPException(status_code=401, detail="Session not found")
+        
+        # Check if user is authenticated
+        current_username = current_session.get("auth_username")
+        if not current_username or current_session.get("auth_status") != "authenticated":
+            raise HTTPException(status_code=401, detail="User not authenticated")
+        
+        # Get target session ID from request
+        body = await req.json()
+        target_session_id = body.get("payload", {}).get("session_id")
+        
+        if not target_session_id:
+            raise HTTPException(status_code=400, detail="No target session ID provided")
+        
+        # Prevent killing own session
+        if target_session_id == current_session_id:
+            raise HTTPException(status_code=400, detail="Cannot kill current session. Use logout instead.")
+        
+        # Get target session to verify ownership
+        target_session = await SessionDB.get_session(target_session_id)
+        if not target_session:
+            raise HTTPException(status_code=404, detail="Target session not found")
+        
+        # Verify the target session belongs to the same user
+        if target_session.get("auth_username") != current_username:
+            raise HTTPException(status_code=403, detail="Cannot kill another user's session")
+        
+        # Kill the target session
+        await SessionService.logout_session(target_session_id)
+        
+        log.info(f"User {current_username} killed session {target_session_id}")
+        
+        return {"ok": True, "message": "Session terminated successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Session kill failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/session/history",
+         tags=["session"],
+         summary="Get Session History",
+         description="Get session history for authenticated user (last 10 days)")
+async def get_session_history(req: Request, response: Response):
+    """Get session history for authenticated user"""
+    try:
+        # For GET requests, we need to get session data without parsing a body
+        session_id = req.session.get("session_id")
+        if not session_id:
+            raise HTTPException(status_code=401, detail="No session found")
+        
+        # Get session from database
+        session_data = await SessionDB.get_session(session_id)
+        if not session_data:
+            raise HTTPException(status_code=401, detail="Session not found")
+        
+        # Check if user is authenticated
+        username = session_data.get("auth_username")
+        if not username or session_data.get("auth_status") != "authenticated":
+            raise HTTPException(status_code=401, detail="User not authenticated")
+        
+        # Get session history for the user (last 10 days)
+        history = await SessionService.get_session_history(username, days=10)
+        
+        # Transform _session_id to session_id for client compatibility
+        for session in history:
+            if '_session_id' in session and 'session_id' not in session:
+                session['session_id'] = session['_session_id']
+        
+        log.info(f"Session history retrieved for user {username}: {len(history)} sessions")
+        
+        return {
+            "ok": True,
+            "history": history,
+            "username": username
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Get session history failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---- Mobile Linking Endpoints ----
 
 # In-memory link storage (temporary solution)
@@ -511,6 +612,7 @@ async def link_mobile_complete(req: Request, response: Response):
     try:
         # Get session data
         session_data = await SessionService.get_session_data(req, response)
+        mobile_session_id = req.session.get("session_id")
         
         body = await req.json()
         link_id = body.get("link_id")
@@ -524,11 +626,46 @@ async def link_mobile_complete(req: Request, response: Response):
         if not link_data:
             raise HTTPException(status_code=404, detail="Link ID not found")
         
+        # Check if mobile session is authenticated
+        mobile_username = session_data.get("auth_username")
+        mobile_auth_status = session_data.get("auth_status")
+        
+        if not mobile_username or mobile_auth_status != "authenticated":
+            raise HTTPException(status_code=403, detail="Mobile session not authenticated")
+        
         # Update link status to completed
         link_data["status"] = "linked"
-        link_data["mobile_session_id"] = req.session.get("session_id")
+        link_data["mobile_session_id"] = mobile_session_id
+        link_data["mobile_username"] = mobile_username
         
-        log.info(f"Mobile linking completed: {link_id}")
+        # Link sessions together (desktop <-> mobile)
+        desktop_session_id = link_data.get("desktop_session_id")
+        if desktop_session_id:
+            # Create bidirectional link between desktop and mobile sessions
+            await SessionDB.link_sessions(desktop_session_id, mobile_session_id)
+            log.info(f"Linked sessions: desktop {desktop_session_id} <-> mobile {mobile_session_id}")
+            
+            # For login flow, also authenticate the desktop session
+            flow_type = link_data.get("flow_type", "registration")
+            if flow_type == "login":
+                # Get desktop session
+                desktop_session = await SessionDB.get_session(desktop_session_id)
+                if desktop_session:
+                    # Update desktop session to be authenticated
+                    await SessionDB.update_session_auth_status(
+                        desktop_session_id,
+                        "Mobile Passkey",  # auth_method
+                        "authenticated",   # auth_status
+                        mobile_username    # username
+                    )
+                    
+                    log.info(f"Desktop session {desktop_session_id} authenticated via mobile linking with username {mobile_username}")
+                else:
+                    log.warning(f"Desktop session {desktop_session_id} not found")
+        else:
+            log.warning(f"No desktop session ID in link data for {link_id}")
+        
+        log.info(f"Mobile linking completed: {link_id}, flow: {flow_type}, mobile_user: {mobile_username}")
         
         return {
             "ok": True,

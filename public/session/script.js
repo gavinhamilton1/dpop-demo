@@ -17,12 +17,13 @@ class AppController {
         // Track collapsed state
         this.isCollapsed = false;
         
+        // Track authentication state
+        this.isAuthenticated = false;
+        
         // New elements for overview section
         this.bindingState = document.getElementById('bindingState');
         this.sessionFlag = document.getElementById('sessionFlag');
         this.sessionCount = document.getElementById('sessionCount');
-        this.sessionWarning = document.getElementById('sessionWarning');
-        this.moreDetailsLink = document.getElementById('moreDetailsLink');
         this.authMethod = document.getElementById('authMethod');
         this.reportActivityBtn = document.getElementById('reportActivityBtn');
         this.sessionHistoryList = document.getElementById('sessionHistoryList');
@@ -84,7 +85,7 @@ class AppController {
                 this.idleTimerDisplay.textContent = this.formatTime(this.idleSeconds);
                 
                 // Populate UI with real session data
-                this.populateSessionUI(SESSION_DATA);
+                await this.populateSessionUI(SESSION_DATA);
                 
                 // Restore authentication state if user is logged in
                 this.restoreAuthenticationState(SESSION_DATA);
@@ -121,12 +122,6 @@ class AppController {
             this.sessionDetailsModal.style.display = 'none';
         });
 
-        // More details link
-        this.moreDetailsLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            this.showSessionDetails();
-        });
-
         // Username input - enable/disable auth buttons based on username presence
         this.usernameInput.addEventListener('input', () => {
             this.handleUsernameChange();
@@ -152,12 +147,6 @@ class AppController {
         // Mobile Link button
         this.mobileLinkBtn.addEventListener('click', async () => {
             await this.handleMobileLink();
-        });
-
-        // Control buttons removed - using Logout button in passkey flow instead
-
-        this.reportActivityBtn.addEventListener('click', () => {
-            this.reportSuspiciousActivity();
         });
 
         // Close modals when clicking outside
@@ -201,8 +190,8 @@ class AppController {
             }
         } else {
             clearInterval(this.sessionInterval);
-            console.warn("Session expired. Forcing logout.");
-            // In production: window.location.href = '/logout';
+            logger.warn("Session expired. Forcing logout.");
+            this.handleSessionExpired();
         }
     }
     
@@ -215,9 +204,91 @@ class AppController {
             }
         } else {
             clearInterval(this.idleInterval);
-            console.warn("Idle timeout reached (15 minutes). Forcing session end.");
-            // In production: trigger session end function and notify user.
+            logger.warn("Idle timeout reached. Forcing logout.");
+            this.handleIdleExpired();
         }
+    }
+    
+    async handleSessionExpired() {
+        logger.info('Session timer expired - logging out user');
+        
+        try {
+            // Call logout endpoint
+            const response = await DpopFun.dpopFetch('POST', '/session/logout');
+            
+            if (response.ok) {
+                logger.info('Session logged out due to expiration');
+            }
+        } catch (error) {
+            logger.error('Failed to logout expired session:', error);
+        }
+        
+        // Reset authentication flag
+        this.isAuthenticated = false;
+        
+        // Reset UI state
+        this.username = null;
+        this.usernameInput.value = '';
+        this.passkeyAuthBtn.querySelector('.btn-text').textContent = 'Create Passkey';
+        this.passkeyAuthBtn.classList.remove('logout-mode');
+        this.passkeyAuthBtn.disabled = true;
+        this.checkUsernameBtn.disabled = true;
+        this.mobileLinkBtn.disabled = true;
+        this.mobileLinkBtn.querySelector('.btn-text').textContent = 'Link Mobile Device';
+        this.mobileLinkBtn.dataset.mode = 'register';
+        
+        // Refresh session data
+        try {
+            const freshSessionData = await DpopFun.setupSession();
+            if (freshSessionData) {
+                await this.populateSessionUI(freshSessionData);
+            }
+        } catch (error) {
+            logger.error('Failed to refresh session after expiration:', error);
+        }
+        
+        alert('Your session has expired. Please authenticate again.');
+    }
+    
+    async handleIdleExpired() {
+        logger.info('Idle timer expired - logging out user');
+        
+        try {
+            // Call logout endpoint
+            const response = await DpopFun.dpopFetch('POST', '/session/logout');
+            
+            if (response.ok) {
+                logger.info('Session logged out due to idle timeout');
+            }
+        } catch (error) {
+            logger.error('Failed to logout idle session:', error);
+        }
+        
+        // Reset authentication flag
+        this.isAuthenticated = false;
+        
+        // Reset UI state
+        this.username = null;
+        this.usernameInput.value = '';
+        this.passkeyAuthBtn.querySelector('.btn-text').textContent = 'Create Passkey';
+        this.passkeyAuthBtn.classList.remove('logout-mode');
+        this.passkeyAuthBtn.disabled = true;
+        this.checkUsernameBtn.disabled = true;
+        this.mobileLinkBtn.disabled = true;
+        this.mobileLinkBtn.querySelector('.btn-text').textContent = 'Link Mobile Device';
+        this.mobileLinkBtn.dataset.mode = 'register';
+        
+        // Refresh session data
+        try {
+            const freshSessionData = await DpopFun.setupSession();
+            if (freshSessionData) {
+                await this.populateSessionUI(freshSessionData);
+            }
+        } catch (error) {
+            logger.error('Failed to refresh session after idle timeout:', error);
+        }
+        
+        alert('Your session has been terminated due to inactivity. Please authenticate again.');
     }
 
     startTimers() {
@@ -258,7 +329,7 @@ class AppController {
     }
 
 
-    populateSessionUI(sessionData) {
+    async populateSessionUI(sessionData) {
         // Store session data for use in other methods
         this.sessionData = sessionData;
         
@@ -266,7 +337,7 @@ class AppController {
         this.updateOverviewSection(sessionData);
         
         // Update session history in third column
-        this.updateSessionHistoryList(sessionData);
+        await this.updateSessionHistoryList(sessionData);
         
         // Update session history (old section - can be removed later)
         this.updateSessionHistory(sessionData);
@@ -332,49 +403,171 @@ class AppController {
             this.sessionCount.textContent = sessionCount;
         }
 
-        // Show warning and more details link if more than 1 session
-        if (sessionCount > 1) {
-            this.sessionWarning.style.display = 'inline';
-            this.moreDetailsLink.style.display = 'inline';
-        } else {
-            this.sessionWarning.style.display = 'none';
-            this.moreDetailsLink.style.display = 'none';
-        }
     }
 
-    updateSessionHistoryList(sessionData) {
+    async updateSessionHistoryList(sessionData) {
         if (!this.sessionHistoryList) return;
 
-        // TODO: Replace with actual session history from server
-        // For now, check if there's any history data in sessionData
-        const hasHistory = sessionData.session_history && sessionData.session_history.length > 0;
-
-        if (!hasHistory) {
-            // Show "no previous sessions" message
+        // Check if user is authenticated
+        if (!sessionData.auth_username || sessionData.auth_status !== 'authenticated') {
             this.sessionHistoryList.innerHTML = '<p class="no-history">No previous sessions</p>';
             return;
         }
 
-        // Populate with actual history
-        this.sessionHistoryList.innerHTML = '';
-        sessionData.session_history.forEach(session => {
-            const historyItem = document.createElement('div');
-            historyItem.className = 'history-session-item';
+        try {
+            // Fetch session history from server (last 10 days)
+            const response = await DpopFun.dpopFetch('GET', '/session/history');
             
-            const timeAgo = this.formatTimeAgo(session.created_at);
-            const location = session.geolocation ? 
-                `${session.geolocation.city}, ${session.geolocation.country}` : 
-                'Unknown location';
-            const authMethod = session.auth_method || 'Unknown';
+            if (!response.ok) {
+                logger.warn('Failed to fetch session history:', response.status);
+                this.sessionHistoryList.innerHTML = '<p class="no-history">Unable to load session history</p>';
+                return;
+            }
+            
+            const data = await response.json();
+            const history = data.history || [];
+            
+            if (history.length === 0) {
+                this.sessionHistoryList.innerHTML = '<p class="no-history">No previous sessions</p>';
+                return;
+            }
+            
+            // Populate with actual history using template
+            this.sessionHistoryList.innerHTML = '';
+            const template = document.getElementById('historyItemTemplate');
+            const currentTime = Math.floor(Date.now() / 1000);
+            const currentSessionId = sessionData.session_id;
+            
+            logger.info('Current session ID:', currentSessionId);
+            logger.info('First history session:', history[0]);
+            
+            history.forEach(session => {
+                // Clone the template
+                const clone = template.content.cloneNode(true);
+                
+                const sessionId = session.session_id;
+                
+                // Determine if session is active
+                const isActive = session.session_status === 'ACTIVE' && session.expires_at > currentTime;
+                const isCurrentSession = sessionId === currentSessionId;
+                
+                logger.info(`Session ${sessionId}: isActive=${isActive}, isCurrentSession=${isCurrentSession}, status=${session.session_status}, expires_at=${session.expires_at}, currentTime=${currentTime}`);
+                
+                // Extract data
+                const timeAgo = this.formatTimeAgo(session.created_at);
+                let location = 'Unknown';
+                
+                if (session.geolocation) {
+                    try {
+                        const geo = typeof session.geolocation === 'string' ? 
+                            JSON.parse(session.geolocation) : session.geolocation;
+                        location = `${geo.city || 'Unknown'}, ${geo.country_code || geo.country || ''}`;
+                    } catch (e) {
+                        location = 'Unknown location';
+                    }
+                }
+                
+                const authMethod = session.auth_method || 'None';
+                const deviceType = session.device_type || 'unknown';
+                
+                // Parse signal data for primary indicators (without screen resolution)
+                let signalInfo = '';
+                if (session.signal_data) {
+                    try {
+                        const signal = typeof session.signal_data === 'string' ? 
+                            JSON.parse(session.signal_data) : session.signal_data;
+                        
+                        const browser = this.extractBrowserName(signal.userAgent);
+                        const platform = signal.platform || 'Unknown';
+                        
+                        signalInfo = `${browser} • ${platform}`;
+                    } catch (e) {
+                        signalInfo = 'Signal data unavailable';
+                    }
+                }
 
-            historyItem.innerHTML = `
-                <span class="history-time">${timeAgo}</span>
-                <span class="history-location">${location}</span>
-                <span class="history-method">${authMethod}</span>
-            `;
+                // Populate template with data
+                clone.querySelector('[data-time]').textContent = timeAgo;
+                clone.querySelector('[data-method]').textContent = authMethod;
+                clone.querySelector('[data-location]').textContent = `${location} • ${deviceType}`;
+                
+                // Set status badge
+                const statusEl = clone.querySelector('[data-status]');
+                if (isCurrentSession) {
+                    statusEl.textContent = 'Current';
+                    statusEl.className = 'history-status current';
+                } else if (isActive) {
+                    statusEl.textContent = 'Active';
+                    statusEl.className = 'history-status active';
+                } else {
+                    statusEl.textContent = 'Expired';
+                    statusEl.className = 'history-status expired';
+                }
+                
+                // Set linked session info
+                const linkedEl = clone.querySelector('[data-linked]');
+                const linkedTextEl = clone.querySelector('[data-linked-text]');
+                if (session.linked_session_id) {
+                    const linkedDeviceType = session.linked_device_type || 'unknown';
+                    const linkedTimeAgo = session.linked_created_at ? 
+                        this.formatTimeAgo(session.linked_created_at) : 'unknown time';
+                    linkedTextEl.textContent = `Linked to ${linkedDeviceType} session (${linkedTimeAgo})`;
+                    linkedEl.style.display = 'flex';
+                } else {
+                    linkedEl.style.display = 'none';
+                }
+                
+                // Set signal info
+                const signalEl = clone.querySelector('[data-signal]');
+                if (signalInfo) {
+                    signalEl.textContent = signalInfo;
+                    signalEl.style.display = 'block';
+                } else {
+                    signalEl.style.display = 'none';
+                }
+                
+                // Handle action buttons
+                const killBtn = clone.querySelector('[data-kill-btn]');
+                const reportBtn = clone.querySelector('[data-report-btn]');
+                
+                // Show kill button only for active sessions (not current session)
+                if (isActive && !isCurrentSession) {
+                    killBtn.style.display = 'block';
+                    killBtn.addEventListener('click', () => {
+                        this.killSession(sessionId, session);
+                    });
+                } else {
+                    killBtn.style.display = 'none';
+                }
+                
+                // Report button always visible
+                reportBtn.addEventListener('click', () => {
+                    this.reportSuspiciousSession(sessionId, session);
+                });
 
-            this.sessionHistoryList.appendChild(historyItem);
-        });
+                this.sessionHistoryList.appendChild(clone);
+            });
+            
+            logger.info(`Loaded ${history.length} session history items`);
+            
+        } catch (error) {
+            logger.error('Failed to load session history:', error);
+            this.sessionHistoryList.innerHTML = '<p class="no-history">Unable to load session history</p>';
+        }
+    }
+
+    extractBrowserName(userAgent) {
+        if (!userAgent) return 'Unknown Browser';
+        
+        const ua = userAgent.toLowerCase();
+        
+        if (ua.includes('firefox')) return 'Firefox';
+        if (ua.includes('edg')) return 'Edge';
+        if (ua.includes('chrome')) return 'Chrome';
+        if (ua.includes('safari')) return 'Safari';
+        if (ua.includes('opera') || ua.includes('opr')) return 'Opera';
+        
+        return 'Unknown Browser';
     }
 
     formatTimeAgo(timestamp) {
@@ -402,11 +595,9 @@ class AppController {
         // Enable check username button if username is present
         this.checkUsernameBtn.disabled = !hasUsername;
         
-        // Disable passkey button until "Go" is clicked
+        // Disable both auth buttons until "Go" is clicked
         this.passkeyAuthBtn.disabled = true;
-        
-        // Enable/disable mobile link button based on username
-        this.mobileLinkBtn.disabled = !hasUsername;
+        this.mobileLinkBtn.disabled = true;
         
         logger.info('Username changed:', { username: this.username, hasUsername });
     }
@@ -429,12 +620,19 @@ class AppController {
             this.passkeyAuthBtn.classList.add('logout-mode');
             this.passkeyAuthBtn.disabled = false;
             
+            // Mark that user is authenticated (used to prevent button text changes)
+            this.isAuthenticated = true;
+            
             // Enable the check username button
             this.checkUsernameBtn.disabled = false;
+            
+            // Check for mobile passkey to set mobile link button state (but don't change passkey button)
+            this.checkForMobilePasskey();
             
             logger.info('Authentication state restored');
         } else {
             logger.info('No authenticated session found');
+            this.isAuthenticated = false;
         }
     }
 
@@ -461,15 +659,20 @@ class AppController {
             
             logger.info('Passkey check result:', { username: this.username, hasPasskeys, count: passkeyCount });
             
-            // Update passkey button based on result
-            const passkeyBtnText = this.passkeyAuthBtn.querySelector('.btn-text');
-            if (hasPasskeys) {
-                passkeyBtnText.textContent = 'Login with Passkey';
-                this.passkeyAuthBtn.disabled = false;
-            } else {
-                passkeyBtnText.textContent = 'Create Passkey';
-                this.passkeyAuthBtn.disabled = false;
+            // Only update passkey button text if user is not already authenticated
+            if (!this.isAuthenticated) {
+                const passkeyBtnText = this.passkeyAuthBtn.querySelector('.btn-text');
+                if (hasPasskeys) {
+                    passkeyBtnText.textContent = 'Login with Passkey';
+                    this.passkeyAuthBtn.disabled = false;
+                } else {
+                    passkeyBtnText.textContent = 'Create Passkey';
+                    this.passkeyAuthBtn.disabled = false;
+                }
             }
+            
+            // Check for mobile passkey and update mobile link button
+            await this.checkForMobilePasskey(options);
             
             // Restore Go button
             btnText.textContent = originalText;
@@ -480,9 +683,66 @@ class AppController {
             btnText.textContent = originalText;
             this.checkUsernameBtn.disabled = false;
             
-            // On error, default to create mode
-            this.passkeyAuthBtn.querySelector('.btn-text').textContent = 'Create Passkey';
-            this.passkeyAuthBtn.disabled = false;
+            // Only update on error if not authenticated
+            if (!this.isAuthenticated) {
+                this.passkeyAuthBtn.querySelector('.btn-text').textContent = 'Create Passkey';
+                this.passkeyAuthBtn.disabled = false;
+            }
+            
+            // Enable mobile link button with default text
+            this.mobileLinkBtn.disabled = false;
+            this.mobileLinkBtn.querySelector('.btn-text').textContent = 'Link Mobile Device';
+        }
+    }
+    
+    async checkForMobilePasskey(authOptions = null) {
+        try {
+            // If no authOptions provided, fetch them
+            if (!authOptions && this.username) {
+                try {
+                    authOptions = await Passkeys.getAuthOptions(this.username);
+                } catch (error) {
+                    logger.warn('Failed to get auth options for mobile passkey check:', error);
+                    return;
+                }
+            }
+            
+            // Check if user has a mobile device passkey by checking session data
+            // Look for passkeys with 'mobile' device type or cross-platform authenticator
+            let hasMobilePasskey = false;
+            
+            if (authOptions && authOptions.allowCredentials && authOptions.allowCredentials.length > 0) {
+                // Check if any credential has mobile transports
+                const credentials = authOptions.allowCredentials;
+                hasMobilePasskey = credentials.some(cred => {
+                    // Check if transports include 'hybrid' or 'internal' (mobile indicators)
+                    return cred.transports && (
+                        cred.transports.includes('hybrid') || 
+                        cred.transports.includes('internal')
+                    );
+                });
+                
+                logger.info('Mobile passkey detected:', hasMobilePasskey);
+            }
+            
+            // Update mobile link button
+            const mobileBtnText = this.mobileLinkBtn.querySelector('.btn-text');
+            if (hasMobilePasskey) {
+                mobileBtnText.textContent = 'Login with Mobile';
+                this.mobileLinkBtn.dataset.mode = 'login';
+            } else {
+                mobileBtnText.textContent = 'Link Mobile Device';
+                this.mobileLinkBtn.dataset.mode = 'registration';
+            }
+            
+            this.mobileLinkBtn.disabled = false;
+            
+        } catch (error) {
+            logger.warn('Failed to check for mobile passkey:', error);
+            // Default to link mode
+            this.mobileLinkBtn.disabled = false;
+            this.mobileLinkBtn.querySelector('.btn-text').textContent = 'Link Mobile Device';
+            this.mobileLinkBtn.dataset.mode = 'registration';
         }
     }
 
@@ -563,13 +823,16 @@ class AppController {
                 this.passkeyAuthBtn.classList.add('logout-mode');
                 this.passkeyAuthBtn.disabled = false;
                 
+                // Set authenticated flag
+                this.isAuthenticated = true;
+                
                 logger.info(`Authenticated as ${this.username}`);
                 
                 // Fetch fresh session data to show authenticated state
                 try {
                     const freshSessionData = await DpopFun.setupSession();
                     if (freshSessionData) {
-                        this.populateSessionUI(freshSessionData);
+                        await this.populateSessionUI(freshSessionData);
                     }
                 } catch (error) {
                     logger.error('Failed to refresh session data after login:', error);
@@ -591,21 +854,30 @@ class AppController {
                     // Continue with UI cleanup even if server call fails
                 }
                 
-                // Reset button state
+                // Reset authentication flag
+                this.isAuthenticated = false;
+                
+                // Reset button states
                 btnText.textContent = 'Create Passkey';
                 this.passkeyAuthBtn.querySelector('.btn-icon').textContent = '🔑';
                 this.passkeyAuthBtn.classList.remove('logout-mode');
                 this.passkeyAuthBtn.disabled = true;
                 
+                // Reset mobile link button
+                this.mobileLinkBtn.disabled = true;
+                this.mobileLinkBtn.querySelector('.btn-text').textContent = 'Link Mobile Device';
+                this.mobileLinkBtn.dataset.mode = 'registration';
+                
                 // Clear username
                 this.usernameInput.value = '';
                 this.username = null;
+                this.checkUsernameBtn.disabled = true;
                 
                 // Refresh session data to show logged out state
                 try {
                     const freshSessionData = await DpopFun.setupSession();
                     if (freshSessionData) {
-                        this.populateSessionUI(freshSessionData);
+                        await this.populateSessionUI(freshSessionData);
                     }
                 } catch (error) {
                     logger.error('Failed to refresh session data after logout:', error);
@@ -641,8 +913,9 @@ class AppController {
             // Set username on the service so it can be sent with the link request
             this.mobileLinkService.desktopUsername = this.username;
             
-            // Determine flow type based on authentication status
-            const flowType = this.sessionData?.auth_status === 'authenticated' ? 'login' : 'registration';
+            // Determine flow type based on button mode (set by checkForMobilePasskey)
+            const flowType = this.mobileLinkBtn.dataset.mode || 'registration';
+            logger.info('Mobile linking flow type:', flowType);
             
             // Render the mobile linking UI
             this.mobileLinkService.renderMobileLinkingStep(
@@ -663,21 +936,12 @@ class AppController {
         // Create modal if it doesn't exist
         let modal = document.getElementById('mobileLinkingModal');
         if (!modal) {
-            modal = document.createElement('div');
-            modal.id = 'mobileLinkingModal';
-            modal.className = 'modal-overlay';
-            modal.innerHTML = `
-                <div class="modal-content mobile-linking-content">
-                    <div class="modal-header">
-                        <h2>Link Mobile Device</h2>
-                        <button class="close-btn" id="closeMobileLinkBtn">&times;</button>
-                    </div>
-                    <div class="modal-body" id="mobileLinkingModalContent">
-                        <!-- Mobile linking UI will be rendered here -->
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
+            // Clone modal from template
+            const template = document.getElementById('mobileLinkingModalTemplate');
+            const clone = template.content.cloneNode(true);
+            document.body.appendChild(clone);
+            
+            modal = document.getElementById('mobileLinkingModal');
             
             // Add close button handler
             document.getElementById('closeMobileLinkBtn').addEventListener('click', () => {
@@ -713,13 +977,14 @@ class AppController {
         try {
             const freshSessionData = await DpopFun.setupSession();
             if (freshSessionData) {
-                this.populateSessionUI(freshSessionData);
+                await this.populateSessionUI(freshSessionData);
+                
+                // Restore authentication state (in case of mobile login flow)
+                this.restoreAuthenticationState(freshSessionData);
             }
         } catch (error) {
             logger.error('Failed to refresh session data after mobile linking:', error);
         }
-        
-        alert('Mobile device linked successfully!');
     }
 
     updateAuthMethod(sessionData) {
@@ -807,51 +1072,53 @@ class AppController {
 
     populateSessionsList() {
         this.sessionsList.innerHTML = '';
+        const template = document.getElementById('sessionItemTemplate');
         
         this.allSessions.forEach(session => {
-            const sessionElement = document.createElement('div');
-            sessionElement.className = `session-item ${session.is_current ? 'current-session' : ''}`;
+            // Clone the template
+            const clone = template.content.cloneNode(true);
+            const sessionElement = clone.querySelector('.session-item');
             
-            sessionElement.innerHTML = `
-                <div class="session-info">
-                    <div class="session-header">
-                        <span class="session-location">${session.location}</span>
-                        <span class="session-browser">${session.browser}</span>
-                        ${session.is_current ? '<span class="current-badge">Current</span>' : ''}
-                    </div>
-                    <div class="session-details">
-                        <span class="session-ip">IP: ${session.ip}</span>
-                        <span class="session-activity">Last activity: ${this.getTimeAgo(session.last_activity)}</span>
-                    </div>
-                </div>
-                <div class="session-actions">
-                    ${!session.is_current ? `
-                        <button class="action-btn terminate-btn" data-session-id="${session.id}">
-                            Terminate
-                        </button>
-                        <button class="action-btn report-btn" data-session-id="${session.id}">
-                            Report
-                        </button>
-                    ` : ''}
-                </div>
-            `;
+            // Add current session class if applicable
+            if (session.is_current) {
+                sessionElement.classList.add('current-session');
+            }
             
-            this.sessionsList.appendChild(sessionElement);
-        });
-
-        // Add event listeners for action buttons
-        this.sessionsList.querySelectorAll('.terminate-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const sessionId = e.target.getAttribute('data-session-id');
-                this.terminateSession(sessionId);
-            });
-        });
-
-        this.sessionsList.querySelectorAll('.report-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const sessionId = e.target.getAttribute('data-session-id');
-                this.reportSession(sessionId);
-            });
+            // Populate data
+            clone.querySelector('[data-location]').textContent = session.location;
+            clone.querySelector('[data-browser]').textContent = session.browser;
+            clone.querySelector('[data-ip]').textContent = `IP: ${session.ip}`;
+            clone.querySelector('[data-activity]').textContent = `Last activity: ${this.getTimeAgo(session.last_activity)}`;
+            
+            // Show/hide current badge
+            const currentBadge = clone.querySelector('[data-current-badge]');
+            if (session.is_current) {
+                currentBadge.style.display = 'inline';
+            } else {
+                currentBadge.style.display = 'none';
+            }
+            
+            // Show/hide actions for non-current sessions
+            const actionsDiv = clone.querySelector('[data-actions]');
+            if (session.is_current) {
+                actionsDiv.style.display = 'none';
+            } else {
+                actionsDiv.style.display = 'flex';
+                
+                // Add event listeners for action buttons
+                const terminateBtn = clone.querySelector('[data-terminate-btn]');
+                const reportBtn = clone.querySelector('[data-report-btn]');
+                
+                terminateBtn.addEventListener('click', () => {
+                    this.terminateSession(session.id);
+                });
+                
+                reportBtn.addEventListener('click', () => {
+                    this.reportSession(session.id);
+                });
+            }
+            
+            this.sessionsList.appendChild(clone);
         });
     }
 
@@ -878,6 +1145,71 @@ class AppController {
             // In real app, this would make an API call
             logger.info('Reported suspicious activity');
             alert('Suspicious activity reported. Security team will investigate.');
+        }
+    }
+
+    async killSession(sessionId, sessionInfo) {
+        const location = sessionInfo.geolocation ? 
+            (() => {
+                try {
+                    const geo = typeof sessionInfo.geolocation === 'string' ? 
+                        JSON.parse(sessionInfo.geolocation) : sessionInfo.geolocation;
+                    return `${geo.city || 'Unknown'}, ${geo.country_code || geo.country || ''}`;
+                } catch (e) {
+                    return 'Unknown location';
+                }
+            })() : 'Unknown location';
+        
+        if (confirm(`Kill session from ${location}?\n\nThis will immediately terminate the session.`)) {
+            try {
+                logger.info(`Killing session: ${sessionId}`);
+                
+                // Call server endpoint to terminate the session
+                const response = await DpopFun.dpopFetch('POST', '/session/kill', {
+                    body: JSON.stringify({
+                        payload: { session_id: sessionId }
+                    })
+                });
+                
+                if (response.ok) {
+                    logger.info(`Session ${sessionId} terminated successfully`);
+                    alert('Session terminated successfully.');
+                    
+                    // Refresh session history
+                    const freshSessionData = await DpopFun.setupSession();
+                    if (freshSessionData) {
+                        await this.populateSessionUI(freshSessionData);
+                    }
+                } else {
+                    const error = await response.text();
+                    logger.error(`Failed to terminate session: ${error}`);
+                    alert(`Failed to terminate session: ${error}`);
+                }
+            } catch (error) {
+                logger.error('Error terminating session:', error);
+                alert(`Error terminating session: ${error.message}`);
+            }
+        }
+    }
+
+    reportSuspiciousSession(sessionId, sessionInfo) {
+        const location = sessionInfo.geolocation ? 
+            (() => {
+                try {
+                    const geo = typeof sessionInfo.geolocation === 'string' ? 
+                        JSON.parse(sessionInfo.geolocation) : sessionInfo.geolocation;
+                    return `${geo.city || 'Unknown'}, ${geo.country_code || geo.country || ''}`;
+                } catch (e) {
+                    return 'Unknown location';
+                }
+            })() : 'Unknown location';
+        
+        const timeAgo = this.formatTimeAgo(sessionInfo.created_at);
+        
+        if (confirm(`Report session from ${location} (${timeAgo}) as suspicious?\n\nThis will notify the security team for review.`)) {
+            logger.info(`Reporting suspicious session: ${sessionId}`, sessionInfo);
+            // In real app, this would make an API call to security endpoint
+            alert('Suspicious session reported. Security team will investigate.');
         }
     }
 }

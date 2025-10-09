@@ -429,6 +429,9 @@ class SessionService:
         #hydrate SESSION with session from db and add headers
         #if key starts with _x_, then replace all _ after position 3 with - // this gets around the db naming constraints
         SESSION.update(session_db)
+        # Expire old sessions first
+        await SessionDB.expire_old_sessions()
+        
         #check for other sessions for the authenticated user
         if SESSION.get("auth_username"):
             log.info("Session initialization - Getting active user sessions for username: %s", SESSION.get("auth_username"))
@@ -700,9 +703,9 @@ class SessionService:
     
     
     @staticmethod
-    async def _get_session_history(authenticated_username: str) -> list[dict]:
+    async def get_session_history(authenticated_username: str, days: int = 10) -> list[dict]:
         """Get session history for an authenticated user"""
-        created_at = int(time.time()) - (7 * 24 * 60 * 60) #  7 days ago
+        created_at = int(time.time()) - (days * 24 * 60 * 60)
         return await SessionDB.get_session_history(authenticated_username, created_at)
     
 
