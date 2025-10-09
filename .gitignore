@@ -6,3 +6,6 @@ __pycache__/
 stronghold.db*
 sms_gateway.py
 *.pem
+*.db
+*.db-shm
+*.db-wal
