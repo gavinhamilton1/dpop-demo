@@ -47,11 +47,11 @@ h3 {
 #sessionStatusModal {
     width: 100%;
     min-height: 100vh;
-    padding: 10px;
+    padding: 20px 10px 10px 10px;
     display: flex;
     justify-content: center;
     align-items: flex-start;
-    padding-top: 20px;
+    box-sizing: border-box;
 }
 
 .modal-content {
@@ -156,6 +156,7 @@ h3 {
 .status-item .value {
     font-weight: 600;
     font-size: 0.85rem;
+    text-align: right;
 }
 
 .status-bound {
@@ -166,6 +167,25 @@ h3 {
 .status-flag.green { color: var(--color-success); }
 .status-flag.amber { color: var(--color-warning); }
 .status-flag.red { color: var(--color-danger); }
+
+/* Inspector button */
+.inspector-btn {
+    background: none;
+    border: none;
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 4px;
+    margin-left: 0px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    opacity: 0.6;
+}
+
+.inspector-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
+    transform: scale(1.1);
+}
 
 .session-count-container {
     display: flex;
@@ -366,7 +386,7 @@ h3 {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-height: 200px;
+    max-height: 220px;
     overflow-y: auto;
 }
 
@@ -471,6 +491,17 @@ h3 {
     font-size: 0.65rem;
     padding-top: 4px;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+
+.history-signal .signal-data-btn {
+    display: inline-block;
+    margin-left: 0;
+    padding: 4px 10px;
+    font-size: 0.6rem;
+    vertical-align: middle;
 }
 
 .history-actions {
@@ -516,6 +547,67 @@ h3 {
     border-color: rgba(255, 255, 255, 0.2);
 }
 
+.history-action-btn.signal-data-btn {
+    background-color: transparent;
+    color: var(--text-muted);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.65rem;
+}
+
+.history-action-btn.signal-data-btn:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Session action buttons (for sessionItemTemplate) */
+.action-btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s ease;
+}
+
+.action-btn.signal-data-btn {
+    background-color: transparent;
+    color: var(--text-muted);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.65rem;
+}
+
+.action-btn.signal-data-btn:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.action-btn.terminate-btn {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.action-btn.terminate-btn:hover {
+    background-color: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+.action-btn.report-btn {
+    background-color: transparent;
+    color: var(--text-muted);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.65rem;
+}
+
+.action-btn.report-btn:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
 .no-history {
     color: var(--text-muted);
     font-size: 0.75rem;
@@ -533,8 +625,6 @@ h3 {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-height: 250px;
-    overflow-y: auto;
 }
 
 .device-item {
@@ -659,7 +749,6 @@ h3 {
     z-index: 1001;
     align-items: center;
     justify-content: center;
-    overflow-y: auto;
     padding: 20px;
 }
 
@@ -674,8 +763,6 @@ h3 {
 .modal-content.mobile-linking-content {
     width: 95%;
     max-width: 800px;
-    max-height: 90vh;
-    overflow-y: auto;
     background: var(--bg-dark);
     border: 1px solid var(--color-border);
     border-radius: 12px;
@@ -689,8 +776,76 @@ h3 {
 
 #mobileLinkingModal .modal-body {
     padding: 16px;
-    max-height: calc(90vh - 100px);
-    overflow-y: auto;
+}
+
+/* Signal Data Modal */
+#signalDataModal {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80%;
+    min-height: 100%;
+    z-index: 1001;
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 0;
+}
+
+.signal-data-content {
+    width: 95%;
+    max-width: 900px;
+    background: var(--bg-dark);
+    border: 1px solid var(--color-border);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+#signalDataModal .modal-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+#signalDataModal .modal-body {
+    padding: 16px;
+    overflow-y: visible;
+}
+
+/* Signal data link styles removed - now using button styling */
+
+.signal-data-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+}
+
+.signal-data-item {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.signal-data-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.signal-data-value {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    word-break: break-word;
+}
+
+.signal-data-value code {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.85rem;
 }
 
 .close-countdown {
@@ -1044,21 +1199,19 @@ h3 {
     background: rgba(0, 0, 0, 0.7);
     z-index: 1001;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
-    padding: 20px;
+    padding: 40px 20px;
     overflow-y: auto;
 }
 
 .session-details-content {
     max-width: 600px;
     width: 90%;
-    max-height: 90vh;
     background: var(--bg-dark);
     border: 1px solid var(--color-border);
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-    overflow-y: auto;
 }
 
 #sessionDetailsModal .modal-header {
@@ -1070,8 +1223,6 @@ h3 {
     border: 1px solid var(--color-border);
     border-radius: 8px;
     margin: 16px;
-    max-height: 400px;
-    overflow-y: auto;
 }
 
 .session-item {

@@ -428,7 +428,7 @@ class SessionDB:
                 COUNT(DISTINCT s._session_id) as session_count
                FROM devices d
                INNER JOIN sessions s ON d.device_id = s.device_id
-               WHERE s.auth_username = ?
+               WHERE s.auth_username = ? AND d.bik_jkt IS NOT NULL
                GROUP BY d.device_id
                ORDER BY last_used DESC""",
             [username]
@@ -444,9 +444,13 @@ class SessionDB:
         )
         
         if rows and rows[0]['count'] > 0:
-            # Delete the device record
-            await self.exec("DELETE FROM devices WHERE device_id=?", [device_id])
-            log.info(f"Removed device {device_id} for user {username}")
+            # Instead of deleting, clear the BIK data to "unregister" the device
+            # This preserves session history while removing the device's authentication capability
+            await self.exec(
+                "UPDATE devices SET bik_jkt=NULL, bik_jwk=NULL, updated_at=? WHERE device_id=?", 
+                [now(), device_id]
+            )
+            log.info(f"Unregistered device {device_id} for user {username} (cleared BIK)")
             return True
         else:
             log.warning(f"Device {device_id} not found or doesn't belong to user {username}")

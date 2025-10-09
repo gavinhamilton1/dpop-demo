@@ -152,6 +152,18 @@ class AppController {
             await this.handleMobileLink();
         });
 
+        // Inspector button for risk signals
+        const inspectorBtn = document.getElementById('inspectRiskSignals');
+        if (inspectorBtn) {
+            inspectorBtn.addEventListener('click', async () => {
+                // Get current session data
+                const sessionData = await DpopFun.setupSession();
+                if (sessionData) {
+                    this.showSignalDataModal(sessionData);
+                }
+            });
+        }
+
         // Close modals when clicking outside
         this.modal.addEventListener('click', (e) => {
             if (e.target === this.modal) {
@@ -443,12 +455,12 @@ class AppController {
             const history = data.history || [];
             
             if (history.length === 0) {
-                this.sessionHistoryList.innerHTML = '<p class="no-history">No previous sessions</p>';
-                return;
-            }
-            
+            this.sessionHistoryList.innerHTML = '<p class="no-history">No previous sessions</p>';
+            return;
+        }
+
             // Populate with actual history using template
-            this.sessionHistoryList.innerHTML = '';
+        this.sessionHistoryList.innerHTML = '';
             const template = document.getElementById('historyItemTemplate');
             const currentTime = Math.floor(Date.now() / 1000);
             const currentSessionId = sessionData.session_id;
@@ -469,7 +481,7 @@ class AppController {
                 logger.info(`Session ${sessionId}: isActive=${isActive}, isCurrentSession=${isCurrentSession}, status=${session.session_status}, expires_at=${session.expires_at}, currentTime=${currentTime}`);
                 
                 // Extract data
-                const timeAgo = this.formatTimeAgo(session.created_at);
+            const timeAgo = this.formatTimeAgo(session.created_at);
                 let location = 'Unknown';
                 
                 if (session.geolocation) {
@@ -535,7 +547,12 @@ class AppController {
                 // Set signal info
                 const signalEl = clone.querySelector('[data-signal]');
                 if (signalInfo) {
-                    signalEl.textContent = signalInfo;
+                    // Create text node and insert before the button
+                    const textNode = document.createTextNode(signalInfo + ' • ');
+                    const signalBtn = signalEl.querySelector('[data-signal-link]');
+                    if (signalBtn) {
+                        signalEl.insertBefore(textNode, signalBtn);
+                    }
                     signalEl.style.display = 'block';
                 } else {
                     signalEl.style.display = 'none';
@@ -559,8 +576,17 @@ class AppController {
                 reportBtn.addEventListener('click', () => {
                     this.reportSuspiciousSession(sessionId, session);
                 });
-
+                
+                // Add signal data button handler - AFTER appending to DOM
                 this.sessionHistoryList.appendChild(clone);
+                
+                const historyItem = this.sessionHistoryList.lastElementChild;
+                const signalBtn = historyItem.querySelector('[data-signal-link]');
+                if (signalBtn) {
+                    signalBtn.addEventListener('click', () => {
+                        this.showSignalDataModal(session);
+                    });
+                }
             });
             
             logger.info(`Loaded ${history.length} session history items`);
@@ -1119,8 +1145,8 @@ class AppController {
                 actionsDiv.style.display = 'none';
             } else {
                 actionsDiv.style.display = 'flex';
-                
-                // Add event listeners for action buttons
+
+        // Add event listeners for action buttons
                 const terminateBtn = clone.querySelector('[data-terminate-btn]');
                 const reportBtn = clone.querySelector('[data-report-btn]');
                 
@@ -1328,19 +1354,13 @@ class AppController {
                 logger.info(`Remove button element:`, removeBtn, 'isCurrentDevice:', isCurrentDevice);
                 
                 if (removeBtn) {
-                    if (isCurrentDevice) {
-                        // Hide button for current device
-                        removeBtn.style.setProperty('display', 'none', 'important');
-                        logger.info(`Hiding remove button for current device ${deviceIdShort}`);
-                    } else {
-                        // Show button for other devices - use setProperty with important
-                        removeBtn.style.setProperty('display', 'inline-block', 'important');
-                        removeBtn.style.visibility = 'visible';
-                        logger.info(`Showing remove button for device ${deviceIdShort}, final display:`, removeBtn.style.display);
-                        removeBtn.addEventListener('click', () => {
-                            this.removeDevice(device.device_id, device);
-                        });
-                    }
+                    // Button is visible by default via CSS, just attach event listener
+                    // Note: We don't hide the button for current device since the server
+                    // prevents removing it and the entire section is hidden when not authenticated
+                    logger.info(`Attaching event listener to remove button for device ${deviceIdShort}`);
+                    removeBtn.addEventListener('click', () => {
+                        this.removeDevice(device.device_id, device);
+                    });
                 } else {
                     logger.error(`Remove button not found in device item for ${deviceIdShort}`);
                 }
@@ -1395,6 +1415,149 @@ class AppController {
                 alert(`Error removing device: ${error.message}`);
             }
         }
+    }
+
+    showSignalDataModal(session) {
+        logger.info('Showing signal data modal for session:', session.session_id);
+        
+        // Get or create modal
+        let modal = document.getElementById('signalDataModal');
+        if (!modal) {
+            const template = document.getElementById('signalDataModalTemplate');
+            const clone = template.content.cloneNode(true);
+            document.body.appendChild(clone);
+            modal = document.getElementById('signalDataModal');
+        }
+        
+        // Populate modal with signal data
+        const modalContent = document.getElementById('signalDataModalContent');
+        if (!modalContent) return;
+        
+        // Parse signal data
+        let signalData = {};
+        if (session.signal_data) {
+            try {
+                signalData = typeof session.signal_data === 'string' ? 
+                    JSON.parse(session.signal_data) : session.signal_data;
+            } catch (e) {
+                logger.error('Failed to parse signal data:', e);
+                signalData = { error: 'Failed to parse signal data' };
+            }
+        }
+        
+        // Build signal data grid
+        const grid = document.createElement('div');
+        grid.className = 'signal-data-grid';
+        
+        // Helper function to add signal item
+        const addSignalItem = (label, value) => {
+            if (value === undefined || value === null) return;
+            
+            const item = document.createElement('div');
+            item.className = 'signal-data-item';
+            
+            const labelEl = document.createElement('div');
+            labelEl.className = 'signal-data-label';
+            labelEl.textContent = label;
+            
+            const valueEl = document.createElement('div');
+            valueEl.className = 'signal-data-value';
+            
+            // Format value based on type
+            if (typeof value === 'object') {
+                valueEl.innerHTML = `<code>${JSON.stringify(value, null, 2)}</code>`;
+            } else if (typeof value === 'boolean') {
+                valueEl.textContent = value ? 'Yes' : 'No';
+            } else {
+                valueEl.textContent = value;
+            }
+            
+            item.appendChild(labelEl);
+            item.appendChild(valueEl);
+            grid.appendChild(item);
+        };
+        
+        // Add IP and geolocation data first
+        if (session.client_ip) {
+            addSignalItem('IP Address', session.client_ip);
+        }
+        
+        // Parse and add geolocation data
+        if (session.geolocation) {
+            try {
+                const geo = typeof session.geolocation === 'string' ? 
+                    JSON.parse(session.geolocation) : session.geolocation;
+                
+                if (geo.city) addSignalItem('City', geo.city);
+                if (geo.region) addSignalItem('Region', geo.region);
+                if (geo.country) addSignalItem('Country', geo.country);
+                if (geo.postal) addSignalItem('Postal Code', geo.postal);
+                if (geo.latitude && geo.longitude) {
+                    addSignalItem('Coordinates', `${geo.latitude}, ${geo.longitude}`);
+                }
+                if (geo.timezone) addSignalItem('Geo Timezone', geo.timezone);
+                if (geo.org) addSignalItem('Organization', geo.org);
+                if (geo.asn) addSignalItem('ASN', geo.asn);
+            } catch (e) {
+                logger.error('Failed to parse geolocation:', e);
+            }
+        }
+        
+        // Add all signal data fields
+        addSignalItem('User Agent', signalData.userAgent);
+        addSignalItem('Platform', signalData.platform);
+        addSignalItem('Screen Resolution', signalData.screenResolution);
+        addSignalItem('Color Depth', signalData.colorDepth);
+        addSignalItem('Timezone', signalData.timezone);
+        addSignalItem('Language', signalData.language);
+        addSignalItem('Hardware Concurrency', signalData.hardwareConcurrency);
+        addSignalItem('Device Memory', signalData.deviceMemory);
+        addSignalItem('Cookies Enabled', signalData.cookieEnabled);
+        addSignalItem('Do Not Track', signalData.doNotTrack);
+        addSignalItem('WebGL Vendor', signalData.webglVendor);
+        addSignalItem('WebGL Renderer', signalData.webglRenderer);
+        addSignalItem('Device Type', signalData.deviceType);
+        addSignalItem('Timestamp', signalData.timestamp);
+        
+        // Add automation detection data if available
+        if (signalData.automation) {
+            addSignalItem('Webdriver', signalData.automation.webdriver);
+            addSignalItem('Headless UA', signalData.automation.headlessUA);
+            addSignalItem('Plugins Length', signalData.automation.pluginsLength);
+            addSignalItem('MIME Types Length', signalData.automation.mimeTypesLength);
+            addSignalItem('Visibility State', signalData.automation.visibilityState);
+            addSignalItem('Has Focus', signalData.automation.hasFocus);
+            
+            if (signalData.automation.permissionsAnomalies) {
+                addSignalItem('Permissions', signalData.automation.permissionsAnomalies);
+            }
+        }
+        
+        // Add user agent client hints if available
+        if (signalData.ua_ch) {
+            addSignalItem('UA Client Hints', signalData.ua_ch);
+        }
+        
+        modalContent.innerHTML = '';
+        modalContent.appendChild(grid);
+        
+        // Show modal
+        modal.style.display = 'flex';
+        
+        // Add close button handler
+        const closeBtn = document.getElementById('closeSignalDataBtn');
+        if (closeBtn) {
+            closeBtn.onclick = () => {
+                modal.style.display = 'none';
+            };
+        }
+        
+        // Close on overlay click
+        modal.onclick = (e) => {
+            if (e.target === modal) {
+                modal.style.display = 'none';
+            }
+        };
     }
 }
 

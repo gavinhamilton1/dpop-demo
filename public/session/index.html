@@ -34,7 +34,10 @@
                     </div>
                     <div class="status-item">
                         <span class="label">Risk Signals:</span>
-                        <strong class="value status-flag" id="sessionFlag">GREEN</strong>
+                        <div class="status-flag-container">
+                            <strong class="value status-flag" id="sessionFlag">GREEN</strong>
+                            <button class="inspector-btn" id="inspectRiskSignals" title="Inspect Signal Data">🔍</button>
+                        </div>
                     </div>
                     <div class="status-item">
                         <span class="label">Active Sessions:</span>
@@ -144,11 +147,13 @@
                     <span class="linked-icon">🔗</span>
                     <span class="linked-text" data-linked-text></span>
                 </div>
-                <div class="history-signal" data-signal style="display: none;"></div>
+                <div class="history-signal" data-signal style="display: none;">
+                    <button class="history-action-btn signal-data-btn" data-signal-link>More Signal Data</button>
+                </div>
             </div>
             <div class="history-actions" data-actions>
-                <button class="history-action-btn kill-btn" data-kill-btn style="display: none;">Kill Session</button>
                 <button class="history-action-btn report-btn" data-report-btn>Report Suspicious Activity</button>
+                <button class="history-action-btn kill-btn" data-kill-btn style="display: none;">Kill Session</button>
             </div>
         </div>
     </template>
@@ -162,6 +167,20 @@
                 </div>
                 <div class="modal-body" id="mobileLinkingModalContent">
                     <!-- Mobile linking UI will be rendered here -->
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <template id="signalDataModalTemplate">
+        <div class="modal-overlay" id="signalDataModal">
+            <div class="modal-content signal-data-content">
+                <div class="modal-header">
+                    <h2>Session Signal Data</h2>
+                    <button class="close-btn" id="closeSignalDataBtn">&times;</button>
+                </div>
+                <div class="modal-body" id="signalDataModalContent">
+                    <!-- Signal data will be rendered here -->
                 </div>
             </div>
         </div>
@@ -181,6 +200,7 @@
                 </div>
             </div>
             <div class="session-actions" data-actions>
+                <button class="action-btn signal-data-btn" data-signal-link>More Signal Data</button>
                 <button class="action-btn terminate-btn" data-terminate-btn>Terminate</button>
                 <button class="action-btn report-btn" data-report-btn>Report</button>
             </div>
