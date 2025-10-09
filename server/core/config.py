@@ -178,12 +178,17 @@ def load_settings(path: Optional[str] = None) -> Settings:
 
     cfg = _merge(_DEFAULTS, data)
 
-    # Resolve private key material: prefer environment variable, then inline, then file
+    # Resolve private key material: prefer environment variable, then file (Render secrets), then inline, then config file
     pem_env = os.getenv("DPOP_FUN_SERVER_EC_PRIVATE_KEY_PEM")
     pem_inline = (cfg.get("server") or {}).get("ec_private_key_pem")
     pem_file   = (cfg.get("server") or {}).get("ec_private_key_pem_file")
     pem: Optional[str] = None
     
+    # Check if key is in Render secrets file location
+    render_secret_path = Path("/etc/secrets/DPOP_FUN_SERVER_EC_PRIVATE_KEY_PEM")
+    
+    print(f"DEBUG: Checking Render secrets path: {render_secret_path}")
+    print(f"DEBUG: Render secrets file exists: {render_secret_path.exists()}")
     print(f"DEBUG: pem_env exists: {pem_env is not None}")
     print(f"DEBUG: pem_env length: {len(pem_env) if pem_env else 0}")
     if pem_env:
@@ -203,8 +208,18 @@ def load_settings(path: Optional[str] = None) -> Settings:
             pem = pem_env
         print(f"DEBUG: Using pem_env (length: {len(pem)})")
         log.info("Loaded ES256 private key from environment variable DPOP_FUN_SERVER_EC_PRIVATE_KEY_PEM")
-    elif pem_inline:
+    elif render_secret_path.exists():
+        # Check Render secrets file location
+        pem = render_secret_path.read_text(encoding="utf-8").strip()
+        print(f"DEBUG: Using Render secrets file (length: {len(pem)})")
+        log.info("Loaded ES256 private key from Render secrets file: %s", render_secret_path)
+    elif pem_inline and not (pem_inline.startswith("${") and pem_inline.endswith("}")):
+        # Only use pem_inline if it's not an unsubstituted placeholder
         pem = pem_inline
+        # Handle escaped newlines
+        if '\\n' in pem:
+            pem = pem.replace('\\n', '\n')
+            print(f"DEBUG: Converted escaped newlines in pem_inline")
         print(f"DEBUG: Using pem_inline (length: {len(pem)})")
         log.info("Loaded ES256 private key from config inline")
     elif pem_file:
@@ -219,6 +234,9 @@ def load_settings(path: Optional[str] = None) -> Settings:
     print(f"DEBUG: Final pem value exists: {pem is not None}")
     if pem:
         print(f"DEBUG: Final pem length: {len(pem)}")
+    else:
+        print(f"WARNING: No server EC private key configured - will generate ephemeral key")
+        log.warning("No server EC private key found in environment, config, or file")
 
     # Normalize db path
     db_path = (cfg.get("db") or {}).get("path") or "/tmp/dpop-fun.db"

@@ -3,9 +3,7 @@ coverage/
 __pycache__/
 *.pyc
 *.pyo
-stronghold.db*
+dpop-fun.db*
 sms_gateway.py
 *.pem
 *.db
-*.db-shm
-*.db-wal
