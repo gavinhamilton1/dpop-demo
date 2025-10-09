@@ -70,6 +70,7 @@ class SessionService:
             "auth_method": None,
             "auth_status": None,
             "auth_username": None,
+            "device_type": None,
             "client_ip": None,
             "state": SessionState.PENDING_BIND.name,
             "created_at": None,
@@ -176,6 +177,11 @@ class SessionService:
             SESSION["dpop_bind_expires_at"] = now() + BIND_TTL
             SESSION["signal_data"] = json.dumps(payload.get("signal_data")) if payload.get("signal_data") else None
             SESSION["signal_hash"] = None
+            
+            # Extract device_type from signal_data for easier access
+            if payload.get("signal_data") and payload.get("signal_data").get("deviceType"):
+                SESSION["device_type"] = payload.get("signal_data").get("deviceType")
+            
             SESSION["client_ip"] = req.client.host
             if req.headers.get("x-forwarded-for"):
                 SESSION["client_ip"] = req.headers.get("x-forwarded-for").split(",")[0].strip()

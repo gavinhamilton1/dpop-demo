@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Session Status Control</title>
-    <link rel="stylesheet" href="./style-new.css">
+    <link rel="stylesheet" href="/public/session/style-new.css">
     <!-- Backup: <link rel="stylesheet" href="./style.css"> -->
     <!-- QR Code and AprilTag libraries for mobile linking -->
     <script src="/public/vendor/qrcode.min.js"></script>
     <script src="/public/vendor/jsQR.js"></script>
     <script src="/public/js/utils/apriltag.js"></script>
-    <script defer type="module" src="./script.js"></script>
+    <script defer type="module" src="/public/session/script.js"></script>
 </head>
 <body>
 
@@ -83,7 +83,7 @@
             </div>
 
             <!-- Session History Section -->
-            <div class="session-history-section">
+            <div class="session-history-section" id="sessionHistorySection" style="display: none;">
                 <div class="section-header">
                     <div class="section-title">
                         <h3>Session History</h3>
@@ -93,6 +93,18 @@
                 </div>
                 <div id="sessionHistoryList" class="session-history-list">
                     <p class="no-history">No previous sessions</p>
+                </div>
+            </div>
+
+            <!-- Devices Section -->
+            <div class="devices-section" id="devicesSection" style="display: none;">
+                <div class="section-header">
+                    <div class="section-title">
+                        <h3>Registered Devices</h3>
+                    </div>
+                </div>
+                <div id="devicesList" class="devices-list">
+                    <p class="no-devices">No registered devices</p>
                 </div>
             </div>
 
@@ -171,6 +183,29 @@
             <div class="session-actions" data-actions>
                 <button class="action-btn terminate-btn" data-terminate-btn>Terminate</button>
                 <button class="action-btn report-btn" data-report-btn>Report</button>
+            </div>
+        </div>
+    </template>
+
+    <template id="deviceItemTemplate">
+        <div class="device-item">
+            <div class="device-main">
+                <div class="device-header">
+                    <span class="device-type-icon" data-type-icon></span>
+                    <div class="device-info">
+                        <span class="device-type" data-type></span>
+                        <span class="device-id-short" data-id-short></span>
+                    </div>
+                    <span class="device-current-badge" data-current-device style="display: none;">Current</span>
+                </div>
+                <div class="device-details">
+                    <span class="device-last-used" data-last-used></span>
+                    <span class="device-sessions" data-sessions></span>
+                </div>
+                <div class="device-signal" data-device-signal></div>
+            </div>
+            <div class="device-actions" data-device-actions>
+                <button class="device-action-btn remove-btn" data-remove-btn>Remove Device</button>
             </div>
         </div>
     </template>

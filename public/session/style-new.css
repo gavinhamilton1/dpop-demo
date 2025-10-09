@@ -524,6 +524,129 @@ h3 {
     padding: 20px 10px;
 }
 
+/* --- Devices Section --- */
+.devices-section {
+    margin-top: 24px;
+}
+
+.devices-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+.device-item {
+    padding: 12px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    border-left: 3px solid var(--color-success);
+    font-size: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.device-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.device-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.device-type-icon {
+    font-size: 1.5rem;
+}
+
+.device-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+}
+
+.device-type {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+
+.device-id-short {
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    font-family: 'Courier New', monospace;
+}
+
+.device-current-badge {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    background-color: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+}
+
+.device-details {
+    display: flex;
+    gap: 12px;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+}
+
+.device-signal {
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.device-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    min-width: 120px;
+}
+
+.device-action-btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.device-action-btn.remove-btn {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    display: inline-block;
+}
+
+.device-action-btn.remove-btn:hover {
+    background-color: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+.no-devices {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-style: italic;
+    text-align: center;
+    padding: 20px 10px;
+}
+
 /* --- Mobile Linking Modal --- */
 #mobileLinkingModal {
     position: fixed !important;

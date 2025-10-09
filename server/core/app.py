@@ -243,9 +243,9 @@ async def _init_db():
          response_class=HTMLResponse,
          tags=["demo"],
          summary="Main Application Page",
-         description="Serves the main journeys page with the complete DPoP demo interface")
+         description="Serves the main session management page with DPoP authentication")
 async def index():
-    with open(os.path.join(BASE_DIR, "..", "public", "journeys.html"), "r", encoding="utf-8") as f:
+    with open(os.path.join(BASE_DIR, "..", "public", "session", "index.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
 @app.get("/face-verify", 
@@ -424,6 +424,96 @@ async def get_session_history(req: Request, response: Response):
         raise
     except Exception as e:
         log.error(f"Get session history failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/devices",
+         tags=["devices"],
+         summary="Get User Devices",
+         description="Get all registered devices for authenticated user")
+async def get_user_devices(req: Request, response: Response):
+    """Get all devices for authenticated user"""
+    try:
+        # For GET requests, get session from cookie
+        session_id = req.session.get("session_id")
+        if not session_id:
+            raise HTTPException(status_code=401, detail="No session found")
+        
+        # Get session from database
+        session_data = await SessionDB.get_session(session_id)
+        if not session_data:
+            raise HTTPException(status_code=401, detail="Session not found")
+        
+        # Check if user is authenticated
+        username = session_data.get("auth_username")
+        if not username or session_data.get("auth_status") != "authenticated":
+            raise HTTPException(status_code=401, detail="User not authenticated")
+        
+        # Get user devices
+        devices = await SessionDB.get_user_devices(username)
+        
+        log.info(f"Devices retrieved for user {username}: {len(devices)} devices")
+        
+        return {
+            "ok": True,
+            "devices": devices,
+            "username": username
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Get user devices failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/devices/remove",
+          tags=["devices"],
+          summary="Remove User Device",
+          description="Unregister a device (remove BIK) for authenticated user")
+async def remove_user_device(req: Request, response: Response):
+    """Remove/unregister a device for the authenticated user"""
+    try:
+        # Get current session from cookie
+        session_id = req.session.get("session_id")
+        if not session_id:
+            raise HTTPException(status_code=401, detail="No session found")
+        
+        # Get session from database
+        session_data = await SessionDB.get_session(session_id)
+        if not session_data:
+            raise HTTPException(status_code=401, detail="Session not found")
+        
+        # Check if user is authenticated
+        username = session_data.get("auth_username")
+        if not username or session_data.get("auth_status") != "authenticated":
+            raise HTTPException(status_code=401, detail="User not authenticated")
+        
+        # Get device ID from request
+        body = await req.json()
+        device_id = body.get("payload", {}).get("device_id")
+        
+        if not device_id:
+            raise HTTPException(status_code=400, detail="Device ID is required")
+        
+        # Prevent removing current device
+        current_device_id = session_data.get("device_id")
+        if device_id == current_device_id:
+            raise HTTPException(status_code=400, detail="Cannot remove current device. Logout first.")
+        
+        # Remove the device
+        success = await SessionDB.remove_device(device_id, username)
+        
+        if success:
+            log.info(f"Device {device_id} removed for user {username}")
+            return {"ok": True, "message": "Device removed successfully"}
+        else:
+            raise HTTPException(status_code=404, detail="Device not found or access denied")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Remove device failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

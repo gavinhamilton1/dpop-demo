@@ -26,7 +26,10 @@ class AppController {
         this.sessionCount = document.getElementById('sessionCount');
         this.authMethod = document.getElementById('authMethod');
         this.reportActivityBtn = document.getElementById('reportActivityBtn');
+        this.sessionHistorySection = document.getElementById('sessionHistorySection');
         this.sessionHistoryList = document.getElementById('sessionHistoryList');
+        this.devicesSection = document.getElementById('devicesSection');
+        this.devicesList = document.getElementById('devicesList');
         this.passkeyAuthBtn = document.getElementById('passkeyAuthBtn');
         this.mobileLinkBtn = document.getElementById('mobileLinkBtn');
         this.usernameInput = document.getElementById('usernameInput');
@@ -339,6 +342,9 @@ class AppController {
         // Update session history in third column
         await this.updateSessionHistoryList(sessionData);
         
+        // Update devices list
+        await this.updateDevicesList(sessionData);
+        
         // Update session history (old section - can be removed later)
         this.updateSessionHistory(sessionData);
         
@@ -410,8 +416,17 @@ class AppController {
 
         // Check if user is authenticated
         if (!sessionData.auth_username || sessionData.auth_status !== 'authenticated') {
-            this.sessionHistoryList.innerHTML = '<p class="no-history">No previous sessions</p>';
+            // Hide section when not authenticated
+            if (this.sessionHistorySection) {
+                this.sessionHistorySection.style.display = 'none';
+            }
             return;
+        }
+        
+        // Show section when authenticated
+        if (this.sessionHistorySection) {
+            this.sessionHistorySection.style.display = 'block';
+            logger.info('Session History section shown');
         }
 
         try {
@@ -1210,6 +1225,175 @@ class AppController {
             logger.info(`Reporting suspicious session: ${sessionId}`, sessionInfo);
             // In real app, this would make an API call to security endpoint
             alert('Suspicious session reported. Security team will investigate.');
+        }
+    }
+
+    async updateDevicesList(sessionData) {
+        if (!this.devicesList) return;
+
+        // Check if user is authenticated
+        if (!sessionData.auth_username || sessionData.auth_status !== 'authenticated') {
+            // Hide section when not authenticated
+            if (this.devicesSection) {
+                this.devicesSection.style.display = 'none';
+            }
+            return;
+        }
+        
+        // Show section when authenticated
+        if (this.devicesSection) {
+            this.devicesSection.style.display = 'block';
+            logger.info('Devices section shown');
+        }
+
+        try {
+            // Fetch devices from server
+            const response = await DpopFun.dpopFetch('GET', '/devices');
+            
+            logger.info('Devices fetch response status:', response.status);
+            
+            if (!response.ok) {
+                logger.warn('Failed to fetch devices:', response.status);
+                this.devicesList.innerHTML = '<p class="no-devices">Unable to load devices</p>';
+                return;
+            }
+            
+            const data = await response.json();
+            logger.info('Devices data received:', data);
+            const devices = data.devices || [];
+            logger.info('Number of devices:', devices.length);
+            
+            if (devices.length === 0) {
+                this.devicesList.innerHTML = '<p class="no-devices">No registered devices</p>';
+                return;
+            }
+            
+            // Populate devices list using template
+            this.devicesList.innerHTML = '';
+            const template = document.getElementById('deviceItemTemplate');
+            const currentDeviceId = sessionData.device_id;
+            
+            devices.forEach(device => {
+                const clone = template.content.cloneNode(true);
+                
+                const isCurrentDevice = device.device_id === currentDeviceId;
+                const deviceType = device.device_type || 'unknown';
+                const deviceIdShort = device.device_id ? device.device_id.substring(0, 8) : 'unknown';
+                
+                logger.info(`Device: ${device.device_id} (${deviceIdShort}), Current: ${currentDeviceId}, isCurrentDevice: ${isCurrentDevice}`);
+                
+                // Set device type icon
+                const typeIcon = clone.querySelector('[data-type-icon]');
+                typeIcon.textContent = deviceType === 'mobile' ? '📱' : '💻';
+                
+                // Set device info
+                clone.querySelector('[data-type]').textContent = deviceType.charAt(0).toUpperCase() + deviceType.slice(1);
+                clone.querySelector('[data-id-short]').textContent = `ID: ${deviceIdShort}...`;
+                
+                // Show current badge if applicable
+                const currentBadge = clone.querySelector('[data-current-device]');
+                if (isCurrentDevice) {
+                    currentBadge.style.display = 'inline';
+                    logger.info(`Device ${deviceIdShort} is current device - hiding remove button`);
+                } else {
+                    logger.info(`Device ${deviceIdShort} is NOT current device - showing remove button`);
+                }
+                
+                // Set device details
+                const lastUsed = device.last_used ? this.formatTimeAgo(device.last_used) : 'Never';
+                clone.querySelector('[data-last-used]').textContent = `Last used: ${lastUsed}`;
+                clone.querySelector('[data-sessions]').textContent = `${device.session_count || 0} sessions`;
+                
+                // Parse signal data
+                let signalText = '';
+                if (device.signal_data) {
+                    try {
+                        const signal = typeof device.signal_data === 'string' ? 
+                            JSON.parse(device.signal_data) : device.signal_data;
+                        const browser = this.extractBrowserName(signal.userAgent);
+                        const platform = signal.platform || 'Unknown';
+                        signalText = `${browser} • ${platform}`;
+                    } catch (e) {
+                        signalText = 'Signal data unavailable';
+                    }
+                }
+                clone.querySelector('[data-device-signal]').textContent = signalText;
+                
+                this.devicesList.appendChild(clone);
+                
+                // Handle remove button - AFTER appending to DOM
+                const deviceItem = this.devicesList.lastElementChild;
+                const removeBtn = deviceItem.querySelector('[data-remove-btn]');
+                
+                logger.info(`Remove button element:`, removeBtn, 'isCurrentDevice:', isCurrentDevice);
+                
+                // if (removeBtn) {
+                //     if (isCurrentDevice) {
+                //         // Hide button for current device
+                //         removeBtn.style.setProperty('display', 'none', 'important');
+                //         logger.info(`Hiding remove button for current device ${deviceIdShort}`);
+                //     } else {
+                //         // Show button for other devices - use setProperty with important
+                //         removeBtn.style.setProperty('display', 'inline-block', 'important');
+                //         removeBtn.style.visibility = 'visible';
+                //         logger.info(`Showing remove button for device ${deviceIdShort}, final display:`, removeBtn.style.display);
+                //         removeBtn.addEventListener('click', () => {
+                //             this.removeDevice(device.device_id, device);
+                //         });
+                //     }
+                // } else {
+                //     logger.error(`Remove button not found in device item for ${deviceIdShort}`);
+                // }
+            });
+            
+            logger.info(`Loaded ${devices.length} devices`);
+            
+            // Force show at least one device's button for testing
+            const allRemoveBtns = this.devicesList.querySelectorAll('[data-remove-btn]');
+            logger.info(`Total remove buttons in DOM:`, allRemoveBtns.length);
+            allRemoveBtns.forEach((btn, idx) => {
+                logger.info(`Button ${idx}: display=${btn.style.display}, classList=${btn.classList}`);
+            });
+            
+        } catch (error) {
+            logger.error('Failed to load devices:', error);
+            this.devicesList.innerHTML = '<p class="no-devices">Unable to load devices</p>';
+        }
+    }
+
+    async removeDevice(deviceId, deviceInfo) {
+        const deviceType = deviceInfo.device_type || 'unknown';
+        const deviceIdShort = deviceId.substring(0, 8);
+        
+        if (confirm(`Remove ${deviceType} device (${deviceIdShort}...)?\n\nThis will unregister the device and you'll need to re-authenticate it.`)) {
+            try {
+                logger.info(`Removing device: ${deviceId}`);
+                
+                // Call server endpoint to remove the device
+                const response = await DpopFun.dpopFetch('POST', '/devices/remove', {
+                    body: JSON.stringify({
+                        payload: { device_id: deviceId }
+                    })
+                });
+                
+                if (response.ok) {
+                    logger.info(`Device ${deviceId} removed successfully`);
+                    alert('Device removed successfully.');
+                    
+                    // Refresh devices list
+                    const freshSessionData = await DpopFun.setupSession();
+                    if (freshSessionData) {
+                        await this.populateSessionUI(freshSessionData);
+                    }
+                } else {
+                    const error = await response.text();
+                    logger.error(`Failed to remove device: ${error}`);
+                    alert(`Failed to remove device: ${error}`);
+                }
+            } catch (error) {
+                logger.error('Error removing device:', error);
+                alert(`Error removing device: ${error.message}`);
+            }
         }
     }
 }

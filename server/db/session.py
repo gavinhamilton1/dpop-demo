@@ -87,6 +87,7 @@ class SessionDB:
           auth_status TEXT,             -- Authentication status
           auth_username TEXT,           -- Authentication username
           device_id TEXT,              -- Foreign key to devices.device_id
+          device_type TEXT,            -- Device type (mobile, desktop, tablet)
           state TEXT,                  -- 'pending-bind', 'bound-bik', 'bound', 'authenticated'
           dpop_bind_expires_at INTEGER,              -- Binding token expiration timestamp
           client_ip TEXT,                   -- Client IP address
@@ -177,14 +178,14 @@ class SessionDB:
         else:
             await self.exec(
                 """INSERT INTO sessions(_session_id, session_status, session_flag, session_flag_comment, auth_method, auth_status, auth_username, 
-                                        _access_token, _refresh_token, _id_token, device_id, state, 
+                                        _access_token, _refresh_token, _id_token, device_id, device_type, state, 
                                         dpop_jkt, dpop_jwk, dpop_bind_expires_at, _x_x_csrf_token, 
                                         _x_dpop_nonce, _x_dpop_bind, client_ip, signal_data, signal_hash, created_at, 
                                         updated_at, expires_at, geolocation) 
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
                     (session_id, data.get("session_status"), data.get("session_flag"), data.get("session_flag_comment"), data.get("auth_method"), data.get("auth_status"), data.get("auth_username"), 
                      data.get("_access_token"), data.get("_refresh_token"), data.get("_id_token"), 
-                     data.get("device_id"), data.get("state"), data.get("dpop_jkt"), 
+                     data.get("device_id"), data.get("device_type"), data.get("state"), data.get("dpop_jkt"), 
                      data.get("dpop_jwk"), data.get("dpop_bind_expires_at"), data.get("_x_x-csrf-token"), 
                      data.get("_x_dpop-nonce"), data.get("_x_dpop-bind"), data.get("client_ip"), 
                      data.get("signal_data"), data.get("signal_hash"), now(), now(), data.get("expires_at"), data.get("geolocation"))
@@ -417,6 +418,39 @@ class SessionDB:
             "UPDATE sessions SET linked_session_id=? WHERE _session_id=?",
             (session_id_1, session_id_2)
         )
+    
+    async def get_user_devices(self, username: str) -> List[Dict[str, Any]]:
+        """Get all devices registered by a user (via their sessions)"""
+        rows = await self.fetchall(
+            """SELECT 
+                d.*,
+                MAX(s.updated_at) as last_used,
+                COUNT(DISTINCT s._session_id) as session_count
+               FROM devices d
+               INNER JOIN sessions s ON d.device_id = s.device_id
+               WHERE s.auth_username = ?
+               GROUP BY d.device_id
+               ORDER BY last_used DESC""",
+            [username]
+        )
+        return [dict(row) for row in rows]
+    
+    async def remove_device(self, device_id: str, username: str) -> bool:
+        """Remove a device for a specific user (unregister BIK)"""
+        # Verify the device belongs to the user
+        rows = await self.fetchall(
+            "SELECT COUNT(*) as count FROM sessions WHERE device_id=? AND auth_username=?",
+            [device_id, username]
+        )
+        
+        if rows and rows[0]['count'] > 0:
+            # Delete the device record
+            await self.exec("DELETE FROM devices WHERE device_id=?", [device_id])
+            log.info(f"Removed device {device_id} for user {username}")
+            return True
+        else:
+            log.warning(f"Device {device_id} not found or doesn't belong to user {username}")
+            return False
 
 
 # --- low-level helpers -------------------------------------------------
