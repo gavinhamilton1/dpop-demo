@@ -281,6 +281,11 @@ class SessionService:
                 fingerprint_result = SessionService._generate_browser_fingerprint(signal_data_json)
                 SESSION["signal_hash"] = fingerprint_result["hash"]
                 
+                # Extract device_type from signal_data for existing sessions
+                if payload.get("signal_data").get("deviceType"):
+                    SESSION["device_type"] = payload.get("signal_data").get("deviceType")
+                    log.info("Session initialization - Device type extracted from signal_data: %s", SESSION["device_type"])
+                
                 # Compare with stored fingerprint if available
                 stored_signal_hash = session_db.get("signal_hash")
                 if stored_signal_hash and stored_signal_hash != fingerprint_result["hash"]:
@@ -434,7 +439,16 @@ class SessionService:
         log.info("Completed bind token validation for existing session")
         #hydrate SESSION with session from db and add headers
         #if key starts with _x_, then replace all _ after position 3 with - // this gets around the db naming constraints
+        
+        # Save device_type extracted from signal_data before update
+        extracted_device_type = SESSION.get("device_type")
+        
         SESSION.update(session_db)
+        
+        # If DB doesn't have device_type but we extracted it from signal_data, use the extracted value
+        if not SESSION.get("device_type") and extracted_device_type:
+            SESSION["device_type"] = extracted_device_type
+            log.info("Session initialization - Using extracted device_type (not in DB): %s", extracted_device_type)
         # Expire old sessions first
         await SessionDB.expire_old_sessions()
         

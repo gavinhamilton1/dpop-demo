@@ -181,8 +181,15 @@ class PasskeyService:
         # Filter by device type to only show passkeys created on the same device type
         current_device_type = session_data.get("device_type")
         
+        log.info(f"Auth options - Current session device_type: '{current_device_type}'")
+        log.info(f"Auth options - Session data keys: {list(session_data.keys())}")
+        
         if username:
             all_credentials = await SessionDB.pk_get_for_principal(username)
+            log.info(f"Auth options - Found {len(all_credentials)} total passkeys for {username}")
+            for idx, cred in enumerate(all_credentials):
+                log.info(f"  Passkey {idx}: device_type='{cred.get('device_type')}', cred_id={cred.get('cred_id')[:20]}...")
+            
             # Filter credentials by device type
             existing_credentials = [
                 cred for cred in all_credentials 
