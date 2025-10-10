@@ -1177,16 +1177,19 @@ export class MobileLinkService {
       logger.info('Authenticating with existing passkey for username:', this.username);
       
       // For mobile login, get auth options with the username
-      // This allows the server to return the specific credentials for this user
-      // But we still use empty allowCredentials for usernameless discovery on the client
+      // Server filters by device_type, so we only get mobile passkeys
       const authOptions = await Passkeys.getAuthOptions(this.username);
-      logger.info('Auth options received, has credentials:', authOptions._meta?.hasCredentials);
+      logger.info('Auth options received:', {
+        hasCredentials: authOptions._meta?.hasCredentials,
+        registeredCount: authOptions._meta?.registeredCount,
+        allowCredentialsCount: authOptions.allowCredentials?.length
+      });
       
-      // Override allowCredentials to empty array for usernameless discovery
-      // This allows the platform authenticator to present available passkeys
-      authOptions.allowCredentials = [];
+      // Use the credentials from server (already filtered to mobile device)
+      // When there's a specific credential, browser goes straight to biometric
+      // No need to override to empty array - that causes the picker
       
-      // Authenticate with passkey (browser will show available passkeys)
+      // Authenticate with passkey
       const result = await Passkeys.authenticatePasskey(this.username, authOptions);
       logger.info('Passkey authentication successful:', result);
       
