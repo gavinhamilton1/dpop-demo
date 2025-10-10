@@ -60,13 +60,23 @@ class MobileController {
         this.linkId,
         (data) => this.onComplete(data),
         (error) => this.onError(error),
-        (authMethod) => this.onAuthenticated(authMethod)
+        (authMethod) => this.onAuthenticated(authMethod),
+        () => this.onSessionSetup()  // Callback when session setup completes
       );
       
     } catch (error) {
       logger.error('Registration flow failed:', error);
       this.showError(`Registration failed: ${error.message}`);
     }
+  }
+
+  /**
+   * Handle session setup completion (step 1)
+   */
+  onSessionSetup() {
+    logger.info('Mobile session setup completed');
+    this.updateStep(1, 'completed', 'Mobile session ready');
+    this.updateStep(2, 'active', 'Verifying identity...');
   }
 
   /**
@@ -118,12 +128,12 @@ class MobileController {
   }
 
   /**
-   * Handle authentication success
+   * Handle authentication success (step 2 complete)
    */
   onAuthenticated(authMethod) {
     logger.info('Authentication successful:', authMethod);
     this.updateStep(2, 'completed', 'Identity verified');
-    this.updateStep(3, 'active', 'Completing linking...');
+    this.updateStep(3, 'active', 'Finalizing...');
   }
 
   /**

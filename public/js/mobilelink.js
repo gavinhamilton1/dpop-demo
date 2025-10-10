@@ -49,6 +49,7 @@ export class MobileLinkService {
     this.onComplete = null;
     this.onError = null;
     this.onAuthenticated = null;
+    this.onSessionSetup = null;
     this.registrationAuthData = null;
   }
 
@@ -953,19 +954,26 @@ export class MobileLinkService {
    * @param {Function} onComplete - Callback when complete
    * @param {Function} onError - Callback when error
    * @param {Function} onAuthenticated - Callback when authenticated
+   * @param {Function} onSessionSetup - Callback when mobile session setup completes
    */
-  async initMobileRegistrationFlow(linkId, onComplete, onError, onAuthenticated = null) {
+  async initMobileRegistrationFlow(linkId, onComplete, onError, onAuthenticated = null, onSessionSetup = null) {
     this.flowType = 'registration';
     this.currentLinkId = linkId;
     this.onComplete = onComplete;
     this.onError = onError;
     this.onAuthenticated = onAuthenticated;
+    this.onSessionSetup = onSessionSetup;
     
     logger.info('Initializing mobile registration flow');
     
     try {
       // Step 1: Establish mobile session (BIK + DPoP)
       await this.startMobileSession();
+      
+      // Notify that session setup is complete
+      if (this.onSessionSetup) {
+        this.onSessionSetup();
+      }
       
       // Step 2: Link mobile session to desktop session and get desktop username
       await this.linkMobileToDesktop();
