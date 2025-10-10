@@ -336,10 +336,10 @@ export class MobileLinkService {
             `;
           }
           
-          // Complete the step after a short delay
+          // Complete the step after a short delay to ensure server has updated desktop session
           setTimeout(() => {
             this.completeStep();
-          }, 1000);
+          }, 3000);
         } else {
           // Registration flow - always show verification phase for first-time mobile linking
           logger.info('Registration flow - showing verification phase');

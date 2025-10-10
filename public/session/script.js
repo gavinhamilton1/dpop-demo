@@ -1030,6 +1030,9 @@ class AppController {
             logger.info('Fetching fresh session data after mobile linking...');
             const freshSessionData = await DpopFun.setupSession();
             logger.info('Fresh session data received:', freshSessionData);
+            logger.info('Auth status:', freshSessionData.auth_status);
+            logger.info('Auth username:', freshSessionData.auth_username);
+            logger.info('Auth method:', freshSessionData.auth_method);
             
             if (freshSessionData) {
                 logger.info('Populating UI with fresh session data...');
@@ -1037,9 +1040,15 @@ class AppController {
                 
                 // Restore authentication state (in case of mobile login flow)
                 logger.info('Restoring authentication state...');
+                logger.info('Calling restoreAuthenticationState with:', {
+                    auth_status: freshSessionData.auth_status,
+                    auth_username: freshSessionData.auth_username,
+                    auth_method: freshSessionData.auth_method
+                });
                 this.restoreAuthenticationState(freshSessionData);
                 
                 logger.info('Desktop UI update complete');
+                logger.info('isAuthenticated flag:', this.isAuthenticated);
             }
         } catch (error) {
             logger.error('Failed to refresh session data after mobile linking:', error);
