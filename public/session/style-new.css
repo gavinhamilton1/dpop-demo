@@ -187,6 +187,19 @@ h3 {
     transform: scale(1.1);
 }
 
+/* Match inspector button icon color to session flag */
+.status-flag.green ~ .inspector-btn svg {
+    fill: var(--color-success);
+}
+
+.status-flag.amber ~ .inspector-btn svg {
+    fill: var(--color-warning);
+}
+
+.status-flag.red ~ .inspector-btn svg {
+    fill: var(--color-danger);
+}
+
 .session-count-container {
     display: flex;
     align-items: center;
