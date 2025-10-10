@@ -26,6 +26,11 @@ body {
     line-height: 1.6;
 }
 
+/* Prevent iOS zoom on input focus - global rule */
+input, textarea, select {
+    font-size: 16px !important;
+}
+
 .container {
     max-width: 900px;
     margin: 0 auto;
@@ -570,7 +575,7 @@ body {
     background: var(--surface);
     color: var(--text);
     font-family: inherit;
-    font-size: 0.9rem;
+    font-size: 16px; /* Prevent iOS zoom (>= 16px) */
     resize: vertical;
     transition: border-color 0.3s ease;
 }

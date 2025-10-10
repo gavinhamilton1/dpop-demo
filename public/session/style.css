@@ -27,6 +27,11 @@ body {
     min-height: 100vh;
 }
 
+/* Prevent iOS zoom on input focus - global rule */
+input, textarea, select {
+    font-size: 16px !important;
+}
+
 /* --- Default Styles --- */
 .modal-content {
     background-color: var(--bg-dark);
@@ -418,7 +423,7 @@ body {
     border-radius: 6px;
     background-color: rgba(255, 255, 255, 0.05);
     color: var(--text-dark);
-    font-size: 0.85rem;
+    font-size: 16px; /* Prevent iOS zoom (>= 16px) */
     transition: border-color 0.2s, background-color 0.2s;
     box-sizing: border-box;
     min-height: 40px;
@@ -1031,7 +1036,7 @@ a.btn-link:hover {
     width: 1.8rem !important;
     height: 1.8rem !important;
     text-align: center !important;
-    font-size: 1.1rem !important;
+    font-size: 18px !important; /* Prevent iOS zoom (>= 16px) */
     font-weight: 700 !important;
     border: 2px solid var(--color-border) !important;
     border-radius: 8px !important;
@@ -1112,7 +1117,7 @@ a.btn-link:hover {
     #codeBoxes input {
         width: 1.75rem !important;
         height: 1.75rem !important;
-        font-size: 0.9rem !important;
+        font-size: 16px !important; /* Prevent iOS zoom (>= 16px) */
         border-radius: 6px !important;
     }
     

@@ -211,7 +211,24 @@ export async function authenticatePasskey(username = null, passedOpts = null) {
       rpId: pub.rpId
     });
     
-    const assertion = await navigator.credentials.get({ publicKey: pub });
+    // For mobile with single passkey, use optional mediation to skip picker
+    // This goes straight to biometric when there's only one credential
+    const credentialOptions = {
+      publicKey: pub
+    };
+    
+    // On mobile, if using empty allowCredentials (usernameless), skip the picker
+    if (!pub.allowCredentials || pub.allowCredentials.length === 0) {
+      // Usernameless discovery - let platform handle it smoothly
+      credentialOptions.mediation = 'optional';
+      logger.debug('Using optional mediation for usernameless discovery');
+    } else if (pub.allowCredentials.length === 1) {
+      // Single credential - skip picker and go straight to biometric
+      credentialOptions.mediation = 'optional';
+      logger.debug('Using optional mediation for single credential');
+    }
+    
+    const assertion = await navigator.credentials.get(credentialOptions);
     logger.debug('Raw assertion result:', assertion);
     
     if (!assertion) {
