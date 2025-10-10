@@ -361,7 +361,9 @@ export async function createDPoPProof(method, url) {
 }
 
 
-export async function dpopFetch(method, url, options = {}) {
+export async function dpopFetch(method, url, options = {}, retryCount = 0) {
+  const MAX_RETRIES = 1; // Only retry once for nonce errors
+  
   try {
     if (!DPOP_SESSION.dpop) {
       throw new Error('DPoP key not available. Call setupSession() first.');
@@ -410,6 +412,23 @@ export async function dpopFetch(method, url, options = {}) {
     if (newBind) {
       DPOP_SESSION.dpop_bind = newBind;
       await idbPut(STORES.SESSION, { id: CONFIG.STORAGE.SESSION.DPOP_BIND, value: newBind });
+    }
+
+    // Check for nonce error and retry if we have a new nonce
+    if (!response.ok && response.status === 400 && newNonce && retryCount < MAX_RETRIES) {
+      try {
+        // Clone the response so we can read it without consuming the original
+        const responseClone = response.clone();
+        const errorData = await responseClone.json();
+        if (errorData.detail && errorData.detail.toLowerCase().includes('nonce')) {
+          logger.warn('Nonce error detected, retrying with new nonce:', newNonce);
+          // Retry the request with the new nonce
+          return await dpopFetch(method, url, options, retryCount + 1);
+        }
+      } catch (jsonError) {
+        // If we can't parse the error response, don't retry
+        logger.warn('Failed to parse error response, not retrying:', jsonError);
+      }
     }
 
     logger.info('Authenticated request made:', { method, url, status: response.status });

@@ -317,6 +317,9 @@ async def session_logout(req: Request, response: Response):
         # Logout the session
         await SessionService.logout_session(session_id)
         
+        # Clear the session cookie to force a fresh session on next request
+        req.session.clear()
+        
         return {"ok": True, "message": "Logged out successfully"}
         
     except HTTPException:
@@ -735,23 +738,22 @@ async def link_mobile_complete(req: Request, response: Response):
             await SessionDB.link_sessions(desktop_session_id, mobile_session_id)
             log.info(f"Linked sessions: desktop {desktop_session_id} <-> mobile {mobile_session_id}")
             
-            # For login flow, also authenticate the desktop session
+            # Authenticate the desktop session (for both registration and login flows)
             flow_type = link_data.get("flow_type", "registration")
-            if flow_type == "login":
-                # Get desktop session
-                desktop_session = await SessionDB.get_session(desktop_session_id)
-                if desktop_session:
-                    # Update desktop session to be authenticated
-                    await SessionDB.update_session_auth_status(
-                        desktop_session_id,
-                        "Mobile Passkey",  # auth_method
-                        "authenticated",   # auth_status
-                        mobile_username    # username
-                    )
-                    
-                    log.info(f"Desktop session {desktop_session_id} authenticated via mobile linking with username {mobile_username}")
-                else:
-                    log.warning(f"Desktop session {desktop_session_id} not found")
+            # Get desktop session
+            desktop_session = await SessionDB.get_session(desktop_session_id)
+            if desktop_session:
+                # Update desktop session to be authenticated
+                await SessionDB.update_session_auth_status(
+                    desktop_session_id,
+                    "Mobile Passkey",  # auth_method
+                    "authenticated",   # auth_status
+                    mobile_username    # username
+                )
+                
+                log.info(f"Desktop session {desktop_session_id} authenticated via mobile linking ({flow_type} flow) with username {mobile_username}")
+            else:
+                log.warning(f"Desktop session {desktop_session_id} not found")
         else:
             log.warning(f"No desktop session ID in link data for {link_id}")
         

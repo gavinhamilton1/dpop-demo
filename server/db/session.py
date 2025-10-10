@@ -127,6 +127,7 @@ class SessionDB:
           sign_count INTEGER NOT NULL DEFAULT 0,
           aaguid TEXT,
           transports TEXT,              -- JSON array
+          device_type TEXT,             -- Device type (desktop, mobile, tablet) - tracks where passkey was created
           created_at INTEGER NOT NULL
         );
         -- Optional index for frequent lookups
@@ -294,20 +295,22 @@ class SessionDB:
                 "sign_count": r["sign_count"],
                 "aaguid": r["aaguid"],
                 "transports": json.loads(r["transports"]) if r["transports"] else [],
+                "device_type": r["device_type"],
                 "created_at": r["created_at"],
             })
         return out
 
     async def pk_upsert(self, principal: str, rec: Dict[str, Any]) -> None:
         await self.exec(
-            """INSERT INTO passkeys(principal, cred_id, public_key_jwk, sign_count, aaguid, transports, created_at)
-               VALUES(?,?,?,?,?,?,?)
+            """INSERT INTO passkeys(principal, cred_id, public_key_jwk, sign_count, aaguid, transports, device_type, created_at)
+               VALUES(?,?,?,?,?,?,?,?)
                ON CONFLICT(cred_id) DO UPDATE SET
                  principal=excluded.principal,
                  public_key_jwk=excluded.public_key_jwk,
                  sign_count=excluded.sign_count,
                  aaguid=excluded.aaguid,
-                 transports=excluded.transports""",
+                 transports=excluded.transports,
+                 device_type=excluded.device_type""",
             (
                 principal,
                 rec["cred_id"],
@@ -315,6 +318,7 @@ class SessionDB:
                 int(rec.get("sign_count") or 0),
                 rec.get("aaguid"),
                 json.dumps(rec.get("transports") or [], separators=(",", ":")),
+                rec.get("device_type"),
                 int(rec.get("created_at") or 0),
             ),
         )
@@ -330,6 +334,7 @@ class SessionDB:
             "sign_count": r["sign_count"],
             "aaguid": r["aaguid"],
             "transports": json.loads(r["transports"]) if r["transports"] else [],
+            "device_type": r["device_type"],
             "created_at": r["created_at"],
         }
 
@@ -344,6 +349,7 @@ class SessionDB:
             "sign_count": r["sign_count"],
             "aaguid": r["aaguid"],
             "transports": json.loads(r["transports"]) if r["transports"] else [],
+            "device_type": r["device_type"],
             "created_at": r["created_at"],
         }
         return r["principal"], rec

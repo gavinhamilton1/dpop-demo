@@ -845,13 +845,27 @@ class AppController {
                 const result = await Passkeys.registerPasskey(this.username);
                 logger.info('Passkey registration successful:', result);
                 
-                // Update button to login mode
-                btnText.textContent = 'Login with Passkey';
+                // After successful registration, user is authenticated
+                // Update button to logout mode
+                btnText.textContent = 'Logout';
+                this.passkeyAuthBtn.querySelector('.btn-icon').textContent = '🚪';
+                this.passkeyAuthBtn.classList.add('logout-mode');
+                this.passkeyAuthBtn.disabled = false;
                 
-                // Re-enable if username still present
-                this.passkeyAuthBtn.disabled = !this.username;
+                // Set authenticated flag
+                this.isAuthenticated = true;
                 
-                logger.info(`Passkey created successfully for ${this.username}`);
+                logger.info(`Passkey created and authenticated as ${this.username}`);
+                
+                // Fetch fresh session data to show authenticated state
+                try {
+                    const freshSessionData = await DpopFun.setupSession();
+                    if (freshSessionData) {
+                        await this.populateSessionUI(freshSessionData);
+                    }
+                } catch (error) {
+                    logger.error('Failed to refresh session data after registration:', error);
+                }
             } else if (originalText === 'Login with Passkey') {
                 // Authenticate with existing passkey
                 logger.info('Starting passkey authentication for user:', this.username);
@@ -1009,19 +1023,26 @@ class AppController {
     }
     
     async onMobileLinkComplete() {
-        logger.info('Mobile linking completed successfully');
+        logger.info('Mobile linking completed successfully - updating desktop UI');
         
         // Close the modal
         this.closeMobileLinkingModal();
         
         // Refresh session data
         try {
+            logger.info('Fetching fresh session data after mobile linking...');
             const freshSessionData = await DpopFun.setupSession();
+            logger.info('Fresh session data received:', freshSessionData);
+            
             if (freshSessionData) {
+                logger.info('Populating UI with fresh session data...');
                 await this.populateSessionUI(freshSessionData);
                 
                 // Restore authentication state (in case of mobile login flow)
+                logger.info('Restoring authentication state...');
                 this.restoreAuthenticationState(freshSessionData);
+                
+                logger.info('Desktop UI update complete');
             }
         } catch (error) {
             logger.error('Failed to refresh session data after mobile linking:', error);

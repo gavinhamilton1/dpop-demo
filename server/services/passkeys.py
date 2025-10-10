@@ -138,6 +138,10 @@ class PasskeyService:
         sign_count = info["signCount"]
         cred_id = b64u(info["credId"])
         
+        # Get device type from session to track where passkey was created
+        session = await SessionDB.get_session(session_id)
+        device_type = session.get("device_type") if session else None
+        
         # Store passkey in dedicated passkey table (keyed by username, not device_id)
         await SessionDB.pk_upsert(username, {
             "cred_id": cred_id,
@@ -145,6 +149,7 @@ class PasskeyService:
             "sign_count": sign_count,
             "aaguid": aaguid_hex,
             "transports": attestation_data.get("transports", ["internal"]),
+            "device_type": device_type,
             "created_at": now()
         })
         
@@ -173,12 +178,19 @@ class PasskeyService:
         await SessionDB.store_webauthn_challenge(session_id, "authentication", b64u(challenge), expires_at)
         
         # Get stored credentials from passkey table
-        # If username provided, get credentials for that user; otherwise get all credentials
+        # Filter by device type to only show passkeys created on the same device type
+        current_device_type = session_data.get("device_type")
+        
         if username:
-            existing_credentials = await SessionDB.pk_get_for_principal(username)
+            all_credentials = await SessionDB.pk_get_for_principal(username)
+            # Filter credentials by device type
+            existing_credentials = [
+                cred for cred in all_credentials 
+                if cred.get("device_type") == current_device_type
+            ]
+            log.info(f"Filtered passkeys for {username}: {len(existing_credentials)} of {len(all_credentials)} match device type '{current_device_type}'")
         else:
-            # For usernameless flow, we could get all credentials or none
-            # For now, return empty to allow platform authenticator discovery
+            # For usernameless flow, return empty to allow platform authenticator discovery
             existing_credentials = []
         
         # For usernameless discovery on mobile, send empty allowCredentials
@@ -271,13 +283,14 @@ class PasskeyService:
         except Exception:
             raise HTTPException(status_code=400, detail="signature verify failed")
         
-        # Update sign count in passkey table
+        # Update sign count in passkey table (preserve device_type)
         await SessionDB.pk_upsert(username, {
             "cred_id": cred_id,
             "public_key_jwk": stored_jwk,
             "sign_count": info["signCount"],
             "aaguid": stored_cred.get("aaguid"),
             "transports": stored_cred.get("transports", ["internal"]),
+            "device_type": stored_cred.get("device_type"),
             "created_at": stored_cred.get("created_at", now())
         })
         

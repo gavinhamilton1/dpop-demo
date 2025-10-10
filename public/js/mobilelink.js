@@ -317,9 +317,9 @@ export class MobileLinkService {
         statusEl.textContent = 'Mobile device linked!';
         statusEl.className = 'qr-status success';
         
-        // Check if we need verification phase based on flow type and BIK status
+        // Check if we need verification phase based on flow type
         if (this.flowType === 'login') {
-          // Login flow - show success message (no verification needed)
+          // Login flow - user already authenticated on mobile, no verification needed
           logger.info('Login flow - showing success message');
           statusEl.textContent = 'Mobile device linked successfully! Authentication completed.';
           statusEl.className = 'qr-status success';
@@ -340,45 +340,12 @@ export class MobileLinkService {
           setTimeout(() => {
             this.completeStep();
           }, 1000);
-        } else if (!this.hadBIKBeforeLinking) {
-          // Registration flow with new BIK - show verification phase
-          logger.info('Registration flow with new BIK, showing verification phase');
-          statusEl.textContent = 'Mobile device linked! Enter verification code below.';
-          if (!this.verificationPhaseShown) {
-            logger.info('Showing verification phase for linked status');
-            this.verificationPhaseShown = true;
-            this.showVerificationPhase();
-          } else {
-            logger.info('Verification phase already shown, skipping');
-          }
-        } else if (this.bikWasAuthenticated) {
-          // Registration flow with existing authenticated BIK - show success message
-          logger.info('Registration flow with existing authenticated BIK, showing success message');
-          statusEl.textContent = 'Mobile device linked successfully! Using existing authenticated identity.';
-          statusEl.className = 'qr-status success';
-          
-          // Hide QR phase and show success message
-          const qrPhase = document.getElementById('qrPhase');
-          if (qrPhase) {
-            qrPhase.innerHTML = `
-              <div class="step-status success">
-                <h3>✓ Mobile Device Linked Successfully</h3>
-                <p>Your mobile device has been linked using your existing authenticated identity.</p>
-                <p>No additional verification is required.</p>
-              </div>
-            `;
-          }
-          
-          // Complete the step after a short delay
-          setTimeout(() => {
-            this.completeStep();
-          }, 2000);
         } else {
-          // Existing BIK but not authenticated - show verification phase
-          logger.info('Existing BIK but not authenticated, showing verification phase');
+          // Registration flow - always show verification phase for first-time mobile linking
+          logger.info('Registration flow - showing verification phase');
           statusEl.textContent = 'Mobile device linked! Enter verification code below.';
           if (!this.verificationPhaseShown) {
-            logger.info('Showing verification phase for unauthenticated BIK');
+            logger.info('Showing verification phase for registration flow');
             this.verificationPhaseShown = true;
             this.showVerificationPhase();
           } else {
@@ -792,15 +759,22 @@ export class MobileLinkService {
    * Complete the mobile linking step (Desktop side)
    */
   completeStep() {
+    logger.info('completeStep called, stepCompleted:', this.stepCompleted);
     if (!this.stepCompleted) {
       this.stepCompleted = true;
       
+      logger.info('Completing step, onStepComplete exists:', !!this.onStepComplete);
+      
       // Call the callback if defined
       if (this.onStepComplete && typeof this.onStepComplete === 'function') {
+        logger.info('Calling onStepComplete callback...');
         this.onStepComplete();
+        logger.info('onStepComplete callback completed');
       } else {
         logger.info('Link completion successful, no callback defined');
       }
+    } else {
+      logger.info('Step already completed, skipping');
     }
   }
 
@@ -938,6 +912,7 @@ export class MobileLinkService {
               if (line.startsWith('data: ')) {
                 try {
                   const data = JSON.parse(line.slice(6));
+                  logger.info('SSE data received:', data);
                   onStatusUpdate(data);
                 } catch (error) {
                   console.error('Failed to parse SSE data:', error);
@@ -1164,10 +1139,17 @@ export class MobileLinkService {
    */
   async handlePasskeyAuthentication() {
     try {
-      // For mobile linking, always create new passkeys for usernameless discovery
-      // This allows platform authenticator discovery and proper mobile UX
-      logger.info('Mobile linking - creating new passkey for usernameless discovery...');
-      await this.createNewPasskeyForRegistration();
+      if (this.flowType === 'registration') {
+        // Registration flow - create new passkey for usernameless discovery
+        logger.info('Registration flow - creating new passkey for usernameless discovery...');
+        await this.createNewPasskeyForRegistration();
+      } else if (this.flowType === 'login') {
+        // Login flow - authenticate with existing passkey
+        logger.info('Login flow - authenticating with existing passkey...');
+        await this.authenticateWithExistingPasskey();
+      } else {
+        throw new Error(`Unknown flow type: ${this.flowType}`);
+      }
     } catch (error) {
       logger.error('Passkey authentication failed:', error);
       if (this.onError) {
@@ -1182,17 +1164,19 @@ export class MobileLinkService {
    */
   async authenticateWithExistingPasskey() {
     try {
-      logger.info('Authenticating with existing passkey...');
+      logger.info('Authenticating with existing passkey for username:', this.username);
       
-      // Get authentication options for usernameless discovery
-      const authOptions = await Passkeys.getAuthOptions();
-      const hasCreds = !!(authOptions.allowCredentials && authOptions.allowCredentials.length);
+      // For mobile login, get auth options with the username
+      // This allows the server to return the specific credentials for this user
+      // But we still use empty allowCredentials for usernameless discovery on the client
+      const authOptions = await Passkeys.getAuthOptions(this.username);
+      logger.info('Auth options received, has credentials:', authOptions._meta?.hasCredentials);
       
-      if (!hasCreds) {
-        throw new Error('No passkey registered for this user. Please complete registration first.');
-      }
+      // Override allowCredentials to empty array for usernameless discovery
+      // This allows the platform authenticator to present available passkeys
+      authOptions.allowCredentials = [];
       
-      // Authenticate with passkey
+      // Authenticate with passkey (browser will show available passkeys)
       const result = await Passkeys.authenticatePasskey(this.username, authOptions);
       logger.info('Passkey authentication successful:', result);
       
