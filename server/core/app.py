@@ -144,7 +144,8 @@ class CORSMiddleware(BaseHTTPMiddleware):
                 origin if (
                     origin.startswith('http://localhost') or origin.startswith('https://localhost') or
                     origin.endswith('.dpop.fun') or origin == 'https://dpop.fun' or
-                    origin in ('https://dpop-fun.onrender.com', 'https://dpop-fun-test.onrender.com')
+                    origin in ('https://dpop-fun.onrender.com', 'https://dpop-fun-test.onrender.com') or
+                    (origin.startswith('https://') and '.devtunnels.ms' in origin)
                 ) else 'https://dpop.fun'
             )
             return JSONResponse(
@@ -163,7 +164,8 @@ class CORSMiddleware(BaseHTTPMiddleware):
             origin if (
                 origin.startswith('http://localhost') or origin.startswith('https://localhost') or
                 origin in ('https://dpop-fun.onrender.com', 'https://dpop-fun-test.onrender.com') or
-                origin.endswith('.dpop.fun') or origin == 'https://dpop.fun'
+                origin.endswith('.dpop.fun') or origin == 'https://dpop.fun' or
+                (origin.startswith('https://') and '.devtunnels.ms' in origin)
             ) else 'https://dpop.fun'
         )
         response.headers['Access-Control-Allow-Origin'] = allowed_origin
@@ -1145,6 +1147,85 @@ async def webauthn_authentication_verify(req: Request, response: Response):
         raise
     except Exception as e:
         log.error(f"Passkey auth verify failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------- Admin/Debug Endpoints ----------------
+
+@app.get("/admin/db/all",
+         tags=["admin"],
+         summary="Get All Database Tables",
+         description="Development only - returns all database tables and their contents")
+async def get_all_db_tables():
+    """Get all database tables and their contents for debugging"""
+    try:
+        # Only allow in development
+        if not SETTINGS.dev_allow_insecure_cookie:
+            raise HTTPException(status_code=403, detail="Admin endpoint only available in development mode")
+        
+        tables_data = []
+        
+        # Get list of all tables
+        tables = await SessionDB.fetchall("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name", ())
+        
+        for table_row in tables:
+            table_name = table_row["name"]
+            
+            # Skip SQLite internal tables
+            if table_name.startswith('sqlite_'):
+                continue
+            
+            # Get table schema
+            columns_query = await SessionDB.fetchall(f"PRAGMA table_info({table_name})", ())
+            columns = [col["name"] for col in columns_query]
+            
+            # Get row count
+            count_result = await SessionDB.fetchone(f"SELECT COUNT(*) as count FROM {table_name}", ())
+            count = count_result["count"]
+            
+            # Get all data from table
+            rows = await SessionDB.fetchall(f"SELECT * FROM {table_name}", ())
+            data = [dict(row) for row in rows]
+            
+            tables_data.append({
+                "name": table_name,
+                "columns": columns,
+                "count": count,
+                "data": data
+            })
+        
+        return {
+            "ok": True,
+            "tables": tables_data,
+            "total_tables": len(tables_data)
+        }
+        
+    except Exception as e:
+        log.error(f"Failed to get database tables: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/geo/clear",
+          tags=["admin"],
+          summary="Clear Geolocation Cache",
+          description="Development only - clears the in-memory geolocation cache")
+async def clear_geolocation_cache():
+    """Clear the geolocation cache"""
+    try:
+        # Only allow in development
+        if not SETTINGS.dev_allow_insecure_cookie:
+            raise HTTPException(status_code=403, detail="Admin endpoint only available in development mode")
+        
+        from server.utils.geolocation import GeolocationService
+        GeolocationService.clear_cache()
+        
+        return {
+            "ok": True,
+            "message": "Geolocation cache cleared"
+        }
+        
+    except Exception as e:
+        log.error(f"Failed to clear geolocation cache: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
