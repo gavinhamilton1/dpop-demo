@@ -748,22 +748,19 @@ class AppController {
                 }
             }
             
-            // Check if user has a mobile device passkey by checking session data
-            // Look for passkeys with 'mobile' device type or cross-platform authenticator
+            // Check if user has a mobile device passkey using server metadata
             let hasMobilePasskey = false;
             
-            if (authOptions && authOptions.allowCredentials && authOptions.allowCredentials.length > 0) {
-                // Check if any credential has mobile transports
-                const credentials = authOptions.allowCredentials;
-                hasMobilePasskey = credentials.some(cred => {
-                    // Check if transports include 'hybrid' or 'internal' (mobile indicators)
-                    return cred.transports && (
-                        cred.transports.includes('hybrid') || 
-                        cred.transports.includes('internal')
-                    );
-                });
+            if (authOptions && authOptions._meta) {
+                // Use the mobileCredentials count from server metadata
+                hasMobilePasskey = (authOptions._meta.mobileCredentials || 0) > 0;
                 
-                logger.info('Mobile passkey detected:', hasMobilePasskey);
+                logger.info('Mobile passkey check:', {
+                    mobileCredentials: authOptions._meta.mobileCredentials,
+                    desktopCredentials: authOptions._meta.desktopCredentials,
+                    totalCredentials: authOptions._meta.totalCredentials,
+                    hasMobilePasskey
+                });
             }
             
             // Update mobile link button

@@ -189,9 +189,16 @@ class PasskeyService:
                 if cred.get("device_type") == current_device_type
             ]
             log.info(f"Filtered passkeys for {username}: {len(existing_credentials)} of {len(all_credentials)} match device type '{current_device_type}'")
+            
+            # Count passkeys by device type for UI display
+            mobile_count = sum(1 for cred in all_credentials if cred.get("device_type") == "mobile")
+            desktop_count = sum(1 for cred in all_credentials if cred.get("device_type") == "desktop")
         else:
             # For usernameless flow, return empty to allow platform authenticator discovery
             existing_credentials = []
+            all_credentials = []
+            mobile_count = 0
+            desktop_count = 0
         
         # For usernameless discovery on mobile, send empty allowCredentials
         # This allows the platform to surface on-device passkeys
@@ -213,6 +220,9 @@ class PasskeyService:
                 "hasCredentials": bool(allow),
                 "registeredCount": len(allow),
                 "usernameless": not username,
+                "totalCredentials": len(all_credentials) if username else 0,
+                "mobileCredentials": mobile_count,
+                "desktopCredentials": desktop_count,
             },
         }
     
