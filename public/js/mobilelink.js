@@ -75,6 +75,11 @@ export class MobileLinkService {
     this.onStepComplete = onStepComplete;
     this.onStepSkip = onStepSkip;
     this.flowType = flowType;
+    
+    // Reset state flags for new linking flow
+    this.stepCompleted = false;
+    this.verificationPhaseShown = false;
+    logger.info('Rendering mobile linking step - reset flags: stepCompleted=false, verificationPhaseShown=false');
 
     // Check if the HTML already exists to avoid recreating elements
     const existingQrPhase = document.getElementById('qrPhase');
@@ -192,7 +197,10 @@ export class MobileLinkService {
    */
   async startLinking(qrContainerEl) {
     try {
-      logger.info('Starting mobile linking process...');
+      // Reset state flags at start of linking
+      this.stepCompleted = false;
+      this.verificationPhaseShown = false;
+      logger.info('Starting mobile linking process - reset flags: stepCompleted=false');
       
       // Check if we already have a BIK before starting linking
       try {
@@ -1360,6 +1368,11 @@ export class MobileLinkService {
     this.containerElement = null;
     this.onStepComplete = null;
     this.onStepSkip = null;
+    
+    // Reset state flags
+    this.stepCompleted = false;
+    this.verificationPhaseShown = false;
+    logger.info('Cleanup - reset flags: stepCompleted=false, verificationPhaseShown=false');
   }
 
   /**
