@@ -726,8 +726,18 @@ async def link_mobile_complete(req: Request, response: Response):
         if not mobile_username or mobile_auth_status != "authenticated":
             raise HTTPException(status_code=403, detail="Mobile session not authenticated")
         
-        # Update link status to completed
-        link_data["status"] = "linked"
+        # Determine flow type to set appropriate status
+        flow_type = link_data.get("flow_type", "registration")
+        
+        # For login flows, set to "completed" since no verification needed
+        # For registration flows, set to "linked" and wait for BC verification
+        if flow_type == "login":
+            link_data["status"] = "completed"
+            log.info(f"Login flow - setting status to 'completed' for link {link_id}")
+        else:
+            link_data["status"] = "linked"
+            log.info(f"Registration flow - setting status to 'linked' for link {link_id}")
+        
         link_data["mobile_session_id"] = mobile_session_id
         link_data["mobile_username"] = mobile_username
         
@@ -743,6 +753,8 @@ async def link_mobile_complete(req: Request, response: Response):
             # Get desktop session
             desktop_session = await SessionDB.get_session(desktop_session_id)
             if desktop_session:
+                log.info(f"Desktop session before update: auth_status={desktop_session.get('auth_status')}, auth_username={desktop_session.get('auth_username')}")
+                
                 # Update desktop session to be authenticated
                 await SessionDB.update_session_auth_status(
                     desktop_session_id,
@@ -750,6 +762,10 @@ async def link_mobile_complete(req: Request, response: Response):
                     "authenticated",   # auth_status
                     mobile_username    # username
                 )
+                
+                # Verify the update
+                updated_desktop_session = await SessionDB.get_session(desktop_session_id)
+                log.info(f"Desktop session after update: auth_status={updated_desktop_session.get('auth_status')}, auth_username={updated_desktop_session.get('auth_username')}, auth_method={updated_desktop_session.get('auth_method')}")
                 
                 log.info(f"Desktop session {desktop_session_id} authenticated via mobile linking ({flow_type} flow) with username {mobile_username}")
             else:

@@ -313,44 +313,17 @@ export class MobileLinkService {
         statusEl.className = 'qr-status scanned';
         break;
       case 'linked':
-        logger.info('Status is linked, checking if verification phase needed');
-        statusEl.textContent = 'Mobile device linked!';
+        // Registration flow only - login flows get "completed" status instead
+        logger.info('Status is linked - showing verification phase for registration');
+        statusEl.textContent = 'Mobile device linked! Enter verification code below.';
         statusEl.className = 'qr-status success';
         
-        // Check if we need verification phase based on flow type
-        if (this.flowType === 'login') {
-          // Login flow - user already authenticated on mobile, no verification needed
-          logger.info('Login flow - showing success message');
-          statusEl.textContent = 'Mobile device linked successfully! Authentication completed.';
-          statusEl.className = 'qr-status success';
-          
-          // Hide QR phase and show success message
-          const qrPhase = document.getElementById('qrPhase');
-          if (qrPhase) {
-            qrPhase.innerHTML = `
-              <div class="step-status success">
-                <h3>✓ Mobile Device Linked Successfully</h3>
-                <p>Your mobile device has been linked and authenticated successfully.</p>
-                <p>Authentication completed - no additional verification required.</p>
-              </div>
-            `;
-          }
-          
-          // Complete the step after a short delay to ensure server has updated desktop session
-          setTimeout(() => {
-            this.completeStep();
-          }, 3000);
+        if (!this.verificationPhaseShown) {
+          logger.info('Showing verification phase for registration flow');
+          this.verificationPhaseShown = true;
+          this.showVerificationPhase();
         } else {
-          // Registration flow - always show verification phase for first-time mobile linking
-          logger.info('Registration flow - showing verification phase');
-          statusEl.textContent = 'Mobile device linked! Enter verification code below.';
-          if (!this.verificationPhaseShown) {
-            logger.info('Showing verification phase for registration flow');
-            this.verificationPhaseShown = true;
-            this.showVerificationPhase();
-          } else {
-            logger.info('Verification phase already shown, skipping');
-          }
+          logger.info('Verification phase already shown, skipping');
         }
         break;
       case 'confirmed':
@@ -360,9 +333,14 @@ export class MobileLinkService {
         this.completeStep();
         break;
       case 'completed':
+        logger.info('Status is completed');
         statusEl.textContent = 'Mobile device linked successfully!';
         statusEl.className = 'qr-status success';
-        this.completeStep();
+        
+        // Add small delay to ensure server has finished updating desktop session
+        setTimeout(() => {
+          this.completeStep();
+        }, 500);
         break;
       case 'failed':
         statusEl.textContent = 'Linking failed. Please try again.';
