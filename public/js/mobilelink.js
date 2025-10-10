@@ -334,12 +334,28 @@ export class MobileLinkService {
         this.completeStep();
         break;
       case 'completed':
-        logger.info('Status is completed');
-        statusEl.textContent = 'Mobile device linked successfully!';
+        logger.info('Status is completed - completing desktop step');
+        logger.info('Flow type:', this.flowType);
+        logger.info('onStepComplete exists:', !!this.onStepComplete);
+        logger.info('stepCompleted flag:', this.stepCompleted);
+        statusEl.textContent = 'Authentication successful! Updating desktop...';
         statusEl.className = 'qr-status success';
+        
+        // Hide QR phase and show success message
+        const qrPhase = document.getElementById('qrPhase');
+        if (qrPhase) {
+          qrPhase.innerHTML = `
+            <div class="step-status success">
+              <h3>✓ Authentication Successful</h3>
+              <p>Your mobile device has been authenticated successfully.</p>
+              <p>Updating desktop session...</p>
+            </div>
+          `;
+        }
         
         // Add small delay to ensure server has finished updating desktop session
         setTimeout(() => {
+          logger.info('Timeout complete, calling completeStep()');
           this.completeStep();
         }, 500);
         break;
@@ -1261,20 +1277,30 @@ export class MobileLinkService {
    */
   async completeMobileLinking() {
     try {
-      logger.info(`Completing mobile linking for link ID: ${this.currentLinkId}`);
+      logger.info(`Completing mobile linking for link ID: ${this.currentLinkId}, flow type: ${this.flowType}`);
       
       // Complete the mobile linking process
       const response = await DpopFun.dpopFetch('POST', '/link/mobile/complete', {
         body: JSON.stringify({ link_id: this.currentLinkId })
       });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        logger.error('Mobile link complete failed:', errorData);
+        throw new Error(errorData.detail || 'Failed to complete mobile linking');
+      }
+      
       const completeData = await response.json();
       
-      logger.info('Mobile link completed successfully');
+      logger.info('Mobile link completed successfully, response:', completeData);
+      logger.info('Flow type:', this.flowType);
       
       if (this.onComplete) {
+        logger.info('Calling onComplete callback...');
         this.onComplete(completeData);
       }
       if (this.onStepComplete) {
+        logger.info('Calling onStepComplete callback...');
         this.onStepComplete(completeData);
       }
       

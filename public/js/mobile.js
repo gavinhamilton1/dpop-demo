@@ -86,33 +86,42 @@ class MobileController {
     try {
       logger.info('Starting mobile login flow...');
       
-      // Get username from desktop session via linking
-      this.updateStep(1, 'active', 'Connecting to desktop session...');
+      this.updateStep(1, 'active', 'Setting up mobile session...');
       
-      // First, link mobile to desktop to get username
-      const response = await fetch('/link/mobile/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lid: this.linkId })
-      });
+      // Get username from QR scan URL (it should be in the flow parameter or link data)
+      const urlParams = new URLSearchParams(window.location.search);
+      const username = urlParams.get('username');
       
-      if (!response.ok) {
-        throw new Error('Failed to connect to desktop session');
+      // If no username in URL, we need to get it from desktop
+      if (!username) {
+        // First connect to get desktop username
+        const response = await fetch('/link/mobile/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lid: this.linkId })
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to connect to desktop session');
+        }
+        
+        const data = await response.json();
+        this.username = data.desktop_username;
+        
+        if (!this.username) {
+          throw new Error('Username not found in desktop session');
+        }
+        
+        logger.info('Desktop username received:', this.username);
+      } else {
+        this.username = username;
+        logger.info('Username from URL:', this.username);
       }
       
-      const data = await response.json();
-      this.username = data.desktop_username;
-      
-      if (!this.username) {
-        throw new Error('Username not found in desktop session');
-      }
-      
-      logger.info('Desktop username received:', this.username);
-      this.updateStep(1, 'completed', 'Connected to desktop session');
-      
-      // Now start the mobile login flow
+      this.updateStep(1, 'completed', 'Username retrieved');
       this.updateStep(2, 'active', 'Authenticating with passkey...');
       
+      // Now start the mobile login flow with session setup and authentication
       await this.mobileLinkService.initMobileLoginFlow(
         this.username,
         this.linkId,

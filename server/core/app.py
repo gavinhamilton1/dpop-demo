@@ -743,6 +743,10 @@ async def link_mobile_complete(req: Request, response: Response):
         link_data["mobile_session_id"] = mobile_session_id
         link_data["mobile_username"] = mobile_username
         
+        # Log current link data for debugging
+        log.info(f"Link data after status update: {link_data}")
+        log.info(f"Link storage has link_id {link_id}: {link_id in _LINK_STORAGE}")
+        
         # Link sessions together (desktop <-> mobile)
         desktop_session_id = link_data.get("desktop_session_id")
         if desktop_session_id:
@@ -903,11 +907,13 @@ async def stream_link_status(link_id: str):
                 
                 # Check if status changed
                 if current_status != last_status:
+                    log.info(f"SSE - Status changed for {link_id}: {last_status} -> {current_status}")
                     yield f"data: {json.dumps({'link_id': link_id, 'status': current_status})}\n\n"
                     last_status = current_status
                     
                     # If completed or confirmed, close the connection
                     if current_status in ['completed', 'confirmed', 'verified']:
+                        log.info(f"SSE - Closing stream for {link_id}, final status: {current_status}")
                         break
                 
                 # Check if link expired
