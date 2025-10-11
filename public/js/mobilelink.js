@@ -324,15 +324,18 @@ export class MobileLinkService {
       case 'linked':
         // Registration flow only - login flows get "completed" status instead
         logger.info('Status is linked - showing verification phase for registration');
+        logger.info('verificationPhaseShown flag:', this.verificationPhaseShown);
+        logger.info('Current flow type:', this.flowType);
         statusEl.textContent = 'Mobile device linked! Enter verification code below.';
         statusEl.className = 'qr-status success';
         
         if (!this.verificationPhaseShown) {
-          logger.info('Showing verification phase for registration flow');
+          logger.info('Calling showVerificationPhase()...');
           this.verificationPhaseShown = true;
           this.showVerificationPhase();
+          logger.info('showVerificationPhase() completed');
         } else {
-          logger.info('Verification phase already shown, skipping');
+          logger.warn('Verification phase already shown, skipping (flag was already true)');
         }
         break;
       case 'confirmed':
@@ -385,11 +388,21 @@ export class MobileLinkService {
     const qrPhase = document.getElementById('qrPhase');
     const verifyPhase = document.getElementById('verifyPhase');
     
-    if (qrPhase) qrPhase.style.display = 'none';
-    if (verifyPhase) verifyPhase.style.display = 'block';
+    logger.info('qrPhase element:', qrPhase ? 'found' : 'NOT FOUND');
+    logger.info('verifyPhase element:', verifyPhase ? 'found' : 'NOT FOUND');
+    
+    if (qrPhase) {
+      qrPhase.style.display = 'none';
+      logger.info('QR phase hidden');
+    }
+    if (verifyPhase) {
+      verifyPhase.style.display = 'block';
+      logger.info('Verify phase shown');
+    }
     
     // Initialize code input fields
     this.initializeCodeInputs();
+    logger.info('Code inputs initialized');
   }
 
   /**

@@ -552,6 +552,13 @@ async def link_start(req: Request, response: Response):
         created_at = now()
         expires_at = created_at + 300  # 5 minutes
         
+        # Clean up any expired links first
+        expired_links = [lid for lid, data in list(_LINK_STORAGE.items()) 
+                        if now() > data.get("expires_at", 0)]
+        for lid in expired_links:
+            log.info(f"Cleaning up expired link: {lid}")
+            _LINK_STORAGE.pop(lid, None)
+        
         # Generate QR URL
         origin = f"{req.url.scheme}://{req.url.netloc}"
         qr_url = f"{origin}/mobile?lid={link_id}&flow={flow_type}"
@@ -567,7 +574,7 @@ async def link_start(req: Request, response: Response):
             "status": "pending"
         }
         
-        log.info(f"Link created: {link_id}, flow: {flow_type}, username: {username}, qr_url: {qr_url}")
+        log.info(f"Link created: {link_id}, flow: {flow_type}, username: {username}, qr_url: {qr_url}, initial status: pending")
         
         return {
             "linkId": link_id,
@@ -678,12 +685,13 @@ async def link_mobile_start(req: Request):
             raise HTTPException(status_code=400, detail="Link has expired")
         
         # Update link status to scanned
+        old_status = link_data.get("status")
         link_data["status"] = "scanned"
         
         # Get username from link data
         desktop_username = link_data.get("username")
         
-        log.info(f"Mobile device started linking - link_id: {link_id}, username: {desktop_username}")
+        log.info(f"Mobile device started linking - link_id: {link_id}, username: {desktop_username}, status: {old_status} -> scanned")
         
         return {
             "ok": True,
@@ -759,12 +767,13 @@ async def link_mobile_complete(req: Request, response: Response):
         
         # For login flows, set to "completed" since no verification needed
         # For registration flows, set to "linked" and wait for BC verification
+        old_status = link_data.get("status")
         if flow_type == "login":
             link_data["status"] = "completed"
-            log.info(f"Login flow - setting status to 'completed' for link {link_id}")
+            log.info(f"Login flow - setting status: {old_status} -> completed for link {link_id}")
         else:
             link_data["status"] = "linked"
-            log.info(f"Registration flow - setting status to 'linked' for link {link_id}")
+            log.info(f"Registration flow - setting status: {old_status} -> linked for link {link_id}")
         
         link_data["mobile_session_id"] = mobile_session_id
         link_data["mobile_username"] = mobile_username
@@ -914,18 +923,23 @@ async def stream_link_status(link_id: str):
             
             # Send initial status
             initial_status = link_data.get("status", "pending")
+            log.info(f"SSE - Starting stream for {link_id}, initial status: {initial_status}")
             yield f"data: {json.dumps({'link_id': link_id, 'status': initial_status})}\n\n"
             
             # Poll for status changes (server-side, much more efficient)
             last_status = initial_status
             max_duration = 300  # 5 minutes max
             start_time = now()
+            log.info(f"SSE - Polling loop started for {link_id}, max duration: {max_duration}s")
             
+            loop_count = 0
             while (now() - start_time) < max_duration:
                 await asyncio.sleep(1)  # Check every second
+                loop_count += 1
                 
                 link_data = _LINK_STORAGE.get(link_id)
                 if not link_data:
+                    log.warning(f"SSE - Link data disappeared for {link_id} after {loop_count} loops")
                     yield f"data: {json.dumps({'status': 'expired'})}\n\n"
                     break
                 
@@ -933,7 +947,7 @@ async def stream_link_status(link_id: str):
                 
                 # Check if status changed
                 if current_status != last_status:
-                    log.info(f"SSE - Status changed for {link_id}: {last_status} -> {current_status}")
+                    log.info(f"SSE - Status changed for {link_id}: {last_status} -> {current_status} (loop {loop_count})")
                     yield f"data: {json.dumps({'link_id': link_id, 'status': current_status})}\n\n"
                     last_status = current_status
                     
