@@ -805,6 +805,7 @@ async def link_mobile_complete(req: Request, response: Response):
         # Log current link data for debugging
         log.info(f"Link data after status update: {link_data}")
         log.info(f"Link storage has link_id {link_id}: {link_id in _LINK_STORAGE}")
+        log.info(f"Status in storage after update: {_LINK_STORAGE.get(link_id, {}).get('status')}")
         
         # Link sessions together (desktop <-> mobile)
         desktop_session_id = link_data.get("desktop_session_id")

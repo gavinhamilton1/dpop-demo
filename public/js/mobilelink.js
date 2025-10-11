@@ -261,8 +261,11 @@ export class MobileLinkService {
       this.renderLinkingUI(response);
       
       // Start SSE monitoring for real-time status updates (use SSE to avoid WebSocket conflict with SignatureShare)
+      logger.info('Starting SSE monitoring for link:', response.linkId);
       this.monitorStatus(response.linkId, (data) => {
-        logger.info('Desktop received status data:', data);
+        logger.info('Desktop SSE callback - received status data:', data);
+        logger.info('Desktop SSE callback - current linkId:', this.currentLinkId);
+        logger.info('Desktop SSE callback - status:', data.status);
         this.updateQRStatus(data.status);
       }, (error) => {
         logger.error('Status monitoring error:', error);
@@ -896,6 +899,7 @@ export class MobileLinkService {
       
       const startSSEStream = async () => {
         try {
+          logger.info(`Desktop - Starting SSE stream for link: ${linkId}`);
           const response = await fetch(`/link/status/${linkId}/stream`, {
             method: 'GET',
             credentials: 'include',
@@ -910,13 +914,19 @@ export class MobileLinkService {
             throw new Error(`SSE request failed: ${response.status}`);
           }
           
+          logger.info(`Desktop - SSE connection established for link: ${linkId}`);
+          
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
           let buffer = '';
+          let messageCount = 0;
           
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+              logger.info(`Desktop - SSE stream ended for link: ${linkId}, received ${messageCount} messages`);
+              break;
+            }
             
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
@@ -928,7 +938,8 @@ export class MobileLinkService {
               if (line.startsWith('data: ')) {
                 try {
                   const data = JSON.parse(line.slice(6));
-                  logger.info('SSE data received:', data);
+                  messageCount++;
+                  logger.info(`Desktop - SSE message #${messageCount} for link ${linkId}:`, data);
                   onStatusUpdate(data);
                 } catch (error) {
                   console.error('Failed to parse SSE data:', error);
@@ -938,10 +949,10 @@ export class MobileLinkService {
           }
         } catch (error) {
           if (error.name === 'AbortError') {
-            logger.info('SSE stream aborted');
+            logger.info(`Desktop - SSE stream aborted for link: ${linkId}`);
             return;
           }
-          console.error('SSE stream error:', error);
+          console.error(`Desktop - SSE stream error for link ${linkId}:`, error);
           onError(error);
         }
       };
