@@ -311,7 +311,9 @@ class SessionDB:
             """SELECT 
                 s.*,
                 linked_devices.device_type as linked_device_type,
-                linked.created_at as linked_created_at
+                linked_devices.bound_username as linked_bound_username,
+                linked.created_at as linked_created_at,
+                linked.auth_username as linked_auth_username
                FROM sessions s
                LEFT JOIN sessions linked ON s.linked_session_id = linked._session_id
                LEFT JOIN devices linked_devices ON linked.device_id = linked_devices.device_id
@@ -319,7 +321,19 @@ class SessionDB:
                ORDER BY s.created_at DESC""", 
             [authenticated_username, created_at]
         )
-        return [dict(row) for row in rows]
+        # Filter out sessions where linked device belongs to a different user
+        filtered_rows = []
+        for row in rows:
+            row_dict = dict(row)
+            # If there's a linked device, verify it belongs to the same user or is unbound
+            if row_dict.get('linked_bound_username') and row_dict.get('linked_bound_username') != authenticated_username:
+                log.warning(f"Filtering out session with mismatched linked device - Session user: {authenticated_username}, Linked device user: {row_dict.get('linked_bound_username')}")
+                # Remove the linked session info to avoid showing cross-user data
+                row_dict['linked_session_id'] = None
+                row_dict['linked_device_type'] = None
+                row_dict['linked_created_at'] = None
+            filtered_rows.append(row_dict)
+        return filtered_rows
 
 
 # --- Passkeys
@@ -466,18 +480,19 @@ class SessionDB:
         )
     
     async def get_user_devices(self, username: str) -> List[Dict[str, Any]]:
-        """Get all devices registered by a user (via their sessions)"""
+        """Get all devices registered by a user (only devices bound to this user)"""
         rows = await self.fetchall(
             """SELECT 
                 d.*,
                 MAX(s.updated_at) as last_used,
                 COUNT(DISTINCT s._session_id) as session_count
                FROM devices d
-               INNER JOIN sessions s ON d.device_id = s.device_id
-               WHERE s.auth_username = ? AND d.bik_jkt IS NOT NULL
+               LEFT JOIN sessions s ON d.device_id = s.device_id AND s.auth_username = ?
+               WHERE (d.bound_username = ? OR d.bound_username IS NULL) 
+                 AND d.bik_jkt IS NOT NULL
                GROUP BY d.device_id
                ORDER BY last_used DESC""",
-            [username]
+            [username, username]
         )
         return [dict(row) for row in rows]
     
