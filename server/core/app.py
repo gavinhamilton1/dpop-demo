@@ -1346,5 +1346,90 @@ async def clear_geolocation_cache():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/credentials",
+         tags=["credentials"],
+         summary="Get User Credentials",
+         description="Get all passkey credentials for authenticated user")
+async def get_user_credentials(req: Request, response: Response):
+    """Get all passkey credentials for authenticated user"""
+    try:
+        # For GET requests, get session from cookie
+        session_id = req.session.get("session_id")
+        if not session_id:
+            raise HTTPException(status_code=401, detail="No session found")
+        
+        # Get session from database
+        session_data = await SessionDB.get_session(session_id)
+        if not session_data:
+            raise HTTPException(status_code=401, detail="Session not found")
+        
+        # Check if user is authenticated
+        username = session_data.get("auth_username")
+        if not username or session_data.get("auth_status") != "authenticated":
+            raise HTTPException(status_code=401, detail="User not authenticated")
+        
+        # Get user passkeys
+        passkeys = await SessionDB.pk_get_for_principal(username)
+        
+        log.info(f"Credentials retrieved for user {username}: {len(passkeys)} passkeys")
+        
+        return {
+            "ok": True,
+            "credentials": passkeys,
+            "username": username
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to get credentials: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/credentials/remove",
+          tags=["credentials"],
+          summary="Remove Passkey Credential",
+          description="Remove a passkey credential for authenticated user")
+async def remove_credential(req: Request, response: Response):
+    """Remove a passkey credential"""
+    try:
+        # Get session data
+        session_data = await SessionService.get_session_data(req, response)
+        session_id = req.session.get("session_id")
+        
+        if not session_id:
+            raise HTTPException(status_code=401, detail="No session ID found")
+        
+        # Check if user is authenticated
+        username = session_data.get("auth_username")
+        if not username or session_data.get("auth_status") != "authenticated":
+            raise HTTPException(status_code=401, detail="User not authenticated")
+        
+        body = await req.json()
+        cred_id = body.get("payload", {}).get("cred_id")
+        
+        if not cred_id:
+            raise HTTPException(status_code=400, detail="Credential ID is required")
+        
+        # Remove the passkey
+        success = await SessionDB.pk_remove(username, cred_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Credential not found or doesn't belong to user")
+        
+        log.info(f"Credential removed for user {username}: {cred_id[:20]}...")
+        
+        return {
+            "ok": True,
+            "message": "Passkey credential removed successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to remove credential: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 log.info("Passkey endpoints registered")
 

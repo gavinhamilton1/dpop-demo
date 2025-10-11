@@ -118,6 +118,18 @@
                 </div>
             </div>
 
+            <!-- Credentials Section -->
+            <div class="credentials-section" id="credentialsSection" style="display: none;">
+                <div class="section-header">
+                    <div class="section-title">
+                        <h3>Credentials</h3>
+                    </div>
+                </div>
+                <div id="credentialsList" class="credentials-list">
+                    <p class="no-credentials">No passkey credentials</p>
+                </div>
+            </div>
+
             <!-- Session Details Modal (hidden by default) -->
             <div id="sessionDetailsModal" class="modal-overlay" style="display: none;">
                 <div class="modal-content session-details-content">
@@ -141,6 +153,7 @@
         <div class="history-session-item">
             <div class="history-main">
                 <div class="history-header">
+                    <span class="history-device-icon" data-device-icon></span>
                     <span class="history-time" data-time></span>
                     <div class="history-status-method">
                         <span class="history-status" data-status></span>
@@ -234,6 +247,27 @@
             </div>
             <div class="device-actions" data-device-actions>
                 <button class="device-action-btn remove-btn" data-remove-btn>Remove Device</button>
+            </div>
+        </div>
+    </template>
+
+    <template id="credentialItemTemplate">
+        <div class="credential-item">
+            <div class="credential-main">
+                <div class="credential-header">
+                    <span class="credential-icon" data-cred-icon></span>
+                    <div class="credential-info">
+                        <span class="credential-type" data-cred-device-type></span>
+                        <span class="credential-id-short" data-cred-id-short></span>
+                    </div>
+                </div>
+                <div class="credential-details">
+                    <span class="credential-created" data-cred-created></span>
+                    <span class="credential-sign-count" data-sign-count></span>
+                </div>
+            </div>
+            <div class="credential-actions">
+                <button class="credential-action-btn remove-btn" data-remove-cred-btn>Remove Passkey</button>
             </div>
         </div>
     </template>

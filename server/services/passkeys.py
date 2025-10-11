@@ -316,6 +316,11 @@ class PasskeyService:
             "created_at": stored_cred.get("created_at", now())
         })
         
+        # Increment usage counter
+        log.info(f"About to increment usage count for cred_id: {cred_id[:20]}...")
+        await SessionDB.pk_increment_usage(cred_id)
+        log.info(f"Usage count incremented for cred_id: {cred_id[:20]}...")
+        
         # Update session auth status
         await SessionDB.update_session_auth_status(session_id, "Passkey", "authenticated", username)
         

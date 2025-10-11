@@ -143,6 +143,7 @@ class SessionDB:
           aaguid TEXT,
           transports TEXT,              -- JSON array
           device_type TEXT,             -- Device type (desktop, mobile, tablet) - tracks where passkey was created
+          usage_count INTEGER NOT NULL DEFAULT 0, -- Server-side counter for actual usage
           created_at INTEGER NOT NULL
         );
         -- Optional index for frequent lookups
@@ -158,6 +159,14 @@ class SessionDB:
         );
         
         """)
+        
+        # Check if usage_count column exists in passkeys table, if not add it
+        try:
+            await self.exec("SELECT usage_count FROM passkeys LIMIT 1", ())
+        except:
+            log.info("Adding usage_count column to passkeys table...")
+            await self.exec("ALTER TABLE passkeys ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0", ())
+            log.info("usage_count column added successfully")
 
     async def get_device(self, device_id: str) -> Optional[Dict[str, Any]]:
         """Get device by device_id"""
@@ -342,6 +351,12 @@ class SessionDB:
         rows = await self.fetchall("SELECT * FROM passkeys WHERE principal=?", (principal,))
         out = []
         for r in rows:
+            # Handle usage_count with fallback for backwards compatibility
+            try:
+                usage_count = r["usage_count"]
+            except (KeyError, IndexError):
+                usage_count = 0
+            
             out.append({
                 "principal": r["principal"],
                 "cred_id": r["cred_id"],
@@ -350,21 +365,23 @@ class SessionDB:
                 "aaguid": r["aaguid"],
                 "transports": json.loads(r["transports"]) if r["transports"] else [],
                 "device_type": r["device_type"],
+                "usage_count": usage_count,
                 "created_at": r["created_at"],
             })
         return out
 
     async def pk_upsert(self, principal: str, rec: Dict[str, Any]) -> None:
         await self.exec(
-            """INSERT INTO passkeys(principal, cred_id, public_key_jwk, sign_count, aaguid, transports, device_type, created_at)
-               VALUES(?,?,?,?,?,?,?,?)
+            """INSERT INTO passkeys(principal, cred_id, public_key_jwk, sign_count, aaguid, transports, device_type, usage_count, created_at)
+               VALUES(?,?,?,?,?,?,?,?,?)
                ON CONFLICT(cred_id) DO UPDATE SET
                  principal=excluded.principal,
                  public_key_jwk=excluded.public_key_jwk,
                  sign_count=excluded.sign_count,
                  aaguid=excluded.aaguid,
                  transports=excluded.transports,
-                 device_type=excluded.device_type""",
+                 device_type=excluded.device_type
+                 -- Note: usage_count is NOT updated here; use pk_increment_usage() instead""",
             (
                 principal,
                 rec["cred_id"],
@@ -373,6 +390,7 @@ class SessionDB:
                 rec.get("aaguid"),
                 json.dumps(rec.get("transports") or [], separators=(",", ":")),
                 rec.get("device_type"),
+                int(rec.get("usage_count") or 0),
                 int(rec.get("created_at") or 0),
             ),
         )
@@ -415,6 +433,20 @@ class SessionDB:
         await self.exec("DELETE FROM passkeys WHERE principal=? AND cred_id=?", (principal, cred_id))
         # We can't easily tell rows affected with aiosqlite here without extra work; return True for simplicity
         return True
+    
+    async def pk_increment_usage(self, cred_id: str) -> None:
+        """Increment the usage counter for a passkey"""
+        log.info(f"Incrementing usage count for credential: {cred_id[:20]}...")
+        await self.exec(
+            "UPDATE passkeys SET usage_count = usage_count + 1 WHERE cred_id=?",
+            (cred_id,)
+        )
+        # Verify the update
+        row = await self.fetchone("SELECT usage_count FROM passkeys WHERE cred_id=?", (cred_id,))
+        if row:
+            log.info(f"Updated usage count for credential {cred_id[:20]}..., new count: {row['usage_count']}")
+        else:
+            log.warning(f"Failed to find credential {cred_id[:20]}... after increment")
 
     # --- Passkey Challenge Management ---
     

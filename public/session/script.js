@@ -30,6 +30,8 @@ class AppController {
         this.sessionHistoryList = document.getElementById('sessionHistoryList');
         this.devicesSection = document.getElementById('devicesSection');
         this.devicesList = document.getElementById('devicesList');
+        this.credentialsSection = document.getElementById('credentialsSection');
+        this.credentialsList = document.getElementById('credentialsList');
         this.passkeyAuthBtn = document.getElementById('passkeyAuthBtn');
         this.mobileLinkBtn = document.getElementById('mobileLinkBtn');
         this.usernameInput = document.getElementById('usernameInput');
@@ -357,6 +359,9 @@ class AppController {
         // Update devices list
         await this.updateDevicesList(sessionData);
         
+        // Update credentials list
+        await this.updateCredentialsList(sessionData);
+        
         // Update session history (old section - can be removed later)
         this.updateSessionHistory(sessionData);
         
@@ -514,6 +519,12 @@ class AppController {
                 }
 
                 // Populate template with data
+                // Set device icon
+                const deviceIconEl = clone.querySelector('[data-device-icon]');
+                if (deviceIconEl) {
+                    deviceIconEl.textContent = deviceType === 'mobile' ? '📱' : '💻';
+                }
+                
                 clone.querySelector('[data-time]').textContent = timeAgo;
                 clone.querySelector('[data-method]').textContent = authMethod;
                 clone.querySelector('[data-location]').textContent = `${location} • ${deviceType}`;
@@ -952,8 +963,13 @@ class AppController {
         }
         
         logger.info('Mobile link button clicked for username:', this.username);
+        logger.info('Button data-mode:', this.mobileLinkBtn.dataset.mode);
+        logger.info('Button text:', this.mobileLinkBtn.querySelector('.btn-text').textContent);
         
         try {
+            // Re-check for mobile passkey to ensure button state is current
+            await this.checkForMobilePasskey();
+            
             // Show mobile linking modal
             this.showMobileLinkingModal();
             
@@ -967,7 +983,7 @@ class AppController {
             
             // Determine flow type based on button mode (set by checkForMobilePasskey)
             const flowType = this.mobileLinkBtn.dataset.mode || 'registration';
-            logger.info('Mobile linking flow type:', flowType);
+            logger.info('Mobile linking flow type after re-check:', flowType);
             
             // Render the mobile linking UI
             this.mobileLinkService.renderMobileLinkingStep(
@@ -1449,6 +1465,127 @@ class AppController {
             } catch (error) {
                 logger.error('Error removing device:', error);
                 alert(`Error removing device: ${error.message}`);
+            }
+        }
+    }
+
+    async updateCredentialsList(sessionData) {
+        if (!this.credentialsList) return;
+
+        // Check if user is authenticated
+        if (!sessionData.auth_username || sessionData.auth_status !== 'authenticated') {
+            // Hide section when not authenticated
+            if (this.credentialsSection) {
+                this.credentialsSection.style.display = 'none';
+            }
+            return;
+        }
+        
+        // Show section when authenticated
+        if (this.credentialsSection) {
+            this.credentialsSection.style.display = 'block';
+            logger.info('Credentials section shown');
+        }
+
+        try {
+            // Fetch credentials from server
+            const response = await DpopFun.dpopFetch('GET', '/credentials');
+            
+            logger.info('Credentials fetch response status:', response.status);
+            
+            if (!response.ok) {
+                logger.warn('Failed to fetch credentials:', response.status);
+                this.credentialsList.innerHTML = '<p class="no-credentials">Unable to load credentials</p>';
+                return;
+            }
+            
+            const data = await response.json();
+            logger.info('Credentials data received:', data);
+            const credentials = data.credentials || [];
+            logger.info('Number of credentials:', credentials.length);
+            
+            if (credentials.length === 0) {
+                this.credentialsList.innerHTML = '<p class="no-credentials">No passkey credentials registered</p>';
+                return;
+            }
+            
+            // Populate credentials list using template
+            this.credentialsList.innerHTML = '';
+            const template = document.getElementById('credentialItemTemplate');
+            
+            credentials.forEach(cred => {
+                const clone = template.content.cloneNode(true);
+                
+                const deviceType = cred.device_type || 'unknown';
+                const credIdShort = cred.cred_id ? cred.cred_id.substring(0, 12) : 'unknown';
+                
+                // Set credential icon
+                const iconEl = clone.querySelector('[data-cred-icon]');
+                iconEl.textContent = deviceType === 'mobile' ? '📱' : '💻';
+                
+                // Set credential info
+                clone.querySelector('[data-cred-device-type]').textContent = deviceType.charAt(0).toUpperCase() + deviceType.slice(1) + ' Passkey';
+                clone.querySelector('[data-cred-id-short]').textContent = `ID: ${credIdShort}...`;
+                
+                // Set credential details
+                const createdAgo = cred.created_at ? this.formatTimeAgo(cred.created_at) : 'Unknown';
+                clone.querySelector('[data-cred-created]').textContent = `Created: ${createdAgo}`;
+                clone.querySelector('[data-sign-count]').textContent = `Used ${cred.usage_count || 0} times`;
+                
+                this.credentialsList.appendChild(clone);
+                
+                // Handle remove button - AFTER appending to DOM
+                const credItem = this.credentialsList.lastElementChild;
+                const removeBtn = credItem.querySelector('[data-remove-cred-btn]');
+                
+                if (removeBtn) {
+                    logger.info(`Attaching event listener to remove button for credential ${credIdShort}`);
+                    removeBtn.addEventListener('click', () => {
+                        this.removeCredential(cred.cred_id, cred);
+                    });
+                }
+            });
+            
+            logger.info(`Loaded ${credentials.length} credentials`);
+            
+        } catch (error) {
+            logger.error('Failed to load credentials:', error);
+            this.credentialsList.innerHTML = '<p class="no-credentials">Unable to load credentials</p>';
+        }
+    }
+
+    async removeCredential(credId, credInfo) {
+        const deviceType = credInfo.device_type || 'unknown';
+        const credIdShort = credId.substring(0, 12);
+        
+        if (confirm(`Remove ${deviceType} passkey (${credIdShort}...)?\n\nThis will permanently delete this passkey credential. You won't be able to use it to log in anymore.`)) {
+            try {
+                logger.info(`Removing credential: ${credId}`);
+                
+                // Call server endpoint to remove the credential
+                const response = await DpopFun.dpopFetch('POST', '/credentials/remove', {
+                    body: JSON.stringify({
+                        payload: { cred_id: credId }
+                    })
+                });
+                
+                if (response.ok) {
+                    logger.info(`Credential ${credId} removed successfully`);
+                    alert('Passkey removed successfully.');
+                    
+                    // Refresh credentials list
+                    const freshSessionData = await DpopFun.setupSession();
+                    if (freshSessionData) {
+                        await this.populateSessionUI(freshSessionData);
+                    }
+                } else {
+                    const error = await response.text();
+                    logger.error(`Failed to remove credential: ${error}`);
+                    alert(`Failed to remove passkey: ${error}`);
+                }
+            } catch (error) {
+                logger.error('Error removing credential:', error);
+                alert(`Error removing passkey: ${error.message}`);
             }
         }
     }
