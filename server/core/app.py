@@ -813,34 +813,41 @@ async def link_mobile_complete(req: Request, response: Response):
             await SessionDB.link_sessions(desktop_session_id, mobile_session_id)
             log.info(f"Linked sessions: desktop {desktop_session_id} <-> mobile {mobile_session_id}")
             
-            # Authenticate the desktop session (for both registration and login flows)
             flow_type = link_data.get("flow_type", "registration")
-            # Get desktop session
-            desktop_session = await SessionDB.get_session(desktop_session_id)
-            if desktop_session:
-                log.info(f"Desktop session before update: auth_status={desktop_session.get('auth_status')}, auth_username={desktop_session.get('auth_username')}")
-                
-                # Update desktop session to be authenticated
-                await SessionDB.update_session_auth_status(
-                    desktop_session_id,
-                    "Mobile Passkey",  # auth_method
-                    "authenticated",   # auth_status
-                    mobile_username    # username
-                )
-                
-                # Bind the desktop device to this username as well
-                desktop_device_id = desktop_session.get("device_id")
-                if desktop_device_id:
-                    await SessionDB.bind_device_to_user(desktop_device_id, mobile_username)
-                    log.info(f"Desktop device {desktop_device_id} bound to username: {mobile_username}")
-                
-                # Verify the update
-                updated_desktop_session = await SessionDB.get_session(desktop_session_id)
-                log.info(f"Desktop session after update: auth_status={updated_desktop_session.get('auth_status')}, auth_username={updated_desktop_session.get('auth_username')}, auth_method={updated_desktop_session.get('auth_method')}")
-                
-                log.info(f"Desktop session {desktop_session_id} authenticated via mobile linking ({flow_type} flow) with username {mobile_username}")
+            
+            # Only authenticate desktop session immediately for LOGIN flows
+            # For REGISTRATION flows, desktop auth happens after BC verification
+            if flow_type == "login":
+                # Get desktop session
+                desktop_session = await SessionDB.get_session(desktop_session_id)
+                if desktop_session:
+                    log.info(f"Login flow - authenticating desktop session immediately")
+                    log.info(f"Desktop session before update: auth_status={desktop_session.get('auth_status')}, auth_username={desktop_session.get('auth_username')}")
+                    
+                    # Update desktop session to be authenticated
+                    await SessionDB.update_session_auth_status(
+                        desktop_session_id,
+                        "Mobile Passkey",  # auth_method
+                        "authenticated",   # auth_status
+                        mobile_username    # username
+                    )
+                    
+                    # Bind the desktop device to this username as well
+                    desktop_device_id = desktop_session.get("device_id")
+                    if desktop_device_id:
+                        await SessionDB.bind_device_to_user(desktop_device_id, mobile_username)
+                        log.info(f"Desktop device {desktop_device_id} bound to username: {mobile_username}")
+                    
+                    # Verify the update
+                    updated_desktop_session = await SessionDB.get_session(desktop_session_id)
+                    log.info(f"Desktop session after update: auth_status={updated_desktop_session.get('auth_status')}, auth_username={updated_desktop_session.get('auth_username')}, auth_method={updated_desktop_session.get('auth_method')}")
+                    
+                    log.info(f"Desktop session {desktop_session_id} authenticated via mobile linking (login flow) with username {mobile_username}")
+                else:
+                    log.warning(f"Desktop session {desktop_session_id} not found")
             else:
-                log.warning(f"Desktop session {desktop_session_id} not found")
+                # Registration flow - desktop authentication happens after BC verification
+                log.info(f"Registration flow - desktop authentication will happen after BC verification")
         else:
             log.warning(f"No desktop session ID in link data for {link_id}")
         
@@ -1050,6 +1057,39 @@ async def device_redeem(req: Request, response: Response):
             raise HTTPException(status_code=400, detail="Invalid or expired bootstrap code")
         
         log.info(f"Bootstrap code redeemed successfully for link: {link_id}")
+        
+        # Get link data for this verified code
+        link_data = _LINK_STORAGE.get(link_id)
+        if link_data:
+            # Now authenticate the desktop session (BC verified)
+            desktop_session_id = link_data.get("desktop_session_id")
+            mobile_username = link_data.get("mobile_username")
+            
+            if desktop_session_id and mobile_username:
+                log.info(f"BC verified - authenticating desktop session {desktop_session_id} as {mobile_username}")
+                
+                # Get desktop session
+                desktop_session = await SessionDB.get_session(desktop_session_id)
+                if desktop_session:
+                    # Update desktop session to be authenticated
+                    await SessionDB.update_session_auth_status(
+                        desktop_session_id,
+                        "Mobile Passkey",  # auth_method
+                        "authenticated",   # auth_status
+                        mobile_username    # username
+                    )
+                    
+                    # Bind the desktop device to this username
+                    desktop_device_id = desktop_session.get("device_id")
+                    if desktop_device_id:
+                        await SessionDB.bind_device_to_user(desktop_device_id, mobile_username)
+                        log.info(f"Desktop device {desktop_device_id} bound to username: {mobile_username}")
+                    
+                    log.info(f"Desktop session {desktop_session_id} authenticated after BC verification")
+                else:
+                    log.warning(f"Desktop session {desktop_session_id} not found for BC verification")
+            else:
+                log.warning(f"Missing desktop_session_id or mobile_username in link data for BC verification")
         
         return {
             "ok": True,
