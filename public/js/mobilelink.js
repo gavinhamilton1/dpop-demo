@@ -1298,6 +1298,12 @@ export class MobileLinkService {
       if (!response.ok) {
         const errorData = await response.json();
         logger.error('Mobile link complete failed:', errorData);
+        
+        // Check for username mismatch error
+        if (response.status === 403 && errorData.detail && errorData.detail.includes('Username mismatch')) {
+          throw new Error(errorData.detail);
+        }
+        
         throw new Error(errorData.detail || 'Failed to complete mobile linking');
       }
       

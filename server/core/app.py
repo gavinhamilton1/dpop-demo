@@ -731,6 +731,32 @@ async def link_mobile_complete(req: Request, response: Response):
         # Determine flow type to set appropriate status
         flow_type = link_data.get("flow_type", "registration")
         
+        # Verify username matches for login flows
+        desktop_username = link_data.get("username")
+        
+        log.info(f"Username validation - Flow: {flow_type}, Desktop: '{desktop_username}', Mobile: '{mobile_username}'")
+        
+        if flow_type == "login":
+            # Login flow requires exact username match
+            if not desktop_username:
+                log.error(f"Login flow missing desktop username in link data")
+                raise HTTPException(status_code=400, detail="Desktop username not found in link data")
+            
+            if mobile_username != desktop_username:
+                log.warning(f"Username mismatch REJECTED - Desktop: '{desktop_username}', Mobile: '{mobile_username}'")
+                raise HTTPException(
+                    status_code=403, 
+                    detail=f"Username mismatch: Desktop expects user '{desktop_username}', but you authenticated as '{mobile_username}'. Please use the correct mobile device."
+                )
+            log.info(f"Login flow - username verified: {mobile_username} ✓")
+        else:
+            # Registration flow - usernames should match if desktop had one
+            if desktop_username and mobile_username != desktop_username:
+                log.warning(f"Username mismatch in registration flow - Desktop: '{desktop_username}', Mobile: '{mobile_username}'")
+                # For registration, we should still allow it if desktop username matches mobile
+                # But log a warning if they differ
+                pass
+        
         # For login flows, set to "completed" since no verification needed
         # For registration flows, set to "linked" and wait for BC verification
         if flow_type == "login":

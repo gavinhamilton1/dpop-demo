@@ -165,8 +165,17 @@ class MobileController {
    */
   onError(error) {
     logger.error('Mobile linking error:', error);
-    this.showError(`Error: ${error.message}`);
-    this.updateStep(1, 'error', 'Failed');
+    
+    // Check which step failed based on error message
+    if (error.message && error.message.includes('Username mismatch')) {
+      // Username validation happens at linking completion (step 3)
+      this.updateStep(3, 'error', 'Username mismatch');
+      this.showError(`⚠️ ${error.message}`);
+    } else {
+      // Generic error - mark step 1 as failed
+      this.updateStep(1, 'error', 'Failed');
+      this.showError(`Error: ${error.message}`);
+    }
   }
 
   /**
