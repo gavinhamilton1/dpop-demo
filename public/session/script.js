@@ -1357,6 +1357,15 @@ class AppController {
                 clone.querySelector('[data-last-used]').textContent = `Last used: ${lastUsed}`;
                 clone.querySelector('[data-sessions]').textContent = `${device.session_count || 0} sessions`;
                 
+                // Show bound username if available
+                const boundUserEl = clone.querySelector('[data-bound-user]');
+                if (device.bound_username) {
+                    boundUserEl.textContent = `Bound to: ${device.bound_username}`;
+                    boundUserEl.style.display = 'inline';
+                    boundUserEl.style.color = 'var(--color-success)';
+                    boundUserEl.style.fontWeight = '600';
+                }
+                
                 // Parse signal data
                 let signalText = '';
                 if (device.signal_data) {

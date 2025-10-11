@@ -733,6 +733,8 @@ async def link_mobile_complete(req: Request, response: Response):
         mobile_username = session_data.get("auth_username")
         mobile_auth_status = session_data.get("auth_status")
         
+        log.info(f"Mobile session auth check - username: '{mobile_username}', status: '{mobile_auth_status}'")
+        
         if not mobile_username or mobile_auth_status != "authenticated":
             raise HTTPException(status_code=403, detail="Mobile session not authenticated")
         
@@ -742,7 +744,29 @@ async def link_mobile_complete(req: Request, response: Response):
         # Verify username matches for login flows
         desktop_username = link_data.get("username")
         
-        log.info(f"Username validation - Flow: {flow_type}, Desktop: '{desktop_username}', Mobile: '{mobile_username}'")
+        # Get mobile device ID from session
+        mobile_device_id = session_data.get("device_id")
+        
+        # Check device binding
+        mobile_device = await SessionDB.get_device(mobile_device_id) if mobile_device_id else None
+        device_bound_username = mobile_device.get("bound_username") if mobile_device else None
+        
+        log.info(f"=== USERNAME VALIDATION ===")
+        log.info(f"Flow type: {flow_type}")
+        log.info(f"Desktop username: '{desktop_username}' (type: {type(desktop_username).__name__})")
+        log.info(f"Mobile username: '{mobile_username}' (type: {type(mobile_username).__name__})")
+        log.info(f"Mobile device: '{mobile_device_id}'")
+        log.info(f"Device bound username: '{device_bound_username}'")
+        log.info(f"Usernames match: {desktop_username == mobile_username}")
+        log.info(f"==========================")
+        
+        # Check if device is bound to a different user
+        if device_bound_username and device_bound_username != mobile_username:
+            log.error(f"Device binding mismatch - Device bound to '{device_bound_username}', but authenticated as '{mobile_username}'")
+            raise HTTPException(
+                status_code=403,
+                detail=f"Device security error: This device is bound to user '{device_bound_username}'"
+            )
         
         if flow_type == "login":
             # Login flow requires exact username match
@@ -803,6 +827,12 @@ async def link_mobile_complete(req: Request, response: Response):
                     "authenticated",   # auth_status
                     mobile_username    # username
                 )
+                
+                # Bind the desktop device to this username as well
+                desktop_device_id = desktop_session.get("device_id")
+                if desktop_device_id:
+                    await SessionDB.bind_device_to_user(desktop_device_id, mobile_username)
+                    log.info(f"Desktop device {desktop_device_id} bound to username: {mobile_username}")
                 
                 # Verify the update
                 updated_desktop_session = await SessionDB.get_session(desktop_session_id)

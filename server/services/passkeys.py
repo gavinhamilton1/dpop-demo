@@ -156,7 +156,12 @@ class PasskeyService:
         # Update session auth method, status, and username
         await SessionDB.update_session_auth_status(session_id, "Passkey", "authenticated", username)
         
-        log.info(f"Passkey registered for username: {username}, session: {session_id}, cred_id: {cred_id[:16]}")
+        # Bind the device to this username (first authentication on this device)
+        device_id = session.get("device_id") if session else None
+        if device_id:
+            await SessionDB.bind_device_to_user(device_id, username)
+        
+        log.info(f"Passkey registered for username: {username}, session: {session_id}, device: {device_id}, cred_id: {cred_id[:16]}")
         
         return {"ok": True, "cred_id": cred_id, "aaguid": aaguid_hex, "username": username}
     
@@ -314,6 +319,12 @@ class PasskeyService:
         # Update session auth status
         await SessionDB.update_session_auth_status(session_id, "Passkey", "authenticated", username)
         
-        log.info(f"Passkey authentication successful for username: {username}")
+        # Bind the device to this username (if not already bound)
+        session = await SessionDB.get_session(session_id)
+        device_id = session.get("device_id") if session else None
+        if device_id:
+            await SessionDB.bind_device_to_user(device_id, username)
+        
+        log.info(f"Passkey authentication successful for username: {username}, device: {device_id}")
         
         return {"ok": True, "username": username}

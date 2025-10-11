@@ -57,6 +57,7 @@ class SessionDB:
         CREATE TABLE IF NOT EXISTS devices (
           device_id TEXT PRIMARY KEY,           -- Browser UUID (unique device identifier)
           device_type TEXT,            -- 'browser' or 'mobile'
+          bound_username TEXT,                  -- Username bound to this device (set after first auth)
           bik_jkt TEXT,                         -- Browser Identity Key Thumbprint
           bik_jwk TEXT,                  -- BIK public key (JSON)
           signal_data TEXT,                     -- Device fingerprint/signal data (JSON)
@@ -65,6 +66,20 @@ class SessionDB:
           created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),          -- Unix timestamp of record creation
           updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))           -- Unix timestamp of last update
         );
+        
+        -- Add bound_username column to existing devices table if it doesn't exist
+        -- This is a migration for existing databases
+        """)
+        
+        # Check if bound_username column exists, if not add it
+        try:
+            await self.exec("SELECT bound_username FROM devices LIMIT 1", ())
+        except:
+            log.info("Adding bound_username column to devices table...")
+            await self.exec("ALTER TABLE devices ADD COLUMN bound_username TEXT", ())
+            log.info("bound_username column added successfully")
+        
+        await self.execscript("""
 
         CREATE TABLE IF NOT EXISTS sessions (
           _session_id TEXT PRIMARY KEY,          -- Unique session identifier
@@ -157,12 +172,37 @@ class SessionDB:
             raise ValueError("Device already exists")
         else:            
             await self.exec(
-                """INSERT INTO devices(device_id, device_type, bik_jkt, bik_jwk, signal_data, first_seen, 
+                """INSERT INTO devices(device_id, device_type, bound_username, bik_jkt, bik_jwk, signal_data, first_seen, 
                                     last_seen, created_at, updated_at) 
-                    VALUES(?,?,?,?,?,?,?,?,?) """,
-                    (device_id, data.get("device_type"), data.get("bik_jkt"), data.get("bik_jwk"), 
+                    VALUES(?,?,?,?,?,?,?,?,?,?) """,
+                    (device_id, data.get("device_type"), data.get("bound_username"), data.get("bik_jkt"), data.get("bik_jwk"), 
                      data.get("signal_data"), now(), now(), now(), now())
             )
+    
+    async def bind_device_to_user(self, device_id: str, username: str) -> bool:
+        """Bind a device to a username after first successful authentication"""
+        log.info(f"Binding device {device_id} to username: {username}")
+        
+        # Check if device exists
+        device = await self.get_device(device_id)
+        if not device:
+            log.warning(f"Cannot bind device {device_id} - device not found")
+            return False
+        
+        # Check if device is already bound to a different user
+        existing_username = device.get("bound_username")
+        if existing_username and existing_username != username:
+            log.warning(f"Device {device_id} already bound to '{existing_username}', cannot rebind to '{username}'")
+            return False
+        
+        # Bind the device to the user
+        await self.exec(
+            "UPDATE devices SET bound_username=?, updated_at=? WHERE device_id=?",
+            (username, now(), device_id)
+        )
+        
+        log.info(f"Device {device_id} successfully bound to username: {username}")
+        return True
 
 
     async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
