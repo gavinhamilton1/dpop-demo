@@ -335,11 +335,27 @@ class SessionService:
             geolocation = GeolocationService.get_ip_geolocation(req.client.host)
             geolocation_db = session_db.get("geolocation")
 
-            if geolocation and geolocation_db:
-                SESSION["geolocation"] = json.dumps(geolocation)
+            if geolocation:
+                geolocation_json = json.dumps(geolocation)
+                SESSION["geolocation"] = geolocation_json
                 log.info("Session initialization - GeolocationIP City: %s, Country: %s", geolocation.get("city"), geolocation.get("country"))
-                geolocation_db_parsed = json.loads(geolocation_db)
-                log.info("Session initialization - GeolocationDB City: %s, Country: %s", geolocation_db_parsed.get("city"), geolocation_db_parsed.get("country"))
+                
+                # Check if geolocation has changed (e.g., VPN change)
+                if geolocation_db:
+                    geolocation_db_parsed = json.loads(geolocation_db)
+                    log.info("Session initialization - GeolocationDB City: %s, Country: %s", geolocation_db_parsed.get("city"), geolocation_db_parsed.get("country"))
+                    
+                    # If IP or location changed, update the database
+                    if (geolocation.get("ip") != geolocation_db_parsed.get("ip") or
+                        geolocation.get("city") != geolocation_db_parsed.get("city") or
+                        geolocation.get("country") != geolocation_db_parsed.get("country")):
+                        log.info("Geolocation changed - updating database: Old IP=%s, New IP=%s", 
+                                geolocation_db_parsed.get("ip"), geolocation.get("ip"))
+                        await SessionDB.set_session(session_id, {"geolocation": geolocation_json})
+                else:
+                    # No geolocation in DB, save it
+                    log.info("No geolocation in DB - saving new geolocation")
+                    await SessionDB.set_session(session_id, {"geolocation": geolocation_json})
             else:
                 log.warning("Session initialization - No geolocation data returned")
         except Exception as e:

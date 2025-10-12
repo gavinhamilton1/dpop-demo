@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 # Simple in-memory cache for geolocation data
 # Format: {ip_address: {'data': geolocation_dict, 'timestamp': unix_timestamp}}
 _GEOLOCATION_CACHE = {}
-CACHE_TTL = 3600  # Cache for 1 hour
+CACHE_TTL = 300  # Cache for 5 minutes (reduced for VPN testing)
 
 
 class GeolocationService:
