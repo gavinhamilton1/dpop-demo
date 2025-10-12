@@ -286,16 +286,21 @@ class SessionService:
                     SESSION["device_type"] = payload.get("signal_data").get("deviceType")
                     log.info("Session initialization - Device type extracted from signal_data: %s", SESSION["device_type"])
                 
-                # Compare with stored fingerprint if available
+                # SECURITY: Compare browser fingerprint (Session Hijacking detection)
                 stored_signal_hash = session_db.get("signal_hash")
                 if stored_signal_hash and stored_signal_hash != fingerprint_result["hash"]:
-                    log.warning("Session initialization - Browser fingerprint mismatch detected")
+                    log.warning("SECURITY ALERT - Browser fingerprint mismatch detected")
                     log.warning("Stored hash: %s", stored_signal_hash)
                     log.warning("Current hash: %s", fingerprint_result["hash"])
-                    SESSION["session_flag"] = SessionFlag.AMBER.name
-                    SESSION["session_flag_comment"] = "Browser fingerprint mismatch"
-                    # Persist flag to database
-                    await SessionDB.update_session_flag(session_id, SessionFlag.AMBER.name, "Browser fingerprint mismatch")
+                    
+                    # Only set AMBER flag if not already RED (don't downgrade severity)
+                    current_flag = session_db.get("session_flag")
+                    if current_flag != SessionFlag.RED.name:
+                        flag_comment = "⚠️ Browser characteristics changed mid-session"
+                        SESSION["session_flag"] = SessionFlag.AMBER.name
+                        SESSION["session_flag_comment"] = flag_comment
+                        await SessionDB.update_session_flag(session_id, SessionFlag.AMBER.name, flag_comment)
+                        log.warning("Session flagged as AMBER - Potential session hijacking")
             else:
                 log.info("Session initialization - No signal_data in payload or payload is None")
                 
@@ -349,23 +354,26 @@ class SessionService:
                     geolocation_db_parsed = json.loads(geolocation_db)
                     log.info("Session initialization - GeolocationDB City: %s, Country: %s", geolocation_db_parsed.get("city"), geolocation_db_parsed.get("country"))
                     
-                    # If IP or location changed, update the database and flag as amber
+                    # SECURITY: Detect mid-session location change (Session Hijacking / ATO indicator)
                     if (geolocation.get("ip") != geolocation_db_parsed.get("ip") or
                         geolocation.get("city") != geolocation_db_parsed.get("city") or
                         geolocation.get("country") != geolocation_db_parsed.get("country")):
-                        log.warning("Geolocation changed - updating database: Old IP=%s, New IP=%s, Old Location=%s, New Location=%s", 
+                        log.warning("SECURITY ALERT - Geolocation changed mid-session: Old IP=%s, New IP=%s, Old Location=%s, New Location=%s", 
                                 geolocation_db_parsed.get("ip"), geolocation.get("ip"),
                                 f"{geolocation_db_parsed.get('city')}, {geolocation_db_parsed.get('country')}",
                                 f"{geolocation.get('city')}, {geolocation.get('country')}")
                         
-                        # Set AMBER flag for location change
-                        flag_comment = f"Location changed: {geolocation_db_parsed.get('city', 'Unknown')}, {geolocation_db_parsed.get('country', 'Unknown')} → {geolocation.get('city', 'Unknown')}, {geolocation.get('country', 'Unknown')}"
-                        SESSION["session_flag"] = SessionFlag.AMBER.name
-                        SESSION["session_flag_comment"] = flag_comment
-                        
-                        # Update both geolocation and flag in database
+                        # Update geolocation in database
                         await SessionDB.update_session_geolocation(session_id, geolocation_json)
-                        await SessionDB.update_session_flag(session_id, SessionFlag.AMBER.name, flag_comment)
+                        
+                        # Only set AMBER flag if not already RED (don't downgrade severity)
+                        current_flag = session_db.get("session_flag")
+                        if current_flag != SessionFlag.RED.name:
+                            flag_comment = f"⚠️ Suspicious location change: {geolocation_db_parsed.get('city', 'Unknown')}, {geolocation_db_parsed.get('country', 'Unknown')} → {geolocation.get('city', 'Unknown')}, {geolocation.get('country', 'Unknown')}"
+                            SESSION["session_flag"] = SessionFlag.AMBER.name
+                            SESSION["session_flag_comment"] = flag_comment
+                            await SessionDB.update_session_flag(session_id, SessionFlag.AMBER.name, flag_comment)
+                            log.warning("Session flagged as AMBER - Potential session hijacking or ATO")
                 else:
                     # No geolocation in DB, save it
                     log.info("No geolocation in DB - saving new geolocation")

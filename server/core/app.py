@@ -1431,5 +1431,62 @@ async def remove_credential(req: Request, response: Response):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/session/acknowledge-alert",
+          tags=["session"],
+          summary="Acknowledge Security Alert",
+          description="User acknowledges a security alert and resets flag to GREEN")
+async def acknowledge_security_alert(req: Request, response: Response):
+    """
+    Allow user to acknowledge a security alert (AMBER flag) and reset to GREEN.
+    This indicates: "Yes, this activity was me - not a security threat"
+    """
+    try:
+        # Get session data
+        session_data = await SessionService.get_session_data(req, response)
+        session_id = req.session.get("session_id")
+        
+        if not session_id:
+            raise HTTPException(status_code=401, detail="No session ID found")
+        
+        # Check if user is authenticated
+        username = session_data.get("auth_username")
+        if not username or session_data.get("auth_status") != "authenticated":
+            raise HTTPException(status_code=401, detail="User not authenticated")
+        
+        # Get current flag
+        current_flag = session_data.get("session_flag")
+        
+        # Only allow acknowledging AMBER flags (warnings)
+        # RED flags (critical threats) should not be easily dismissed
+        if current_flag == "AMBER":
+            await SessionDB.update_session_flag(session_id, "GREEN", "Alert acknowledged by user")
+            log.info(f"User {username} acknowledged security alert for session {session_id}")
+            
+            return {
+                "ok": True,
+                "message": "Security alert acknowledged",
+                "new_flag": "GREEN"
+            }
+        elif current_flag == "RED":
+            # Don't allow dismissing RED flags - requires stronger action
+            log.warning(f"User {username} attempted to acknowledge RED flag - denied")
+            raise HTTPException(
+                status_code=403, 
+                detail="Critical security alerts cannot be dismissed. Please contact support or terminate suspicious sessions."
+            )
+        else:
+            return {
+                "ok": True,
+                "message": "No alert to acknowledge",
+                "current_flag": current_flag
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to acknowledge alert: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 log.info("Passkey endpoints registered")
 
