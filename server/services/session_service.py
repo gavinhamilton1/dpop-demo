@@ -294,6 +294,8 @@ class SessionService:
                     log.warning("Current hash: %s", fingerprint_result["hash"])
                     SESSION["session_flag"] = SessionFlag.AMBER.name
                     SESSION["session_flag_comment"] = "Browser fingerprint mismatch"
+                    # Persist flag to database
+                    await SessionDB.update_session_flag(session_id, SessionFlag.AMBER.name, "Browser fingerprint mismatch")
             else:
                 log.info("Session initialization - No signal_data in payload or payload is None")
                 
@@ -347,13 +349,23 @@ class SessionService:
                     geolocation_db_parsed = json.loads(geolocation_db)
                     log.info("Session initialization - GeolocationDB City: %s, Country: %s", geolocation_db_parsed.get("city"), geolocation_db_parsed.get("country"))
                     
-                    # If IP or location changed, update the database
+                    # If IP or location changed, update the database and flag as amber
                     if (geolocation.get("ip") != geolocation_db_parsed.get("ip") or
                         geolocation.get("city") != geolocation_db_parsed.get("city") or
                         geolocation.get("country") != geolocation_db_parsed.get("country")):
-                        log.info("Geolocation changed - updating database: Old IP=%s, New IP=%s", 
-                                geolocation_db_parsed.get("ip"), geolocation.get("ip"))
+                        log.warning("Geolocation changed - updating database: Old IP=%s, New IP=%s, Old Location=%s, New Location=%s", 
+                                geolocation_db_parsed.get("ip"), geolocation.get("ip"),
+                                f"{geolocation_db_parsed.get('city')}, {geolocation_db_parsed.get('country')}",
+                                f"{geolocation.get('city')}, {geolocation.get('country')}")
+                        
+                        # Set AMBER flag for location change
+                        flag_comment = f"Location changed: {geolocation_db_parsed.get('city', 'Unknown')}, {geolocation_db_parsed.get('country', 'Unknown')} → {geolocation.get('city', 'Unknown')}, {geolocation.get('country', 'Unknown')}"
+                        SESSION["session_flag"] = SessionFlag.AMBER.name
+                        SESSION["session_flag_comment"] = flag_comment
+                        
+                        # Update both geolocation and flag in database
                         await SessionDB.update_session_geolocation(session_id, geolocation_json)
+                        await SessionDB.update_session_flag(session_id, SessionFlag.AMBER.name, flag_comment)
                 else:
                     # No geolocation in DB, save it
                     log.info("No geolocation in DB - saving new geolocation")

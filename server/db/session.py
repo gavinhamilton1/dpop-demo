@@ -505,6 +505,13 @@ class SessionDB:
             (geolocation_json, now(), session_id)
         )
     
+    async def update_session_flag(self, session_id: str, flag: str, comment: str = None) -> None:
+        """Update session risk flag and comment"""
+        await self.exec(
+            "UPDATE sessions SET session_flag=?, session_flag_comment=?, updated_at=? WHERE _session_id=?",
+            (flag, comment, now(), session_id)
+        )
+    
     async def link_sessions(self, session_id_1: str, session_id_2: str) -> None:
         """Create bidirectional link between two sessions (e.g., desktop and mobile)"""
         log.info(f"Linking sessions: {session_id_1} <-> {session_id_2}")
