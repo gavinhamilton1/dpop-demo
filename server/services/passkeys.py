@@ -79,9 +79,8 @@ class PasskeyService:
             ],
             "authenticatorSelection": {
                 "authenticatorAttachment": "platform",
-                "residentKey": "preferred",
-                "userVerification": "required",
-                "requireResidentKey": True
+                "residentKey": "required",
+                "userVerification": "required"
             },
             "attestation": "none",
             "excludeCredentials": exclude_credentials,
