@@ -413,11 +413,17 @@ async def get_session_history(req: Request, response: Response):
         history = await SessionService.get_session_history(username, days=10)
         
         # Transform _session_id to session_id for client compatibility
+        # Log flags for debugging
+        flag_counts = {"GREEN": 0, "AMBER": 0, "RED": 0}
         for session in history:
             if '_session_id' in session and 'session_id' not in session:
                 session['session_id'] = session['_session_id']
+            
+            # Count flags
+            flag = session.get('session_flag', 'GREEN')
+            flag_counts[flag] = flag_counts.get(flag, 0) + 1
         
-        log.info(f"Session history retrieved for user {username}: {len(history)} sessions")
+        log.info(f"Session history retrieved for user {username}: {len(history)} sessions, Flags: {flag_counts}")
         
         return {
             "ok": True,
@@ -1319,6 +1325,41 @@ async def get_all_db_tables():
         
     except Exception as e:
         log.error(f"Failed to get database tables: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/test/set-amber-flag",
+          tags=["admin"],
+          summary="Set Test AMBER Flag",
+          description="Development only - manually set AMBER flag for testing")
+async def set_test_amber_flag(req: Request, response: Response):
+    """Set AMBER flag on current session for testing"""
+    try:
+        # Only allow in development
+        if not SETTINGS.dev_allow_insecure_cookie:
+            raise HTTPException(status_code=403, detail="Admin endpoint only available in development mode")
+        
+        session_id = req.session.get("session_id")
+        if not session_id:
+            raise HTTPException(status_code=401, detail="No session found")
+        
+        await SessionDB.update_session_flag(
+            session_id, 
+            "AMBER", 
+            "🧪 TEST: Suspicious location change: London, UK → New York, US (manually triggered for testing)"
+        )
+        
+        log.info(f"Test AMBER flag set for session: {session_id}")
+        
+        return {
+            "ok": True,
+            "message": "AMBER flag set for testing",
+            "session_id": session_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to set test flag: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

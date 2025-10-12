@@ -33,27 +33,28 @@
                 <div class="overview-left-column">
                     <!-- Status Section -->
                     <div class="overview-column status-column">
-                        <h3>Status</h3>
+                        <h3>Current Session</h3>
                         <div class="status-item">
                             <span class="label">Binding State:</span>
                             <strong class="value" id="bindingState">Bound</strong>
                         </div>
                         <div class="status-item">
-                            <span class="label">Risk Signals:</span>
-                            <div class="status-flag-container">
-                                <strong class="value status-flag" id="sessionFlag">GREEN</strong>
-<button class="history-action-btn signal-data-btn" id="inspectRiskSignals" title="Inspect Signal Data">Details</button>
-                            </div>
+                            <span class="label">Location:</span>
+                            <strong class="value" id="currentLocation">Unknown</strong>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">Browser:</span>
+                            <strong class="value" id="currentBrowser">Unknown</strong>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">Platform:</span>
+                            <strong class="value" id="currentPlatform">Unknown</strong>
                         </div>
                         <div class="status-item">
                             <span class="label">Active Sessions:</span>
                             <div class="session-count-container">
                                 <strong class="value" id="sessionCount">1</strong>
                             </div>
-                        </div>
-                        <div class="status-item">
-                            <span class="label">Auth Method:</span>
-                            <strong class="value" id="authMethod">No value</strong>
                         </div>
                     </div>
 
@@ -167,16 +168,22 @@
                 <div class="history-details">
                     <span class="history-location" data-location></span>
                 </div>
+                <div class="history-flag-comment" data-flag-comment style="display: none;">
+                    <span class="flag-comment-icon">⚠️</span>
+                    <span class="flag-comment-text" data-flag-comment-text></span>
+                </div>
                 <div class="history-linked" data-linked style="display: none;">
                     <span class="linked-icon">🔗</span>
                     <span class="linked-text" data-linked-text></span>
                 </div>
                 <div class="history-signal" data-signal style="display: none;">
-                    <button class="history-action-btn signal-data-btn" data-signal-link>More Signal Data</button>
+                    <span class="history-risk-flag" data-risk-flag></span>
+                    <button class="history-action-btn signal-data-btn" data-signal-link>Details</button>
                 </div>
             </div>
             <div class="history-actions" data-actions>
-                <button class="history-action-btn report-btn" data-report-btn>Report Suspicious Activity</button>
+                <button class="history-action-btn acknowledge-btn" data-acknowledge-btn style="display: none;">✓ This is me</button>
+                <button class="history-action-btn report-btn" data-report-btn>Report</button>
                 <button class="history-action-btn kill-btn" data-kill-btn style="display: none;">Kill Session</button>
             </div>
         </div>
@@ -214,6 +221,7 @@
         <div class="session-item">
             <div class="session-info">
                 <div class="session-header">
+                    <span class="session-risk-flag" data-risk-flag style="display: none;"></span>
                     <span class="session-location" data-location></span>
                     <span class="session-browser" data-browser></span>
                     <span class="current-badge" data-current-badge style="display: none;">Current</span>
@@ -221,10 +229,12 @@
                 <div class="session-details">
                     <span class="session-ip" data-ip></span>
                     <span class="session-activity" data-activity></span>
+                    <span class="session-flag-comment" data-flag-comment style="display: none;"></span>
                 </div>
             </div>
             <div class="session-actions" data-actions>
-                <button class="action-btn signal-data-btn" data-signal-link>More Signal Data</button>
+                <button class="action-btn acknowledge-session-btn" data-acknowledge-btn style="display: none;">✓ This is me</button>
+                <button class="action-btn signal-data-btn" data-signal-link>Details</button>
                 <button class="action-btn terminate-btn" data-terminate-btn>Terminate</button>
                 <button class="action-btn report-btn" data-report-btn>Report</button>
             </div>

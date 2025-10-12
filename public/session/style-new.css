@@ -464,6 +464,53 @@ h3 {
     line-height: 1;
 }
 
+.history-risk-flag {
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.history-risk-flag.green {
+    background-color: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.history-risk-flag.amber {
+    background-color: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.history-risk-flag.red {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.history-flag-comment {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    background-color: rgba(251, 191, 36, 0.1);
+    border-left: 3px solid #fbbf24;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.flag-comment-icon {
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.flag-comment-text {
+    flex: 1;
+}
+
 .history-time {
     color: var(--text-muted);
     font-size: 0.7rem;
@@ -543,12 +590,11 @@ h3 {
     border-top: 1px solid rgba(255, 255, 255, 0.1);
     display: flex;
     align-items: center;
-    gap: 0;
+    gap: 8px;
 }
 
 .history-signal .signal-data-btn {
     display: inline-block;
-    margin-left: 0;
     padding: 4px 10px;
     font-size: 0.6rem;
     vertical-align: middle;
@@ -610,6 +656,20 @@ h3 {
     border-color: rgba(255, 255, 255, 0.2);
 }
 
+.history-action-btn.acknowledge-btn,
+.action-btn.acknowledge-session-btn {
+    background-color: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    font-size: 0.65rem;
+}
+
+.history-action-btn.acknowledge-btn:hover,
+.action-btn.acknowledge-session-btn:hover {
+    background-color: rgba(34, 197, 94, 0.25);
+    border-color: rgba(34, 197, 94, 0.5);
+}
+
 /* Session action buttons (for sessionItemTemplate) */
 .action-btn {
     padding: 6px 12px;
@@ -632,6 +692,45 @@ h3 {
     background-color: rgba(255, 255, 255, 0.05);
     color: var(--text-primary);
     border-color: rgba(255, 255, 255, 0.2);
+}
+
+.session-risk-flag {
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-right: 8px;
+}
+
+.session-risk-flag.green {
+    background-color: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.session-risk-flag.amber {
+    background-color: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.session-risk-flag.red {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.session-flag-comment {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    background-color: rgba(251, 191, 36, 0.1);
+    border-left: 3px solid #fbbf24;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.8);
 }
 
 .action-btn.terminate-btn {

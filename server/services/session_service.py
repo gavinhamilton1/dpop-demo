@@ -679,7 +679,11 @@ class SessionService:
     @staticmethod
     def _sendable_session_data(session_data: dict) -> dict:
         """Return a dictionary of session data that can be sent to the client.  anything that doesn't start with an underscore"""
-        return {key: value for key, value in session_data.items() if not key.startswith("_")}
+        sendable = {key: value for key, value in session_data.items() if not key.startswith("_")}
+        # Include session_id (without underscore) for client to identify current session
+        if "_session_id" in session_data:
+            sendable["session_id"] = session_data["_session_id"]
+        return sendable
 
 
     @staticmethod

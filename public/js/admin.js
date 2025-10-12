@@ -196,6 +196,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
+    // Test AMBER flag button
+    const testAmberBtn = document.getElementById('testAmberBtn');
+    if (testAmberBtn) {
+        testAmberBtn.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/admin/test/set-amber-flag', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                const result = await response.json();
+                
+                if (response.ok) {
+                    alert('✅ AMBER flag set for current session!\n\nGo back to the main page and refresh to see the risk flag.');
+                } else {
+                    alert('❌ Failed to set flag: ' + (result.detail || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('❌ Error: ' + error.message);
+            }
+        });
+    }
+    
     // Delegate click events for JSON cells (since they're dynamically created)
     document.addEventListener('click', (e) => {
         if (e.target.classList.contains('json-cell')) {

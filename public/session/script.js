@@ -22,7 +22,9 @@ class AppController {
         
         // New elements for overview section
         this.bindingState = document.getElementById('bindingState');
-        this.sessionFlag = document.getElementById('sessionFlag');
+        this.currentLocation = document.getElementById('currentLocation');
+        this.currentBrowser = document.getElementById('currentBrowser');
+        this.currentPlatform = document.getElementById('currentPlatform');
         this.sessionCount = document.getElementById('sessionCount');
         this.authMethod = document.getElementById('authMethod');
         this.reportActivityBtn = document.getElementById('reportActivityBtn');
@@ -163,6 +165,14 @@ class AppController {
                 if (sessionData) {
                     this.showSignalDataModal(sessionData);
                 }
+            });
+        }
+        
+        // Acknowledge alert button
+        const acknowledgeBtn = document.getElementById('acknowledgeAlertBtn');
+        if (acknowledgeBtn) {
+            acknowledgeBtn.addEventListener('click', async () => {
+                await this.acknowledgeSecurityAlert();
             });
         }
 
@@ -381,8 +391,6 @@ class AppController {
         
         // Update binding state
         if (this.bindingState) {
-            // Map server state values to display values
-            // Note: dpop-fun.js stores responseData.state as DPOP_SESSION.session_state
             const state = sessionData.session_state || sessionData.state;
             let bindingStateText = 'Pending';
             let bindingStateClass = 'status-pending';
@@ -395,26 +403,62 @@ class AppController {
                 bindingStateClass = 'status-pending';
             }
             
-            logger.info('Binding state text:', bindingStateText, 'class:', bindingStateClass);
             this.bindingState.textContent = bindingStateText;
             this.bindingState.className = `value ${bindingStateClass}`;
         }
+        
+        // Update location
+        if (this.currentLocation) {
+            let location = 'Unknown';
+            if (sessionData.geolocation) {
+                try {
+                    const geo = typeof sessionData.geolocation === 'string' ? 
+                        JSON.parse(sessionData.geolocation) : sessionData.geolocation;
+                    location = `${geo.city || 'Unknown'}, ${geo.country_code || geo.country || 'Unknown'}`;
+                } catch (e) {
+                    location = 'Unknown';
+                }
+            }
+            this.currentLocation.textContent = location;
+        }
 
-        // Update session flag
-        if (this.sessionFlag) {
-            const sessionFlag = sessionData.session_flag || 'GREEN';
-            this.sessionFlag.textContent = sessionFlag;
-            this.sessionFlag.className = `value status-flag ${sessionFlag.toLowerCase()}`;
+        // Update browser
+        if (this.currentBrowser) {
+            let browser = 'Unknown';
+            if (sessionData.signal_data) {
+                try {
+                    const signal = typeof sessionData.signal_data === 'string' ? 
+                        JSON.parse(sessionData.signal_data) : sessionData.signal_data;
+                    browser = this.extractBrowserName(signal.userAgent);
+                } catch (e) {
+                    browser = 'Unknown';
+                }
+            }
+            this.currentBrowser.textContent = browser;
+        }
+
+        // Update platform
+        if (this.currentPlatform) {
+            let platform = 'Unknown';
+            if (sessionData.signal_data) {
+                try {
+                    const signal = typeof sessionData.signal_data === 'string' ? 
+                        JSON.parse(sessionData.signal_data) : sessionData.signal_data;
+                    platform = signal.platform || 'Unknown';
+                    
+                    // Add device type if available
+                    if (sessionData.device_type) {
+                        platform = `${platform} (${sessionData.device_type})`;
+                    }
+                } catch (e) {
+                    platform = 'Unknown';
+                }
+            }
+            this.currentPlatform.textContent = platform;
         }
 
         // Update session count and warning
         this.updateSessionCount();
-
-        // Update auth method
-        if (this.authMethod) {
-            const authMethod = sessionData.auth_method || 'Unauthenticated';
-            this.authMethod.textContent = authMethod;
-        }
     }
 
     updateSessionCount() {
@@ -468,16 +512,19 @@ class AppController {
         this.sessionHistoryList.innerHTML = '';
             const template = document.getElementById('historyItemTemplate');
             const currentTime = Math.floor(Date.now() / 1000);
-            const currentSessionId = sessionData.session_id;
+            // Session ID might be in session_id or _session_id field
+            const currentSessionId = sessionData.session_id || sessionData._session_id;
             
             logger.info('Current session ID:', currentSessionId);
+            logger.info('sessionData keys:', Object.keys(sessionData));
             logger.info('First history session:', history[0]);
             
             history.forEach(session => {
                 // Clone the template
                 const clone = template.content.cloneNode(true);
                 
-                const sessionId = session.session_id;
+                // Session ID might be in session_id or _session_id field
+                const sessionId = session.session_id || session._session_id;
                 
                 // Determine if session is active
                 const isActive = session.session_status === 'ACTIVE' && session.expires_at > currentTime;
@@ -555,23 +602,55 @@ class AppController {
                     linkedEl.style.display = 'none';
                 }
                 
-                // Set signal info
+                // Set signal row (always visible now - contains risk flag)
                 const signalEl = clone.querySelector('[data-signal]');
+                signalEl.style.display = 'block';
+                
+                // Add signal info text if available
                 if (signalInfo) {
-                    // Create text node and insert before the button
+                    // Create text node and insert before the risk flag
                     const textNode = document.createTextNode(signalInfo + ' • ');
-                    const signalBtn = signalEl.querySelector('[data-signal-link]');
-                    if (signalBtn) {
-                        signalEl.insertBefore(textNode, signalBtn);
+                    const riskFlagEl = signalEl.querySelector('[data-risk-flag]');
+                    if (riskFlagEl) {
+                        signalEl.insertBefore(textNode, riskFlagEl);
                     }
-                    signalEl.style.display = 'block';
+                }
+                
+                // Set risk flag badge (always show)
+                const riskFlagEl = clone.querySelector('[data-risk-flag]');
+                const sessionFlag = session.session_flag || 'GREEN';
+                
+                logger.info(`Session ${sessionId}: flag=${sessionFlag}, comment=${session.session_flag_comment}`);
+                
+                riskFlagEl.textContent = sessionFlag;
+                riskFlagEl.className = `history-risk-flag ${sessionFlag.toLowerCase()}`;
+                logger.info(`Displaying ${sessionFlag} flag for session ${sessionId}`);
+                
+                // Set flag comment (only show if present and flag is not GREEN)
+                const flagCommentEl = clone.querySelector('[data-flag-comment]');
+                const flagCommentTextEl = clone.querySelector('[data-flag-comment-text]');
+                if (session.session_flag_comment && sessionFlag !== 'GREEN') {
+                    flagCommentTextEl.textContent = session.session_flag_comment;
+                    flagCommentEl.style.display = 'flex';
+                    logger.info(`Displaying flag comment for session ${sessionId}: ${session.session_flag_comment}`);
                 } else {
-                    signalEl.style.display = 'none';
+                    flagCommentEl.style.display = 'none';
                 }
                 
                 // Handle action buttons
+                const acknowledgeBtn = clone.querySelector('[data-acknowledge-btn]');
                 const killBtn = clone.querySelector('[data-kill-btn]');
                 const reportBtn = clone.querySelector('[data-report-btn]');
+                
+                // Show acknowledge button only for AMBER flags (not GREEN or RED)
+                if (sessionFlag === 'AMBER' && isCurrentSession) {
+                    acknowledgeBtn.style.display = 'inline-block';
+                    acknowledgeBtn.addEventListener('click', () => {
+                        this.acknowledgeSecurityAlert();
+                    });
+                } else {
+                    acknowledgeBtn.style.display = 'none';
+                }
                 
                 // Show kill button only for active sessions (not current session)
                 if (isActive && !isCurrentSession) {
@@ -1587,6 +1666,48 @@ class AppController {
                 logger.error('Error removing credential:', error);
                 alert(`Error removing passkey: ${error.message}`);
             }
+        }
+    }
+
+    async acknowledgeSecurityAlert() {
+        try {
+            logger.info('User acknowledging security alert');
+            
+            const confirmed = confirm(
+                'Acknowledge this security alert?\n\n' +
+                'Click OK to confirm:\n' +
+                '"Yes, this activity was me. This is not a security threat."\n\n' +
+                'The risk flag will be reset to GREEN.'
+            );
+            
+            if (!confirmed) {
+                return;
+            }
+            
+            // Call acknowledge endpoint
+            const response = await DpopFun.dpopFetch('POST', '/session/acknowledge-alert', {
+                body: JSON.stringify({})
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                logger.info('Security alert acknowledged:', result);
+                
+                // Refresh session UI to show updated flag
+                const freshSessionData = await DpopFun.setupSession();
+                if (freshSessionData) {
+                    await this.populateSessionUI(freshSessionData);
+                }
+                
+                alert('✓ Security alert acknowledged.\n\nRisk flag reset to GREEN.');
+            } else {
+                const error = await response.json();
+                logger.error('Failed to acknowledge alert:', error);
+                alert(`Failed to acknowledge alert: ${error.detail || 'Unknown error'}`);
+            }
+        } catch (error) {
+            logger.error('Error acknowledging alert:', error);
+            alert(`Error: ${error.message}`);
         }
     }
 
