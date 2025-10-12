@@ -332,7 +332,9 @@ class SessionService:
             )
         
         try:
-            geolocation = GeolocationService.get_ip_geolocation(req.client.host)
+            client_ip = req.client.host
+            log.info("Session initialization - Client IP from request: %s", client_ip)
+            geolocation = GeolocationService.get_ip_geolocation(client_ip)
             geolocation_db = session_db.get("geolocation")
 
             if geolocation:
@@ -351,11 +353,11 @@ class SessionService:
                         geolocation.get("country") != geolocation_db_parsed.get("country")):
                         log.info("Geolocation changed - updating database: Old IP=%s, New IP=%s", 
                                 geolocation_db_parsed.get("ip"), geolocation.get("ip"))
-                        await SessionDB.set_session(session_id, {"geolocation": geolocation_json})
+                        await SessionDB.update_session_geolocation(session_id, geolocation_json)
                 else:
                     # No geolocation in DB, save it
                     log.info("No geolocation in DB - saving new geolocation")
-                    await SessionDB.set_session(session_id, {"geolocation": geolocation_json})
+                    await SessionDB.update_session_geolocation(session_id, geolocation_json)
             else:
                 log.warning("Session initialization - No geolocation data returned")
         except Exception as e:

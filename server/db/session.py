@@ -498,6 +498,13 @@ class SessionDB:
             ("logged_out", "TERMINATED", session_id)
         )
     
+    async def update_session_geolocation(self, session_id: str, geolocation_json: str) -> None:
+        """Update session geolocation data"""
+        await self.exec(
+            "UPDATE sessions SET geolocation=?, updated_at=? WHERE _session_id=?",
+            (geolocation_json, now(), session_id)
+        )
+    
     async def link_sessions(self, session_id_1: str, session_id_2: str) -> None:
         """Create bidirectional link between two sessions (e.g., desktop and mobile)"""
         log.info(f"Linking sessions: {session_id_1} <-> {session_id_2}")
