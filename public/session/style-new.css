@@ -115,10 +115,10 @@ h3 {
     background-color: rgba(255, 255, 255, 0.1);
 }
 
-/* --- Overview Section (3 columns) --- */
+/* --- Overview Section (2 columns: Status+Timers | Authentication) --- */
 .overview-section {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 2fr 1fr; /* Left column 2/3, right column 1/3 */
     gap: 0;
     margin-bottom: 20px;
     border: 1px solid var(--color-border);
@@ -126,15 +126,36 @@ h3 {
     overflow: hidden;
 }
 
+.overview-left-column {
+    display: grid;
+    grid-template-rows: auto auto; /* Two rows: Status and Timers */
+    gap: 0;
+}
+
+.overview-left-column .overview-column {
+    padding: 20px;
+    position: relative;
+}
+
+.overview-left-column .overview-column:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    bottom: 0;
+    height: 1px;
+    background-color: var(--color-border);
+}
+
 .overview-column {
     padding: 20px;
     position: relative;
 }
 
-.overview-column:not(:last-child)::after {
+.controls-column::before {
     content: '';
     position: absolute;
-    right: 0;
+    left: 0;
     top: 20px;
     bottom: 20px;
     width: 1px;
@@ -142,14 +163,13 @@ h3 {
 }
 
 .overview-column h3 {
-    margin-bottom: 16px;
+    margin-bottom: 8px;
 }
 
 .status-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
     padding: 8px 0;
 }
 
@@ -216,10 +236,15 @@ h3 {
 }
 
 /* Timer column */
+.timers-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
 .timer-item {
     display: flex;
     flex-direction: column;
-    margin-bottom: 12px;
 }
 
 .timer-item span {
@@ -1398,12 +1423,25 @@ h3 {
         grid-template-columns: 1fr;
     }
     
-    .overview-column:not(:last-child)::after {
+    .overview-left-column {
+        grid-template-rows: auto;
+    }
+    
+    .overview-left-column .overview-column:not(:last-child)::after {
+        display: block;
+    }
+    
+    .controls-column::before {
         display: none;
     }
     
-    .overview-column:not(:last-child) {
-        border-bottom: 1px solid var(--color-border);
+    .controls-column {
+        border-top: 1px solid var(--color-border);
+    }
+    
+    .timers-row {
+        grid-template-columns: 1fr;
+        gap: 12px;
     }
     
     .section-header {
