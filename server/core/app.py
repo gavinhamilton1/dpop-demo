@@ -230,15 +230,51 @@ def _new_nonce() -> str: return b64u(secrets.token_bytes(18))
 
 # ---------------- Binding token helpers (moved to SessionService) ----------------
 
+# ---- Background cleanup task ----
+_cleanup_task = None
+
+async def _periodic_cleanup():
+    """Background task to periodically clean up orphaned devices"""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # Run every hour
+            deleted = await SessionDB.cleanup_orphaned_devices(max_age_seconds=3600)
+            if deleted > 0:
+                log.info(f"Periodic cleanup: removed {deleted} orphaned devices")
+        except Exception as e:
+            log.error(f"Error in periodic cleanup task: {e}")
+
 # ---- DB startup ----
 @app.on_event("startup")
 async def _init_db():
+    global _cleanup_task
     try:
         await SessionDB.init(SETTINGS.db_path)  # type: ignore[arg-type]
         log.info("DB initialized at %s", SETTINGS.db_path)
+        
+        # Run initial cleanup of orphaned devices (older than 1 hour)
+        deleted = await SessionDB.cleanup_orphaned_devices(max_age_seconds=3600)
+        if deleted > 0:
+            log.info(f"Initial cleanup: removed {deleted} orphaned devices")
+        
+        # Start periodic cleanup task
+        _cleanup_task = asyncio.create_task(_periodic_cleanup())
+        log.info("Started periodic cleanup task for orphaned devices")
     except TypeError:
         log.warning("SessionDB.init(db_path) not supported; calling SessionDB.init() without args. Ensure SessionDB uses %s.", SETTINGS.db_path)
         await SessionDB.init()
+
+@app.on_event("shutdown")
+async def _shutdown_cleanup():
+    """Cancel the cleanup task on shutdown"""
+    global _cleanup_task
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+        log.info("Cleanup task cancelled")
 
 # ---------------- Basic routes ----------------
 @app.get("/", 
@@ -1384,6 +1420,39 @@ async def clear_geolocation_cache():
         
     except Exception as e:
         log.error(f"Failed to clear geolocation cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/devices/cleanup",
+          tags=["admin"],
+          summary="Clean Up Orphaned Devices",
+          description="Development only - removes devices with null bound_username older than specified age")
+async def cleanup_orphaned_devices_endpoint(req: Request):
+    """Manually trigger cleanup of orphaned devices"""
+    try:
+        # Only allow in development
+        if not SETTINGS.dev_allow_insecure_cookie:
+            raise HTTPException(status_code=403, detail="Admin endpoint only available in development mode")
+        
+        # Get max age from request body (optional, defaults to 1 hour)
+        try:
+            body = await req.json()
+            max_age_seconds = body.get("max_age_seconds", 3600)
+        except:
+            max_age_seconds = 3600
+        
+        # Run cleanup
+        deleted_count = await SessionDB.cleanup_orphaned_devices(max_age_seconds=max_age_seconds)
+        
+        return {
+            "ok": True,
+            "message": f"Cleaned up {deleted_count} orphaned devices",
+            "deleted_count": deleted_count,
+            "max_age_seconds": max_age_seconds
+        }
+        
+    except Exception as e:
+        log.error(f"Failed to cleanup orphaned devices: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

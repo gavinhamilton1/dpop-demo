@@ -534,7 +534,7 @@ class SessionDB:
                 COUNT(DISTINCT s._session_id) as session_count
                FROM devices d
                LEFT JOIN sessions s ON d.device_id = s.device_id AND s.auth_username = ?
-               WHERE (d.bound_username = ? OR d.bound_username IS NULL) 
+               WHERE d.bound_username = ?
                  AND d.bik_jkt IS NOT NULL
                GROUP BY d.device_id
                ORDER BY last_used DESC""",
@@ -544,24 +544,55 @@ class SessionDB:
     
     async def remove_device(self, device_id: str, username: str) -> bool:
         """Remove a device for a specific user (unregister BIK)"""
-        # Verify the device belongs to the user
-        rows = await self.fetchall(
-            "SELECT COUNT(*) as count FROM sessions WHERE device_id=? AND auth_username=?",
-            [device_id, username]
+        # Verify the device belongs to the user by checking bound_username
+        device = await self.fetchone(
+            "SELECT bound_username FROM devices WHERE device_id=?",
+            [device_id]
         )
         
-        if rows and rows[0]['count'] > 0:
-            # Instead of deleting, clear the BIK data to "unregister" the device
-            # This preserves session history while removing the device's authentication capability
-            await self.exec(
-                "UPDATE devices SET bik_jkt=NULL, bik_jwk=NULL, updated_at=? WHERE device_id=?", 
-                [now(), device_id]
-            )
-            log.info(f"Unregistered device {device_id} for user {username} (cleared BIK)")
-            return True
-        else:
-            log.warning(f"Device {device_id} not found or doesn't belong to user {username}")
+        if not device:
+            log.warning(f"Device {device_id} not found")
             return False
+        
+        # Check if device is bound to this user
+        if device['bound_username'] != username:
+            log.warning(f"Device {device_id} doesn't belong to user {username} (bound to: {device['bound_username']})")
+            return False
+        
+        # Instead of deleting, clear the BIK data to "unregister" the device
+        # This preserves session history while removing the device's authentication capability
+        await self.exec(
+            "UPDATE devices SET bik_jkt=NULL, bik_jwk=NULL, updated_at=? WHERE device_id=?", 
+            [now(), device_id]
+        )
+        log.info(f"Unregistered device {device_id} for user {username} (cleared BIK)")
+        return True
+    
+    async def cleanup_orphaned_devices(self, max_age_seconds: int = 3600) -> int:
+        """
+        Remove devices that were never bound to a user after a certain age.
+        This cleans up phantom devices created by bots/crawlers or incomplete registration flows.
+        
+        Args:
+            max_age_seconds: Maximum age in seconds before an unbound device is cleaned up (default 1 hour)
+        
+        Returns:
+            Number of devices cleaned up
+        """
+        cutoff_time = now() - max_age_seconds
+        
+        # Delete devices where bound_username is NULL and they're older than the cutoff
+        result = await self.exec(
+            "DELETE FROM devices WHERE bound_username IS NULL AND created_at < ?",
+            [cutoff_time]
+        )
+        
+        deleted_count = result.rowcount if hasattr(result, 'rowcount') else 0
+        
+        if deleted_count > 0:
+            log.info(f"Cleaned up {deleted_count} orphaned devices older than {max_age_seconds}s")
+        
+        return deleted_count
 
 
 # --- low-level helpers -------------------------------------------------
