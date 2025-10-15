@@ -1,0 +1,161 @@
+/* Mobile-specific overrides */
+body {
+    padding: 20px;
+    min-height: 100vh;
+}
+
+/* Ensure iOS doesn't zoom on inputs */
+input, textarea, select {
+    font-size: 16px !important;
+}
+
+.mobile-container {
+    max-width: 500px;
+    margin: 0 auto;
+    background: var(--bg-dark);
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--color-border);
+}
+
+.mobile-container h1 {
+    color: var(--text-primary);
+    font-size: 1.5rem;
+    margin: 0 0 1.5rem 0;
+    text-align: center;
+}
+
+.progress-step {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    border-left: 4px solid var(--color-border);
+    transition: all 0.3s;
+}
+
+.progress-step.active {
+    border-left-color: var(--color-primary);
+    background: rgba(102, 126, 234, 0.1);
+}
+
+.progress-step.completed {
+    border-left-color: var(--color-success);
+    background: rgba(76, 175, 80, 0.1);
+}
+
+.progress-step.error {
+    border-left-color: var(--color-error);
+    background: rgba(244, 67, 54, 0.1);
+}
+
+.step-number {
+    display: inline-block;
+    width: 32px;
+    height: 32px;
+    line-height: 32px;
+    text-align: center;
+    background: var(--color-primary);
+    color: white;
+    border-radius: 50%;
+    margin-right: 12px;
+    font-weight: bold;
+}
+
+.step-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.step-status {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+.bc-card {
+    display: none;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 24px;
+    margin-top: 20px;
+    border: 1px solid var(--color-border);
+    text-align: center;
+}
+
+.bc-card.active {
+    display: block;
+}
+
+.bc-code {
+    font-size: 2.5rem;
+    font-weight: bold;
+    letter-spacing: 0.25rem;
+    color: var(--color-primary);
+    margin: 1.5rem 0;
+    font-family: 'Courier New', monospace;
+    word-spacing: 0.5rem;
+}
+
+.bc-timer {
+    font-size: 1.125rem;
+    color: var(--color-error);
+    font-weight: bold;
+    margin: 1rem 0;
+}
+
+.bc-qr-container {
+    margin: 20px 0;
+}
+
+.bc-qr {
+    display: inline-block;
+    padding: 16px;
+    background: white;
+    border-radius: 8px;
+}
+
+.bc-hint {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    margin-top: 1rem;
+}
+
+.bc-url {
+    background: rgba(255, 193, 7, 0.1);
+    border: 2px solid var(--color-warning);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+    font-weight: 600;
+    color: var(--color-warning);
+}
+
+.bc-security {
+    background: rgba(244, 67, 54, 0.1);
+    border: 2px solid var(--color-error);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 20px;
+    font-weight: 600;
+    color: var(--color-error);
+}
+
+.success-message {
+    background: var(--color-success);
+    color: white;
+    padding: 16px;
+    border-radius: 8px;
+    text-align: center;
+    margin-top: 20px;
+}
+
+.error-message {
+    background: var(--color-error);
+    color: white;
+    padding: 16px;
+    border-radius: 8px;
+    text-align: center;
+    margin-top: 20px;
+}

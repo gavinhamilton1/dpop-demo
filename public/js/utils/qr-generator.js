@@ -20,6 +20,11 @@ export function generateQRCode(containerId, qrData, linkId, statusCallback = nul
     
     console.log('QR code container found:', qrCodeDiv);
     
+    // Check if QR code already exists (prevent duplicate generation)
+    if (qrCodeDiv.querySelector('img') || qrCodeDiv.querySelector('canvas')) {
+        console.log('QR code already exists, clearing it first...');
+    }
+    
     // Clear any existing QR code
     qrCodeDiv.innerHTML = '';
     
@@ -48,8 +53,8 @@ export function generateQRCode(containerId, qrData, linkId, statusCallback = nul
             if (window.QRGenerator) {
                 console.log('Creating QRGenerator instance...');
                 const qrGenerator = new QRGenerator();
-                console.log('Calling generateQRWithAprilTag...');
-                const result = await qrGenerator.generateQRWithAprilTag(containerId, qrData);
+                console.log('Calling generateQRWithAprilTag with linkId:', linkId);
+                const result = await qrGenerator.generateQRWithAprilTag(containerId, qrData, linkId);
                 console.log('AprilTag overlay result:', result);
             } else {
                 console.error('QRGenerator not available on window object');

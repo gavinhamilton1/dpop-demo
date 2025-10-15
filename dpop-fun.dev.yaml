@@ -5,7 +5,8 @@ server:
     - http://localhost:8000
     - https://dpop.fun
     - https://dpop-fun.onrender.com
-  ec_private_key_pem_file: null        # optional: path to ES256 private key PEM
+    - https://b12hkdwk.use.devtunnels.ms:8000
+  ec_private_key_pem_file: server-key.pem        # optional: path to ES256 private key PEM
   ec_private_key_pem: null             # optional: inline PEM (dev only)
 
 db:

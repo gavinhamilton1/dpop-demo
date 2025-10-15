@@ -2,8 +2,49 @@
 import * as DpopFun from './dpop-fun.js';
 import { b64uToBuf, bufToB64u } from '../utils/jose-lite.js';
 import { logger } from '../utils/logging.js';
-import { AuthenticationError, NetworkError } from '../utils/errors.js';
 
+/**
+ * Check if WebAuthn is supported in this browser
+ * @returns {boolean} Whether WebAuthn is supported
+ */
+export function isSupported() {
+  return !!(window.PublicKeyCredential && 
+           typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function');
+}
+
+/**
+ * Check if user-verifying platform authenticator is available
+ * @returns {Promise<boolean>} Whether UVPA is available
+ */
+export async function isUserVerifyingPlatformAuthenticatorAvailable() {
+  if (!isSupported()) {
+    return false;
+  }
+  
+  try {
+    return await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch (error) {
+    logger.warn('UVPA check failed:', error);
+    return false;
+  }
+}
+
+/**
+ * Get basic passkey support status (browser capabilities only)
+ * @returns {Promise<Object>} Support status with isSupported and hasUVPA
+ */
+export async function getBasicSupportStatus() {
+  return {
+    isSupported: isSupported(),
+    hasUVPA: await isUserVerifyingPlatformAuthenticatorAvailable(),
+    hasCredentials: false // Will be checked later when authenticated
+  };
+}
+
+/**
+ * Legacy checkSupport function for backward compatibility
+ * @returns {Promise<Object>} Support status
+ */
 export async function checkSupport() {
   try {
     logger.debug('Checking WebAuthn support');
@@ -14,17 +55,20 @@ export async function checkSupport() {
     return result;
   } catch (error) {
     logger.error('Failed to check WebAuthn support:', error);
-    throw new AuthenticationError('Failed to check WebAuthn support', { originalError: error.message });
+    throw new Error('Failed to check WebAuthn support: ' + error.message);
   }
 }
 
 // ----- Registration -----
-export async function registerPasskey() {
+export async function registerPasskey(username) {
   try {
-    logger.debug('Starting passkey registration');
+    logger.debug('Starting passkey registration for username:', username);
     
-    // 1) get options
-    const opts = await DpopFun.dpopFunFetch('/webauthn/registration/options', { method: 'POST' });
+    // 1) get options with username
+    const optionsResponse = await DpopFun.dpopFetch('POST', '/webauthn/registration/options', {
+      body: JSON.stringify({ username })
+    });
+    const opts = await optionsResponse.json();
     logger.debug('Registration options received:', { 
       username: opts.user?.name, 
       userId: opts.user?.id,
@@ -48,7 +92,7 @@ export async function registerPasskey() {
     const cred = await navigator.credentials.create({ publicKey: pub });
     if (!cred) {
       logger.warn('User cancelled passkey registration');
-      throw new AuthenticationError('registration cancelled');
+      throw new Error('registration cancelled');
     }
     logger.debug('Credential created successfully');
 
@@ -62,13 +106,14 @@ export async function registerPasskey() {
         attestationObject: bufToB64u(cred.response.attestationObject),
       },
       transports: cred.response.getTransports?.() || ['internal'],
+      username: username  // Include username for server-side storage
     };
 
     logger.debug('Sending attestation to server for verification');
-    const result = await DpopFun.dpopFunFetch('/webauthn/registration/verify', {
-      method: 'POST',
-      body: att,
+    const verifyResponse = await DpopFun.dpopFetch('POST', '/webauthn/registration/verify', {
+      body: JSON.stringify(att),
     });
+    const result = await verifyResponse.json();
     
     logger.debug('Passkey registration completed successfully');
     return result;
@@ -76,20 +121,17 @@ export async function registerPasskey() {
     // Handle user cancellation gracefully first
     if (error.name === 'NotAllowedError') {
       logger.info('User cancelled passkey registration');
-      throw new AuthenticationError('Registration cancelled by user', { 
+      throw new Error('Registration cancelled by user', { 
         originalError: error.message,
         cancelled: true 
       });
     }
     
-    // Handle specific error types
-    if (error.name === 'AuthenticationError') throw error;
-    if (error.name === 'NetworkError') throw error;
     
     // Handle other WebAuthn errors
     if (error.name === 'InvalidStateError' || error.name === 'SecurityError') {
       logger.warn('Passkey registration failed - retryable error:', error);
-      throw new AuthenticationError('Registration failed - please try again', { 
+      throw new Error('Registration failed - please try again', { 
         originalError: error.message,
         retryable: true 
       });
@@ -97,32 +139,51 @@ export async function registerPasskey() {
     
     // Log other errors as errors
     logger.error('Passkey registration failed:', error);
-    throw new AuthenticationError('Passkey registration failed', { originalError: error.message });
+    throw new Error('Passkey registration failed', { originalError: error.message });
   }
 }
 
 // ----- Authentication (preflight-able) -----
 
-export async function getAuthOptions() {
+export async function getAuthOptions(username = null) {
   try {
-    logger.debug('Getting authentication options');
-    const options = await DpopFun.dpopFunFetch('/webauthn/authentication/options', { method: 'POST' });
+    logger.debug('Getting authentication options', username ? `for username: ${username}` : '');
+    const body = username ? JSON.stringify({ username }) : undefined;
+    const optionsResponse = await DpopFun.dpopFetch('POST', '/webauthn/authentication/options', 
+      body ? { body } : {}
+    );
+    const options = await optionsResponse.json();
     logger.debug('Authentication options received');
     return options;
   } catch (error) {
     logger.error('Failed to get authentication options:', error);
     if (error.name === 'NetworkError') throw error;
-    throw new AuthenticationError('Failed to get authentication options', { originalError: error.message });
+    throw new Error('Failed to get authentication options', { originalError: error.message });
   }
 }
 
-export async function authenticatePasskey(passedOpts) {
+/**
+ * Check if passkeys exist for the current user
+ * Note: This requires an authenticated session
+ * @returns {Promise<boolean>} Whether passkeys exist
+ */
+export async function hasExistingPasskeys() {
   try {
-    logger.debug('Starting passkey authentication');
+    const options = await getAuthOptions();
+    return options.allowCredentials && options.allowCredentials.length > 0;
+  } catch (error) {
+    logger.warn('Failed to check existing passkeys:', error);
+    return false;
+  }
+}
+
+export async function authenticatePasskey(username = null, passedOpts = null) {
+  try {
+    logger.debug('Starting passkey authentication', username ? `for username: ${username}` : '');
     logger.debug('Passed options:', passedOpts);
     
-    // allow caller to pass pre-fetched options
-    const opts = passedOpts || await getAuthOptions();
+    // allow caller to pass pre-fetched options, otherwise fetch with username
+    const opts = passedOpts || await getAuthOptions(username);
     logger.debug('Using authentication options:', opts);
 
     const allow = Array.isArray(opts.allowCredentials) ? opts.allowCredentials : [];
@@ -150,12 +211,29 @@ export async function authenticatePasskey(passedOpts) {
       rpId: pub.rpId
     });
     
-    const assertion = await navigator.credentials.get({ publicKey: pub });
+    // For mobile with single passkey, use optional mediation to skip picker
+    // This goes straight to biometric when there's only one credential
+    const credentialOptions = {
+      publicKey: pub
+    };
+    
+    // On mobile, if using empty allowCredentials (usernameless), skip the picker
+    if (!pub.allowCredentials || pub.allowCredentials.length === 0) {
+      // Usernameless discovery - let platform handle it smoothly
+      credentialOptions.mediation = 'optional';
+      logger.debug('Using optional mediation for usernameless discovery');
+    } else if (pub.allowCredentials.length === 1) {
+      // Single credential - skip picker and go straight to biometric
+      credentialOptions.mediation = 'optional';
+      logger.debug('Using optional mediation for single credential');
+    }
+    
+    const assertion = await navigator.credentials.get(credentialOptions);
     logger.debug('Raw assertion result:', assertion);
     
     if (!assertion) {
       logger.warn('User cancelled passkey authentication');
-      throw new AuthenticationError('authentication cancelled');
+      throw new Error('authentication cancelled');
     }
     logger.debug('Assertion received successfully');
     logger.debug('Assertion object:', { 
@@ -169,7 +247,7 @@ export async function authenticatePasskey(passedOpts) {
     // Validate assertion object has required properties
     if (!assertion.id || !assertion.rawId || !assertion.type || !assertion.response) {
       logger.error('Invalid assertion object:', assertion);
-      throw new AuthenticationError('Invalid passkey assertion received');
+      throw new Error('Invalid passkey assertion received');
     }
 
     const payload = {
@@ -182,13 +260,14 @@ export async function authenticatePasskey(passedOpts) {
         signature: bufToB64u(assertion.response.signature),
         userHandle: assertion.response.userHandle ? bufToB64u(assertion.response.userHandle) : undefined,
       },
+      username: username  // Include username for server-side verification
     };
 
     logger.debug('Sending assertion to server for verification');
-    const result = await DpopFun.dpopFunFetch('/webauthn/authentication/verify', {
-      method: 'POST',
-      body: payload,
+    const verifyResponse = await DpopFun.dpopFetch('POST', '/webauthn/authentication/verify', {
+      body: JSON.stringify(payload),
     });
+    const result = await verifyResponse.json();
     
     logger.debug('Passkey authentication completed successfully');
     return result;
@@ -196,20 +275,17 @@ export async function authenticatePasskey(passedOpts) {
     // Handle user cancellation gracefully first
     if (error.name === 'NotAllowedError') {
       logger.info('User cancelled passkey authentication');
-      throw new AuthenticationError('Authentication cancelled by user', { 
+      throw new Error('Authentication cancelled by user', { 
         originalError: error.message,
         cancelled: true 
       });
     }
     
-    // Handle specific error types
-    if (error.name === 'AuthenticationError') throw error;
-    if (error.name === 'NetworkError') throw error;
     
     // Handle other WebAuthn errors
     if (error.name === 'InvalidStateError' || error.name === 'SecurityError') {
       logger.warn('Passkey authentication failed - retryable error:', error);
-      throw new AuthenticationError('Authentication failed - please try again', { 
+      throw new Error('Authentication failed - please try again', { 
         originalError: error.message,
         retryable: true 
       });
@@ -217,6 +293,6 @@ export async function authenticatePasskey(passedOpts) {
     
     // Log other errors as errors
     logger.error('Passkey authentication failed:', error);
-    throw new AuthenticationError('Passkey authentication failed', { originalError: error.message });
+    throw new Error('Passkey authentication failed', { originalError: error.message });
   }
 }

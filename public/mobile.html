@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Mobile Device Linking</title>
+    <link rel="stylesheet" href="/public/session/style-new.css">
+    <link rel="stylesheet" href="/public/mobile.css">
+</head>
+<body>
+    <div class="mobile-container">
+        <h1>📱 Mobile Device Linking</h1>
+        
+        <div id="progressContainer">
+            <div class="progress-step" id="step-1">
+                <span class="step-number">1</span>
+                <div style="display: inline-block; vertical-align: top;">
+                    <div class="step-title">Setup Mobile Session</div>
+                    <div class="step-status">Initializing...</div>
+                </div>
+            </div>
+            
+            <div class="progress-step" id="step-2">
+                <span class="step-number">2</span>
+                <div style="display: inline-block; vertical-align: top;">
+                    <div class="step-title">Verify Identity</div>
+                    <div class="step-status">Waiting...</div>
+                </div>
+            </div>
+            
+            <div class="progress-step" id="step-3">
+                <span class="step-number">3</span>
+                <div style="display: inline-block; vertical-align: top;">
+                    <div class="step-title">Complete Linking</div>
+                    <div class="step-status">Waiting...</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Bootstrap Code Card (shown after passkey verification) -->
+        <div class="bc-card" id="bcCard">
+            <div class="bc-url">Enter only at <code>verify.dpop.fun</code></div>
+            <div class="bc-security">⚠️ Verify the URL is correct before entering your code</div>
+            <div class="bc-code" id="bcCode">--------</div>
+            <div class="bc-qr-container">
+                <div class="bc-qr" id="bcQR"></div>
+            </div>
+            <div class="bc-timer"><span id="bcTimer">60</span>s remaining</div>
+            <p class="bc-hint">Scan this QR code or enter the code on your desktop</p>
+            <button class="btn-danger" id="bcCancel">Cancel</button>
+        </div>
+        
+        <div id="messageContainer"></div>
+    </div>
+    
+    <!-- QR Code library for BC QR generation -->
+    <script src="/public/vendor/qrcode.min.js"></script>
+    <script type="module" src="/public/js/mobile.js"></script>
+</body>
+</html>

@@ -1,7 +1,12 @@
 node_modules/
+data/
 coverage/
 __pycache__/
 *.pyc
 *.pyo
-stronghold.db*
+dpop-fun.db*
 sms_gateway.py
+*.pem
+*.db
+data/dpop-fun.db
+data/dpop-fun.db-wal

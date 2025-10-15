@@ -80,7 +80,6 @@ export class FingerprintService {
         fullVersionList: uaCh.fullVersionList
       };
     } catch (error) {
-      console.warn('Failed to collect User Agent Client Hints:', error);
       return null;
     }
   }
@@ -116,7 +115,6 @@ export class FingerprintService {
 
       return automation;
     } catch (error) {
-      console.warn('Failed to collect automation data:', error);
       return {
         webdriver: false,
         headlessUA: false,
@@ -130,19 +128,52 @@ export class FingerprintService {
   }
 
   /**
+   * Detect device type based on user agent client hints
+   * @param {Object} uaCh - User Agent Client Hints data
+   * @returns {string} 'mobile', 'tablet', or 'desktop'
+   */
+  static detectDeviceType(uaCh) {
+    // Check client hints first (most reliable)
+    if (uaCh && uaCh.mobile === true) {
+      return 'mobile';
+    }
+    
+    // Check user agent as fallback
+    const ua = navigator.userAgent.toLowerCase();
+    if (/mobile|android|iphone|ipod|blackberry|iemobile|opera mini/i.test(ua)) {
+      return 'mobile';
+    }
+    
+    if (/tablet|ipad/i.test(ua)) {
+      return 'tablet';
+    }
+    
+    // Check screen size as additional hint
+    if (screen.width <= 768) {
+      return 'mobile';
+    }
+    
+    return 'desktop';
+  }
+
+  /**
    * Collect comprehensive device fingerprint
-   * @param {string} deviceType - 'desktop' or 'mobile'
+   * @param {string} deviceType - 'desktop' or 'mobile' (auto-detected if not provided)
    * @returns {Promise<Object>} Complete fingerprint data
    */
-  static async collectFingerprint(deviceType = 'unknown') {
+  static async collectFingerprint(deviceType = null) {
     try {
-      console.log(`🔍 FINGERPRINT COLLECTION STARTED for ${deviceType}`);
       
       // Collect User Agent Client Hints data
       const uaCh = await this.collectUserAgentClientHints();
       
       // Collect automation detection data
       const automation = await this.collectAutomationData();
+      
+      // Auto-detect device type if not provided
+      if (!deviceType) {
+        deviceType = this.detectDeviceType(uaCh);
+      }
       
       // Collect basic device information
       const fingerprint = {
@@ -163,12 +194,8 @@ export class FingerprintService {
         timestamp: new Date().toISOString(),
         deviceType: deviceType
       };
-
-      console.log(`FINGERPRINT COLLECTION COMPLETED for ${deviceType}:`, Object.keys(fingerprint).length, 'signals');
-      return fingerprint;
-      
+      return fingerprint;      
     } catch (error) {
-      console.error(`FINGERPRINT COLLECTION FAILED for ${deviceType}:`, error);
       throw error;
     }
   }
@@ -180,7 +207,6 @@ export class FingerprintService {
    */
   static async sendFingerprintToServer(fingerprint) {
     try {
-      console.log('📤 Sending fingerprint to server...');
       
       const response = await fetch('/session/fingerprint', {
         method: 'POST',
@@ -195,11 +221,9 @@ export class FingerprintService {
       }
 
       const result = await response.json();
-      console.log('Fingerprint sent to server successfully');
       return result;
       
     } catch (error) {
-      console.error('Failed to send fingerprint to server:', error);
       throw error;
     }
   }
@@ -215,7 +239,6 @@ export class FingerprintService {
       const result = await this.sendFingerprintToServer(fingerprint);
       return result;
     } catch (error) {
-      console.error(`Failed to collect and send fingerprint for ${deviceType}:`, error);
       throw error;
     }
   }
