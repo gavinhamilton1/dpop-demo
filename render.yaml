@@ -3,7 +3,7 @@ services:
     name: dpop-demo
     env: python
     plan: standard  # Use your paid tier
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements-minimal.txt
     startCommand: uvicorn server.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION

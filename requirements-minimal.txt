@@ -1,3 +1,4 @@
+# Minimal requirements for DPoP demo (without computer vision)
 # Core dependencies
 setuptools>=68.0.0
 wheel>=0.40.0
@@ -26,11 +27,3 @@ httpx==0.25.2
 # Testing
 pytest==7.4.3
 pytest-asyncio==0.21.1
-
-# Computer vision (optional - can be removed if not needed)
-opencv-python==4.8.1.78
-insightface==0.7.3
-numpy==1.24.3
-onnxruntime
-scikit-learn>=1.3.0
-scipy>=1.11.0
