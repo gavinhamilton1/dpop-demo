@@ -48,7 +48,7 @@ class Settings:
 _DEFAULTS: Dict[str, Any] = {
     "server": {
         "external_origin": None,
-        "allowed_origins": ["http://localhost:8000", "https://dpop.fun", "https://dpop-fun.onrender.com"],  # List of allowed origins for multi-domain support
+        "allowed_origins": ["http://localhost:8000", "https://dpop.fun", "https://test.dpop.fun"],  # List of allowed origins for multi-domain support
         "ec_private_key_pem": None,
         "ec_private_key_pem_file": None,
     },
@@ -70,7 +70,7 @@ _DEFAULTS: Dict[str, Any] = {
 }
 
 _SEARCH_ORDER = (
-    "dpop-fun.yaml",
+    "dpop-fun.prod.yaml",
     "dpop-fun.yml",
     "dpop-fun.dev.yaml",
 )

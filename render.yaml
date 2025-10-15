@@ -2,12 +2,16 @@ services:
   - type: web
     name: dpop-demo
     env: python
-    plan: standard  # Use your paid tier
-    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements-minimal.txt
+    plan: standard
+    region: oregon
+    pythonVersion: "3.11.9"
+    buildCommand: |
+      python -m pip install --upgrade pip setuptools wheel build
+      python -m pip install --only-binary=all --no-cache-dir -r requirements-wheels.txt
     startCommand: uvicorn server.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: 3.11.9
       - key: DATABASE_URL
         value: sqlite:///tmp/dpop-fun.db
       - key: LOG_LEVEL
