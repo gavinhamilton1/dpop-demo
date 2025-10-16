@@ -218,6 +218,117 @@
             overflow-x: auto;
             font-size: 13px;
         }
+        
+        /* Broadcast Modal Styles */
+        .broadcast-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .broadcast-modal.active {
+            display: flex;
+        }
+        
+        .broadcast-content {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        
+        .broadcast-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .broadcast-close {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        
+        .broadcast-form {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .broadcast-form label {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .broadcast-form input,
+        .broadcast-form textarea,
+        .broadcast-form select {
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+        
+        .broadcast-form input:focus,
+        .broadcast-form textarea:focus,
+        .broadcast-form select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .broadcast-form textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        
+        .broadcast-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 10px;
+        }
+        
+        .broadcast-actions button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        
+        .broadcast-send {
+            background: #10b981;
+            color: white;
+        }
+        
+        .broadcast-send:hover {
+            background: #059669;
+        }
+        
+        .broadcast-cancel {
+            background: #6b7280;
+            color: white;
+        }
+        
+        .broadcast-cancel:hover {
+            background: #4b5563;
+        }
     </style>
 </head>
 <body>
@@ -236,6 +347,7 @@
             <button id="exportBtn">📥 Export as JSON</button>
             <button id="clearGeoBtn" class="danger">🗑️ Clear Geo Cache</button>
             <button id="testAmberBtn" style="background: #fbbf24;">🧪 Test AMBER Flag</button>
+            <button id="broadcastBtn" style="background: #10b981;">📢 Broadcast Message</button>
         </div>
         
         <div id="content">
@@ -250,6 +362,36 @@
                 <button class="modal-close" id="closeModalBtn">Close</button>
             </div>
             <pre id="jsonContent"></pre>
+        </div>
+    </div>
+    
+    <!-- Broadcast Message Modal -->
+    <div id="broadcastModal" class="broadcast-modal">
+        <div class="broadcast-content">
+            <div class="broadcast-header">
+                <h3>📢 Broadcast Message</h3>
+                <button class="broadcast-close" id="closeBroadcastBtn">Close</button>
+            </div>
+            <form class="broadcast-form" id="broadcastForm">
+                <div>
+                    <label for="messageType">Message Type:</label>
+                    <select id="messageType" name="type">
+                        <option value="broadcast">Broadcast</option>
+                        <option value="announcement">Announcement</option>
+                        <option value="alert">Alert</option>
+                        <option value="maintenance">Maintenance</option>
+                        <option value="security">Security</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="messageText">Message:</label>
+                    <textarea id="messageText" name="message" placeholder="Enter your message here..." required></textarea>
+                </div>
+                <div class="broadcast-actions">
+                    <button type="button" class="broadcast-cancel" id="cancelBroadcastBtn">Cancel</button>
+                    <button type="submit" class="broadcast-send" id="sendBroadcastBtn">Send Message</button>
+                </div>
+            </form>
         </div>
     </div>
 </body>

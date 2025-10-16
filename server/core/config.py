@@ -70,9 +70,8 @@ _DEFAULTS: Dict[str, Any] = {
 }
 
 _SEARCH_ORDER = (
-    "dpop-fun.prod.yaml",
-    "dpop-fun.yml",
     "dpop-fun.dev.yaml",
+    "dpop-fun.prod.yaml"
 )
 
 def _merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:

@@ -28,6 +28,9 @@ from server.services.passkeys import PasskeyService
 # ---------------- Config ----------------
 SETTINGS = load_settings()
 
+# ---------------- SSE Connection Storage ----------------
+sse_connections: List[asyncio.Queue] = []
+
 logging.basicConfig(level=SETTINGS.log_level, format="%(asctime)s %(levelname)s [%(name)s.%(funcName)s] %(message)s")
 log = logging.getLogger(__name__)
 log.info("Loaded config from: %s", SETTINGS.cfg_file_used or "<defaults>")
@@ -1599,4 +1602,95 @@ async def acknowledge_security_alert(req: Request, response: Response):
 
 
 log.info("Passkey endpoints registered")
+
+
+# ============================================
+# SSE (Server-Sent Events) Endpoints
+# ============================================
+
+@app.get("/sse/connect",
+         tags=["sse"],
+         summary="Connect to SSE Stream",
+         description="Register as an SSE receiver and receive real-time messages")
+async def sse_connect():
+    """Register a client for SSE messages"""
+    queue = asyncio.Queue()
+    sse_connections.append(queue)
+    log.info(f"SSE client connected. Total connections: {len(sse_connections)}")
+    
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    # Wait for messages with timeout for keepalive
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps(message)}\n\n"
+                except asyncio.TimeoutError:
+                    # Send keepalive comment
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            log.info("SSE connection cancelled")
+        finally:
+            # Remove this connection from the list
+            if queue in sse_connections:
+                sse_connections.remove(queue)
+                log.info(f"SSE client disconnected. Total connections: {len(sse_connections)}")
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
+@app.post("/sse/broadcast",
+          tags=["sse"],
+          summary="Broadcast Message to All SSE Clients",
+          description="Send a message to all connected SSE clients")
+async def sse_broadcast(request: Request):
+    """Broadcast a message to all connected SSE clients"""
+    try:
+        body = await request.json()
+        message = body.get("message", "")
+        
+        if not message:
+            raise HTTPException(status_code=400, detail="Message is required")
+        
+        broadcast_data = {
+            "message": message,
+            "timestamp": time.time(),
+            "type": body.get("type", "broadcast")
+        }
+        
+        # Send to all connected clients
+        disconnected_queues = []
+        for queue in sse_connections:
+            try:
+                await queue.put(broadcast_data)
+            except Exception as e:
+                log.warning(f"Failed to send to SSE client: {e}")
+                disconnected_queues.append(queue)
+        
+        # Clean up disconnected queues
+        for queue in disconnected_queues:
+            if queue in sse_connections:
+                sse_connections.remove(queue)
+        
+        log.info(f"Broadcasted message to {len(sse_connections)} SSE clients")
+        
+        return {
+            "ok": True,
+            "message": "Message broadcasted successfully",
+            "recipients": len(sse_connections),
+            "data": broadcast_data
+        }
+        
+    except Exception as e:
+        log.error(f"Failed to broadcast message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 

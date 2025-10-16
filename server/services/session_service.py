@@ -98,7 +98,7 @@ class SessionService:
         #check origin details from the https request against allow list
         log.info("Session initialization - Origin: %s", req.headers.get("origin"))
         if not req.headers.get("origin") in SETTINGS.allowed_origins:
-            log.error("Session initialization - Origin not allowed: %s", req.headers.get("origin"), SETTINGS.allowed_origins)
+            log.error("Session initialization - Origin not allowed: %s, allowed origins: %s", req.headers.get("origin"), SETTINGS.allowed_origins)
             raise HTTPException(status_code=400, detail="Origin not allowed")
                 
         payload = body.get("payload")

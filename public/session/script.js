@@ -49,6 +49,10 @@ class AppController {
         
         // Current username for authentication
         this.username = null;
+        
+        // SSE connection management
+        this.sseConnection = null;
+        this.isSSEConnected = false;
 
         this.TOTAL_SESSION_MINUTES = 60;
         this.IDLE_TIMEOUT_MINUTES = 15;
@@ -942,6 +946,9 @@ class AppController {
                 // Set authenticated flag
                 this.isAuthenticated = true;
                 
+                // Connect to SSE after successful authentication
+                this.connectToSSE();
+                
                 logger.info(`Passkey created and authenticated as ${this.username}`);
                 
                 // Fetch fresh session data to show authenticated state
@@ -967,6 +974,9 @@ class AppController {
                 
                 // Set authenticated flag
                 this.isAuthenticated = true;
+                
+                // Connect to SSE after successful authentication
+                this.connectToSSE();
                 
                 logger.info(`Authenticated as ${this.username}`);
                 
@@ -995,6 +1005,9 @@ class AppController {
                     logger.error('Logout request failed:', error);
                     // Continue with UI cleanup even if server call fails
                 }
+                
+                // Disconnect SSE on logout
+                this.disconnectSSE();
                 
                 // Reset authentication flag
                 this.isAuthenticated = false;
@@ -1141,6 +1154,11 @@ class AppController {
                     auth_method: freshSessionData.auth_method
                 });
                 this.restoreAuthenticationState(freshSessionData);
+                
+                // Connect to SSE if authenticated via mobile linking
+                if (freshSessionData.auth_status === 'authenticated') {
+                    this.connectToSSE();
+                }
                 
                 logger.info('Desktop UI update complete');
                 logger.info('isAuthenticated flag:', this.isAuthenticated);
@@ -1852,6 +1870,124 @@ class AppController {
                 modal.style.display = 'none';
             }
         };
+    }
+    
+    // ============================================
+    // SSE (Server-Sent Events) Methods
+    // ============================================
+    
+    connectToSSE() {
+        if (this.isSSEConnected || this.sseConnection) {
+            logger.info('SSE already connected, skipping');
+            return;
+        }
+        
+        logger.info('Connecting to SSE...');
+        
+        this.sseConnection = new EventSource('/sse/connect');
+        this.isSSEConnected = true;
+        
+        this.sseConnection.onopen = () => {
+            logger.info('SSE connection opened');
+        };
+        
+        this.sseConnection.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                logger.info('Received SSE message:', data);
+                this.showNotification(data);
+            } catch (error) {
+                logger.error('Failed to parse SSE message:', error);
+            }
+        };
+        
+        this.sseConnection.onerror = (event) => {
+            logger.error('SSE connection error:', event);
+            this.isSSEConnected = false;
+            
+            // Attempt to reconnect after a delay
+            setTimeout(() => {
+                if (!this.isSSEConnected && this.isAuthenticated) {
+                    logger.info('Attempting SSE reconnection...');
+                    this.connectToSSE();
+                }
+            }, 5000);
+        };
+    }
+    
+    disconnectSSE() {
+        if (this.sseConnection) {
+            logger.info('Disconnecting SSE...');
+            this.sseConnection.close();
+            this.sseConnection = null;
+            this.isSSEConnected = false;
+        }
+    }
+    
+    showNotification(data) {
+        // Create notification modal if it doesn't exist
+        let modal = document.getElementById('notificationModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'notificationModal';
+            modal.className = 'notification-modal';
+            modal.innerHTML = `
+                <div class="notification-content">
+                    <div class="notification-header">
+                        <h3>📢 Server Notification</h3>
+                        <button class="notification-close">&times;</button>
+                    </div>
+                    <div class="notification-body">
+                        <p class="notification-message"></p>
+                        <div class="notification-meta">
+                            <span class="notification-type"></span>
+                            <span class="notification-time"></span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            
+            // Add close button handler
+            modal.querySelector('.notification-close').addEventListener('click', () => {
+                this.closeNotification();
+            });
+            
+            // Close on overlay click
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    this.closeNotification();
+                }
+            });
+        }
+        
+        // Populate notification content
+        const messageEl = modal.querySelector('.notification-message');
+        const typeEl = modal.querySelector('.notification-type');
+        const timeEl = modal.querySelector('.notification-time');
+        
+        messageEl.textContent = data.message || 'No message';
+        typeEl.textContent = data.type || 'broadcast';
+        
+        const timestamp = new Date(data.timestamp * 1000);
+        timeEl.textContent = timestamp.toLocaleTimeString();
+        
+        // Show notification
+        modal.classList.add('active');
+        
+        // Auto-close after 10 seconds
+        setTimeout(() => {
+            this.closeNotification();
+        }, 10000);
+        
+        logger.info('Notification displayed:', data);
+    }
+    
+    closeNotification() {
+        const modal = document.getElementById('notificationModal');
+        if (modal) {
+            modal.classList.remove('active');
+        }
     }
 }
 

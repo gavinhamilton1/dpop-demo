@@ -4,8 +4,7 @@ server:
   allowed_origins:                     # List of allowed origins for multi-domain support
     - http://localhost:8000
     - https://dpop.fun
-    - https://dpop-fun.onrender.com
-    - https://b12hkdwk.use.devtunnels.ms:8000
+    - https://test.dpop.fun
   ec_private_key_pem_file: server-key.pem        # optional: path to ES256 private key PEM
   ec_private_key_pem: null             # optional: inline PEM (dev only)
 
