@@ -179,6 +179,62 @@ async function clearGeolocationCache() {
     }
 }
 
+function openBroadcastModal() {
+    document.getElementById('broadcastModal').classList.add('active');
+    document.getElementById('messageText').focus();
+}
+
+function closeBroadcastModal() {
+    document.getElementById('broadcastModal').classList.remove('active');
+    document.getElementById('broadcastForm').reset();
+}
+
+async function sendBroadcastMessage(event) {
+    event.preventDefault();
+    
+    const formData = new FormData(event.target);
+    const messageData = {
+        message: formData.get('message'),
+        type: formData.get('type')
+    };
+    
+    if (!messageData.message.trim()) {
+        alert('Please enter a message');
+        return;
+    }
+    
+    const sendBtn = document.getElementById('sendBroadcastBtn');
+    const originalText = sendBtn.textContent;
+    
+    try {
+        sendBtn.textContent = 'Sending...';
+        sendBtn.disabled = true;
+        
+        const response = await fetch('/sse/broadcast', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(messageData),
+            credentials: 'include'
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            alert(`✅ Message sent successfully!\n\nRecipients: ${result.recipients}\nMessage: "${messageData.message}"`);
+            closeBroadcastModal();
+        } else {
+            alert('❌ Failed to send message: ' + (result.detail || 'Unknown error'));
+        }
+    } catch (error) {
+        alert('❌ Error: ' + error.message);
+    } finally {
+        sendBtn.textContent = originalText;
+        sendBtn.disabled = false;
+    }
+}
+
 // Load data on page load
 document.addEventListener('DOMContentLoaded', () => {
     loadAllTables();
@@ -188,11 +244,24 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('exportBtn').addEventListener('click', exportAsJSON);
     document.getElementById('clearGeoBtn').addEventListener('click', clearGeolocationCache);
     document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+    document.getElementById('broadcastBtn').addEventListener('click', openBroadcastModal);
     
     // Close modal on outside click
     document.getElementById('jsonModal').addEventListener('click', (e) => {
         if (e.target.id === 'jsonModal') {
             closeModal();
+        }
+    });
+    
+    // Broadcast modal event listeners
+    document.getElementById('closeBroadcastBtn').addEventListener('click', closeBroadcastModal);
+    document.getElementById('cancelBroadcastBtn').addEventListener('click', closeBroadcastModal);
+    document.getElementById('broadcastForm').addEventListener('submit', sendBroadcastMessage);
+    
+    // Close broadcast modal on outside click
+    document.getElementById('broadcastModal').addEventListener('click', (e) => {
+        if (e.target.id === 'broadcastModal') {
+            closeBroadcastModal();
         }
     });
     

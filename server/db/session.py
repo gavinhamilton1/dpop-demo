@@ -581,13 +581,31 @@ class SessionDB:
         """
         cutoff_time = now() - max_age_seconds
         
-        # Delete devices where bound_username is NULL and they're older than the cutoff
-        result = await self.exec(
-            "DELETE FROM devices WHERE bound_username IS NULL AND created_at < ?",
+        # First, find orphaned devices
+        orphaned_devices = await self.exec(
+            "SELECT device_id FROM devices WHERE bound_username IS NULL AND created_at < ?",
             [cutoff_time]
         )
         
-        deleted_count = result.rowcount if hasattr(result, 'rowcount') else 0
+        deleted_count = 0
+        if orphaned_devices:
+            # Delete sessions first (due to foreign key constraints)
+            for device_row in orphaned_devices:
+                device_id = device_row[0]
+                
+                # Delete sessions for this device
+                await self.exec(
+                    "DELETE FROM sessions WHERE device_id = ?",
+                    [device_id]
+                )
+                
+                # Delete the device
+                await self.exec(
+                    "DELETE FROM devices WHERE device_id = ?",
+                    [device_id]
+                )
+                
+                deleted_count += 1
         
         if deleted_count > 0:
             log.info(f"Cleaned up {deleted_count} orphaned devices older than {max_age_seconds}s")

@@ -49,6 +49,10 @@ class AppController {
         
         // Current username for authentication
         this.username = null;
+        
+        // SSE connection management
+        this.sseConnection = null;
+        this.isSSEConnected = false;
 
         this.TOTAL_SESSION_MINUTES = 60;
         this.IDLE_TIMEOUT_MINUTES = 15;
@@ -188,6 +192,23 @@ class AppController {
                 this.sessionDetailsModal.style.display = 'none';
             }
         });
+
+        // Notification modal event listeners
+        const notificationModal = document.getElementById('notificationModal');
+        if (notificationModal) {
+            const closeBtn = notificationModal.querySelector('.notification-close');
+            if (closeBtn) {
+                closeBtn.addEventListener('click', () => {
+                    this.closeNotification();
+                });
+            }
+            
+            notificationModal.addEventListener('click', (e) => {
+                if (e.target === notificationModal) {
+                    this.closeNotification();
+                }
+            });
+        }
     }
 
     initializeDisplayValues() {
@@ -359,6 +380,8 @@ class AppController {
     async populateSessionUI(sessionData) {
         // Store session data for use in other methods
         this.sessionData = sessionData;
+        logger.info('populateSessionUI called with sessionData:', sessionData);
+        logger.info('linked_session_id:', sessionData.linked_session_id);
         
         // Update overview section
         this.updateOverviewSection(sessionData);
@@ -383,11 +406,6 @@ class AppController {
 
     updateOverviewSection(sessionData) {
         // Debug logging to see what we're receiving
-        logger.info('updateOverviewSection - sessionData:', sessionData);
-        logger.info('Session state:', sessionData.session_state);
-        logger.info('Session flag:', sessionData.session_flag);
-        logger.info('Auth method:', sessionData.auth_method);
-        logger.info('Active sessions:', sessionData.active_user_sessions);
         
         // Update binding state
         if (this.bindingState) {
@@ -855,10 +873,21 @@ class AppController {
             
             // Update mobile link button
             const mobileBtnText = this.mobileLinkBtn.querySelector('.btn-text');
+            logger.info('checkForMobilePasskey - hasMobilePasskey:', hasMobilePasskey);
+            logger.info('checkForMobilePasskey - sessionData:', this.sessionData);
+            logger.info('checkForMobilePasskey - linked_session_id:', this.sessionData?.linked_session_id);
+            
             if (hasMobilePasskey) {
+                logger.info('Setting button to Login with Mobile (hasMobilePasskey=true)');
                 mobileBtnText.textContent = 'Login with Mobile';
                 this.mobileLinkBtn.dataset.mode = 'login';
+            } else if (this.sessionData && this.sessionData.linked_session_id) {
+                // Mobile device is already linked, show login option
+                logger.info('Mobile device is already linked, showing login option');
+                mobileBtnText.textContent = 'Login with Mobile Device';
+                this.mobileLinkBtn.dataset.mode = 'login';
             } else {
+                logger.info('Setting button to Link Mobile Device (no mobile passkey, no linked session)');
                 mobileBtnText.textContent = 'Link Mobile Device';
                 this.mobileLinkBtn.dataset.mode = 'registration';
             }
@@ -878,9 +907,7 @@ class AppController {
         try {
             // Check if passkeys are supported
             const supportStatus = await Passkeys.getBasicSupportStatus();
-            
-            logger.info('Passkey support status:', supportStatus);
-            
+                        
             if (!supportStatus.isSupported || !supportStatus.hasUVPA) {
                 // Platform doesn't support passkeys
                 this.passkeyAuthBtn.disabled = true;
@@ -905,7 +932,6 @@ class AppController {
             // Button remains disabled until username is entered
             this.passkeyAuthBtn.disabled = true;
             
-            logger.info('Passkey button initialized:', hasCredentials ? 'Login mode' : 'Create mode');
         } catch (error) {
             logger.error('Failed to initialize passkey button:', error);
             this.passkeyAuthBtn.disabled = true;
@@ -942,6 +968,9 @@ class AppController {
                 // Set authenticated flag
                 this.isAuthenticated = true;
                 
+                // Connect to SSE after successful authentication
+                this.connectToSSE();
+                
                 logger.info(`Passkey created and authenticated as ${this.username}`);
                 
                 // Fetch fresh session data to show authenticated state
@@ -967,6 +996,9 @@ class AppController {
                 
                 // Set authenticated flag
                 this.isAuthenticated = true;
+                
+                // Connect to SSE after successful authentication
+                this.connectToSSE();
                 
                 logger.info(`Authenticated as ${this.username}`);
                 
@@ -995,6 +1027,9 @@ class AppController {
                     logger.error('Logout request failed:', error);
                     // Continue with UI cleanup even if server call fails
                 }
+                
+                // Disconnect SSE on logout
+                this.disconnectSSE();
                 
                 // Reset authentication flag
                 this.isAuthenticated = false;
@@ -1141,6 +1176,11 @@ class AppController {
                     auth_method: freshSessionData.auth_method
                 });
                 this.restoreAuthenticationState(freshSessionData);
+                
+                // Connect to SSE if authenticated via mobile linking
+                if (freshSessionData.auth_status === 'authenticated') {
+                    this.connectToSSE();
+                }
                 
                 logger.info('Desktop UI update complete');
                 logger.info('isAuthenticated flag:', this.isAuthenticated);
@@ -1852,6 +1892,92 @@ class AppController {
                 modal.style.display = 'none';
             }
         };
+    }
+    
+    // ============================================
+    // SSE (Server-Sent Events) Methods
+    // ============================================
+    
+    connectToSSE() {
+        if (this.isSSEConnected || this.sseConnection) {
+            logger.info('SSE already connected, skipping');
+            return;
+        }
+        
+        logger.info('Connecting to SSE...');
+        
+        this.sseConnection = new EventSource('/sse/connect');
+        this.isSSEConnected = true;
+        
+        this.sseConnection.onopen = () => {
+            logger.info('SSE connection opened');
+        };
+        
+        this.sseConnection.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                logger.info('Received SSE message:', data);
+                this.showNotification(data);
+            } catch (error) {
+                logger.error('Failed to parse SSE message:', error);
+            }
+        };
+        
+        this.sseConnection.onerror = (event) => {
+            logger.error('SSE connection error:', event);
+            this.isSSEConnected = false;
+            
+            // Attempt to reconnect after a delay
+            setTimeout(() => {
+                if (!this.isSSEConnected && this.isAuthenticated) {
+                    logger.info('Attempting SSE reconnection...');
+                    this.connectToSSE();
+                }
+            }, 5000);
+        };
+    }
+    
+    disconnectSSE() {
+        if (this.sseConnection) {
+            logger.info('Disconnecting SSE...');
+            this.sseConnection.close();
+            this.sseConnection = null;
+            this.isSSEConnected = false;
+        }
+    }
+    
+    showNotification(data) {
+        const modal = document.getElementById('notificationModal');
+        if (!modal) {
+            logger.error('Notification modal not found in DOM');
+            return;
+        }
+        
+        // Populate notification content
+        const messageEl = modal.querySelector('.notification-message');
+        const timeEl = modal.querySelector('.notification-time');
+        
+        messageEl.textContent = data.message || 'Security alert received';
+        
+        const timestamp = new Date(data.timestamp * 1000);
+        timeEl.textContent = timestamp.toLocaleTimeString();
+        
+        // Show notification
+        modal.classList.add('active');
+        
+        // Auto-close after 15 seconds (longer for security alerts)
+        setTimeout(() => {
+            this.closeNotification();
+        }, 15000);
+        
+        logger.info('Security notification displayed:', data);
+    }
+    
+    closeNotification() {
+        const modal = document.getElementById('notificationModal');
+        if (modal) {
+            modal.classList.remove('active');
+        }
     }
 }
 

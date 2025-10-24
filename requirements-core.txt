@@ -1,7 +1,7 @@
-# Core dependencies
+# Core requirements for DPoP demo - absolute minimum
 setuptools>=68.0.0
 wheel>=0.40.0
-pip>=23.0.0
+build
 
 # Web framework
 fastapi==0.104.1
@@ -11,7 +11,7 @@ itsdangerous==2.1.2
 
 # Cryptography and security
 python-jose==3.3.0
-cryptography==41.0.7
+cryptography>=42.0.0
 cbor2==5.4.6
 
 # Database
@@ -22,15 +22,3 @@ PyYAML==6.0.1
 python-multipart==0.0.6
 requests==2.31.0
 httpx==0.25.2
-
-# Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-
-# Computer vision (optional - can be removed if not needed)
-opencv-python==4.8.1.78
-insightface==0.7.3
-numpy==1.24.3
-onnxruntime
-scikit-learn>=1.3.0
-scipy>=1.11.0

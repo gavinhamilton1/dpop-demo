@@ -28,6 +28,9 @@ from server.services.passkeys import PasskeyService
 # ---------------- Config ----------------
 SETTINGS = load_settings()
 
+# ---------------- SSE Connection Storage ----------------
+sse_connections: List[asyncio.Queue] = []
+
 logging.basicConfig(level=SETTINGS.log_level, format="%(asctime)s %(levelname)s [%(name)s.%(funcName)s] %(message)s")
 log = logging.getLogger(__name__)
 log.info("Loaded config from: %s", SETTINGS.cfg_file_used or "<defaults>")
@@ -390,7 +393,10 @@ async def session_kill(req: Request, response: Response):
             raise HTTPException(status_code=401, detail="User not authenticated")
         
         # Get target session ID from request
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         target_session_id = body.get("payload", {}).get("session_id")
         
         if not target_session_id:
@@ -537,7 +543,10 @@ async def remove_user_device(req: Request, response: Response):
             raise HTTPException(status_code=401, detail="User not authenticated")
         
         # Get device ID from request
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         device_id = body.get("payload", {}).get("device_id")
         
         if not device_id:
@@ -584,7 +593,10 @@ async def link_start(req: Request, response: Response):
             raise HTTPException(status_code=401, detail="No session ID found")
         
         # Get flow type and username from request body
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         flow_type = body.get("flow_type", "registration")
         username = body.get("username")  # Username from desktop
         
@@ -677,7 +689,10 @@ async def link_events(link_id: str, req: Request):
 async def get_apriltags(req: Request):
     """Generate AprilTag numbers for QR overlay"""
     try:
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         link_id = body.get("linkId", "")
         
         # Generate deterministic AprilTag IDs from link ID
@@ -708,7 +723,10 @@ async def get_apriltags(req: Request):
 async def link_mobile_start(req: Request):
     """Mobile device starts linking"""
     try:
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         link_id = body.get("lid")
         
         if not link_id:
@@ -759,7 +777,10 @@ async def link_mobile_complete(req: Request, response: Response):
         session_data = await SessionService.get_session_data(req, response)
         mobile_session_id = req.session.get("session_id")
         
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         link_id = body.get("link_id")
         
         if not link_id:
@@ -918,7 +939,10 @@ async def link_mobile_issue_bc(req: Request, response: Response):
         # Get session data
         session_data = await SessionService.get_session_data(req, response)
         
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         link_id = body.get("lid")
         
         if not link_id:
@@ -1075,7 +1099,10 @@ async def device_redeem(req: Request, response: Response):
         if not session_id:
             raise HTTPException(status_code=401, detail="No session ID found")
         
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         bc = body.get("bc", "").upper().strip()
         
         if len(bc) != 8:
@@ -1213,7 +1240,10 @@ async def webauthn_registration_options(req: Request, response: Response):
         log.info("Passkey registration options - Session Data: %s", session_data)
 
         # Parse request body to get username
-        request_body = await req.json()
+        try:
+            request_body = await req.json()
+        except:
+            request_body = {}
         
         # Pass session_id, session_data, request, and body
         body = await PasskeyService.get_registration_options(session_id, session_data, req, request_body)
@@ -1238,7 +1268,10 @@ async def webauthn_registration_verify(req: Request, response: Response):
         session_id = req.session.get("session_id")
 
         # Parse request body
-        attestation_data = await req.json()
+        try:
+            attestation_data = await req.json()
+        except:
+            attestation_data = {}
         
         result = await PasskeyService.verify_registration(
             session_id, req, attestation_data
@@ -1290,7 +1323,10 @@ async def webauthn_authentication_verify(req: Request, response: Response):
         session_id = req.session.get("session_id")
         
         # Parse request body
-        assertion_data = await req.json()
+        try:
+            assertion_data = await req.json()
+        except:
+            assertion_data = {}
         
         # Get username from assertion data (client should include it)
         username = assertion_data.get("username")
@@ -1515,7 +1551,10 @@ async def remove_credential(req: Request, response: Response):
         if not username or session_data.get("auth_status") != "authenticated":
             raise HTTPException(status_code=401, detail="User not authenticated")
         
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         cred_id = body.get("payload", {}).get("cred_id")
         
         if not cred_id:
@@ -1599,4 +1638,95 @@ async def acknowledge_security_alert(req: Request, response: Response):
 
 
 log.info("Passkey endpoints registered")
+
+
+# ============================================
+# SSE (Server-Sent Events) Endpoints
+# ============================================
+
+@app.get("/sse/connect",
+         tags=["sse"],
+         summary="Connect to SSE Stream",
+         description="Register as an SSE receiver and receive real-time messages")
+async def sse_connect():
+    """Register a client for SSE messages"""
+    queue = asyncio.Queue()
+    sse_connections.append(queue)
+    log.info(f"SSE client connected. Total connections: {len(sse_connections)}")
+    
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    # Wait for messages with timeout for keepalive
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps(message)}\n\n"
+                except asyncio.TimeoutError:
+                    # Send keepalive comment
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            log.info("SSE connection cancelled")
+        finally:
+            # Remove this connection from the list
+            if queue in sse_connections:
+                sse_connections.remove(queue)
+                log.info(f"SSE client disconnected. Total connections: {len(sse_connections)}")
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
+@app.post("/sse/broadcast",
+          tags=["sse"],
+          summary="Broadcast Message to All SSE Clients",
+          description="Send a message to all connected SSE clients")
+async def sse_broadcast(request: Request):
+    """Broadcast a message to all connected SSE clients"""
+    try:
+        body = await request.json()
+        message = body.get("message", "")
+        
+        if not message:
+            raise HTTPException(status_code=400, detail="Message is required")
+        
+        broadcast_data = {
+            "message": message,
+            "timestamp": time.time(),
+            "type": body.get("type", "broadcast")
+        }
+        
+        # Send to all connected clients
+        disconnected_queues = []
+        for queue in sse_connections:
+            try:
+                await queue.put(broadcast_data)
+            except Exception as e:
+                log.warning(f"Failed to send to SSE client: {e}")
+                disconnected_queues.append(queue)
+        
+        # Clean up disconnected queues
+        for queue in disconnected_queues:
+            if queue in sse_connections:
+                sse_connections.remove(queue)
+        
+        log.info(f"Broadcasted message to {len(sse_connections)} SSE clients")
+        
+        return {
+            "ok": True,
+            "message": "Message broadcasted successfully",
+            "recipients": len(sse_connections),
+            "data": broadcast_data
+        }
+        
+    except Exception as e:
+        log.error(f"Failed to broadcast message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 

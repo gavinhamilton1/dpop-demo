@@ -1600,3 +1600,134 @@ h3 {
     }
 }
 
+/* --- Notification Modal --- */
+.notification-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+}
+
+.notification-modal.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+.notification-content {
+    background: var(--bg-dark);
+    border: 2px solid var(--color-warning);
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(255, 165, 0, 0.3), 0 0 20px rgba(255, 165, 0, 0.2);
+    max-width: 500px;
+    width: 100%;
+    transform: translateY(-20px);
+    transition: transform 0.3s ease;
+}
+
+.notification-modal.active .notification-content {
+    transform: translateY(0);
+}
+
+.notification-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.notification-header h3 {
+    margin: 0;
+    color: var(--color-warning);
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.notification-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 4px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.notification-close:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: var(--text-dark);
+}
+
+.notification-body {
+    padding: 20px;
+}
+
+.notification-message {
+    font-size: 1rem;
+    line-height: 1.5;
+    color: var(--text-dark);
+    margin: 0 0 16px 0;
+    word-wrap: break-word;
+}
+
+.notification-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    border-top: 1px solid var(--color-border);
+    padding-top: 12px;
+}
+
+/* Removed notification-type since we only have security alerts now */
+
+.notification-time {
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+}
+
+/* Mobile responsive for notification modal */
+@media (max-width: 767px) {
+    .notification-modal {
+        padding: 10px;
+    }
+    
+    .notification-content {
+        max-width: calc(100vw - 20px);
+    }
+    
+    .notification-header {
+        padding: 12px 16px;
+    }
+    
+    .notification-body {
+        padding: 16px;
+    }
+    
+    .notification-header h3 {
+        font-size: 1rem;
+    }
+    
+    .notification-message {
+        font-size: 0.9rem;
+    }
+}
+

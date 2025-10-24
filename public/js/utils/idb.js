@@ -17,7 +17,6 @@ export function idbReset() {
   }
   _db = null;
   _opening = null;
-  logger.info('IndexedDB reset completed');
 }
 
 export async function idbWipe() {
@@ -50,16 +49,13 @@ async function openDB() {
   if (_db) return _db;
   if (_opening) return _opening;
 
-  logger.info('Opening IndexedDB connection');
   _opening = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     
     req.onupgradeneeded = () => {
-      logger.info('IndexedDB upgrade needed, creating session store');
       const db = req.result;
       if (!db.objectStoreNames.contains(STORES.SESSION)) {
         db.createObjectStore(STORES.SESSION, { keyPath: 'id' });
-        logger.info('Created session store');
       }
     };
     
@@ -74,7 +70,6 @@ async function openDB() {
         _db = null; 
       };
       _opening = null;
-      logger.info('IndexedDB connection opened successfully');
       resolve(_db);
     };
     
@@ -123,9 +118,7 @@ async function run(storeName, mode, fn, attempt = 0) {
 
 export async function idbPut(storeName, record) {
   try {
-    logger.info('Putting record in store:', { storeName, recordId: record.id, value: record.value });
     const result = await run(storeName, 'readwrite', (store) => store.put(record));
-    logger.info('Record put successfully');
     return result;
   } catch (error) {
     if (error.name === 'StorageError') throw error;
@@ -139,13 +132,11 @@ export async function idbPut(storeName, record) {
 
 export async function idbGet(storeName, id) {
   try {
-    logger.info('Getting record from store:', { storeName, id });
     const result = await run(storeName, 'readonly', (store) => new Promise((resolve, reject) => {
       const req = store.get(id);
       req.onsuccess = () => resolve(req.result ?? null);
       req.onerror = () => reject(req.error);
     }));
-    logger.info('Record retrieved:', { storeName, id, found: !!result });
     return result;
   } catch (error) {
     if (error.name === 'StorageError') throw error;
@@ -159,13 +150,11 @@ export async function idbGet(storeName, id) {
 
 export async function idbDelete(storeName, id) {
   try {
-    logger.info('Deleting record from store:', { storeName, id });
     await run(storeName, 'readwrite', (store) => new Promise((resolve, reject) => {
       const req = store.delete(id);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     }));
-    logger.info('Record deleted successfully:', { storeName, id });
   } catch (error) {
     if (error.name === 'StorageError') throw error;
     throw new Error('Failed to delete record from IndexedDB', { 

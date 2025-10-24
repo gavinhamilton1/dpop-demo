@@ -20,7 +20,7 @@ export const CONFIG = {
   ALLOWED_ORIGINS: [
     'http://localhost:8000',
     'https://dpop.fun',
-    'https://stronghold.onrender.com'
+    'https://test.dpop.fun'
   ],
   CRYPTO: {
     KEY_SIZE: 32,
