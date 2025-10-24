@@ -159,7 +159,6 @@ export async function setupSession(retryAttempted = false) {
         signal_data: DPOP_SESSION.signal_data
       }
     });
-    logger.info('Creating session init request with payload:', body);
     logger.info('Creating session init request with headers:', {
       'Content-Type': 'application/json', 
       'DPoP': dpopJws, 
@@ -207,12 +206,7 @@ export async function setupSession(retryAttempted = false) {
     DPOP_SESSION.active_user_sessions = responseData.active_user_sessions;
 
 
-    logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Fetch request completed, status:`, r.status);
     logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: response:`, DPOP_SESSION);
-
-    logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Response headers csrf:`, DPOP_SESSION.csrf);
-    logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Response headers dpop nonce:`, DPOP_SESSION.dpop_nonce);
-    logger.info(`${CONFIG.ENDPOINTS.SESSION_INIT}: Response headers dpop bind:`, DPOP_SESSION.dpop_bind);
     
     if (!r.ok) {
       logger.error(`${CONFIG.ENDPOINTS.SESSION_INIT} failed:`, r.status, responseData);

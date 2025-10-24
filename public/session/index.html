@@ -20,7 +20,6 @@
             <div class="modal-header" id="sessionHeader">
                 <h2>🛡️ Session Details</h2>
                 <div style="display: flex; align-items: center; gap: 10px;">
-                    <a href="/public/admin.html" target="_blank" style="color: #667eea; text-decoration: none; font-size: 14px; padding: 6px 12px; border: 1px solid #667eea; border-radius: 6px;" title="Database Admin Panel">🔧 Admin</a>
                     <button class="close-btn" data-close-modal>−</button>
                 </div>
             </div>
@@ -284,6 +283,22 @@
             </div>
         </div>
     </template>
+
+    <!-- SSE Notification Modal -->
+    <div id="notificationModal" class="notification-modal">
+        <div class="notification-content">
+            <div class="notification-header">
+                <h3>⚠️ Security Alert</h3>
+                <button class="notification-close">&times;</button>
+            </div>
+            <div class="notification-body">
+                <p class="notification-message"></p>
+                <div class="notification-meta">
+                    <span class="notification-time"></span>
+                </div>
+            </div>
+        </div>
+    </div>
 
 </body>
 </html>

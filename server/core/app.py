@@ -393,7 +393,10 @@ async def session_kill(req: Request, response: Response):
             raise HTTPException(status_code=401, detail="User not authenticated")
         
         # Get target session ID from request
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         target_session_id = body.get("payload", {}).get("session_id")
         
         if not target_session_id:
@@ -540,7 +543,10 @@ async def remove_user_device(req: Request, response: Response):
             raise HTTPException(status_code=401, detail="User not authenticated")
         
         # Get device ID from request
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         device_id = body.get("payload", {}).get("device_id")
         
         if not device_id:
@@ -587,7 +593,10 @@ async def link_start(req: Request, response: Response):
             raise HTTPException(status_code=401, detail="No session ID found")
         
         # Get flow type and username from request body
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         flow_type = body.get("flow_type", "registration")
         username = body.get("username")  # Username from desktop
         
@@ -680,7 +689,10 @@ async def link_events(link_id: str, req: Request):
 async def get_apriltags(req: Request):
     """Generate AprilTag numbers for QR overlay"""
     try:
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         link_id = body.get("linkId", "")
         
         # Generate deterministic AprilTag IDs from link ID
@@ -711,7 +723,10 @@ async def get_apriltags(req: Request):
 async def link_mobile_start(req: Request):
     """Mobile device starts linking"""
     try:
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         link_id = body.get("lid")
         
         if not link_id:
@@ -762,7 +777,10 @@ async def link_mobile_complete(req: Request, response: Response):
         session_data = await SessionService.get_session_data(req, response)
         mobile_session_id = req.session.get("session_id")
         
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         link_id = body.get("link_id")
         
         if not link_id:
@@ -921,7 +939,10 @@ async def link_mobile_issue_bc(req: Request, response: Response):
         # Get session data
         session_data = await SessionService.get_session_data(req, response)
         
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         link_id = body.get("lid")
         
         if not link_id:
@@ -1078,7 +1099,10 @@ async def device_redeem(req: Request, response: Response):
         if not session_id:
             raise HTTPException(status_code=401, detail="No session ID found")
         
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         bc = body.get("bc", "").upper().strip()
         
         if len(bc) != 8:
@@ -1216,7 +1240,10 @@ async def webauthn_registration_options(req: Request, response: Response):
         log.info("Passkey registration options - Session Data: %s", session_data)
 
         # Parse request body to get username
-        request_body = await req.json()
+        try:
+            request_body = await req.json()
+        except:
+            request_body = {}
         
         # Pass session_id, session_data, request, and body
         body = await PasskeyService.get_registration_options(session_id, session_data, req, request_body)
@@ -1241,7 +1268,10 @@ async def webauthn_registration_verify(req: Request, response: Response):
         session_id = req.session.get("session_id")
 
         # Parse request body
-        attestation_data = await req.json()
+        try:
+            attestation_data = await req.json()
+        except:
+            attestation_data = {}
         
         result = await PasskeyService.verify_registration(
             session_id, req, attestation_data
@@ -1293,7 +1323,10 @@ async def webauthn_authentication_verify(req: Request, response: Response):
         session_id = req.session.get("session_id")
         
         # Parse request body
-        assertion_data = await req.json()
+        try:
+            assertion_data = await req.json()
+        except:
+            assertion_data = {}
         
         # Get username from assertion data (client should include it)
         username = assertion_data.get("username")
@@ -1518,7 +1551,10 @@ async def remove_credential(req: Request, response: Response):
         if not username or session_data.get("auth_status") != "authenticated":
             raise HTTPException(status_code=401, detail="User not authenticated")
         
-        body = await req.json()
+        try:
+            body = await req.json()
+        except:
+            body = {}
         cred_id = body.get("payload", {}).get("cred_id")
         
         if not cred_id:
