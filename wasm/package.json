@@ -1,0 +1,18 @@
+{
+  "name": "ai-detection-wasm",
+  "version": "1.0.0",
+  "description": "AI Detection WebAssembly Module",
+  "main": "index.js",
+  "scripts": {
+    "asbuild:debug": "asc assembly/ai-detection.ts --target debug",
+    "asbuild:release": "asc assembly/ai-detection.ts --target release",
+    "asbuild": "npm run asbuild:release"
+  },
+  "keywords": ["wasm", "assemblyscript", "ai-detection"],
+  "author": "",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "assemblyscript": "^0.27.0"
+  }
+}
+

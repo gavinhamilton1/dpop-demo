@@ -1,0 +1,22 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+*.pdb
+
+# wasm-pack output
+/pkg/
+
+# Secret file (never commit)
+.secret
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+

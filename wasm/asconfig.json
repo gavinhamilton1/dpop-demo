@@ -1,0 +1,26 @@
+{
+  "targets": {
+    "release": {
+      "binaryFile": "../public/wasm/ai-detection.wasm",
+      "textFile": "../public/wasm/ai-detection.wat",
+      "sourceMap": true,
+      "optimizeLevel": 3,
+      "shrinkLevel": 2,
+      "converge": false,
+      "noAssert": false
+    },
+    "debug": {
+      "binaryFile": "../public/wasm/ai-detection.debug.wasm",
+      "textFile": "../public/wasm/ai-detection.debug.wat",
+      "sourceMap": true,
+      "optimizeLevel": 0,
+      "shrinkLevel": 0,
+      "converge": false,
+      "noAssert": false
+    }
+  },
+  "options": {
+    "bindings": "esm"
+  }
+}
+

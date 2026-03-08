@@ -1730,3 +1730,125 @@ async def sse_broadcast(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---------------- AI Detection WASM Verification ----------------
+
+# Embedded secret for WASM call-home verification
+# This should match the secret compiled into the WASM binary
+# Set via environment variable: AI_DETECTION_SECRET
+AI_DETECTION_SECRET = os.getenv("AI_DETECTION_SECRET", "AI_DETECT_SECRET_v1_DEFAULT_CHANGE_ME")
+
+@app.post("/ai-detection/verify",
+          tags=["ai-detection"],
+          summary="Verify WASM Execution",
+          description="Verify that the AI detection WASM module executed with the correct embedded secret")
+async def verify_ai_detection(request: Request):
+    """
+    Verify WASM call-home proof token.
+    
+    This endpoint verifies that:
+    1. The WASM module actually executed (proof contains embedded secret)
+    2. The proof is recent (timestamp within 10 seconds)
+    3. The proof matches expected hash
+    
+    Request body:
+    {
+        "sessionId": "session-id-string",
+        "proof": "proof-token-hash",
+        "timestamp": 1234567890000,  // milliseconds
+        "detectionResults": {
+            "detected": false,
+            "reasons": ["..."],
+            "severity": 0
+        }
+    }
+    
+    Response:
+    {
+        "verified": true/false,
+        "message": "Verification message",
+        "allowed": true/false  // Whether to allow access based on detection results
+    }
+    """
+    try:
+        import hashlib
+        
+        try:
+            body = await request.json()
+        except:
+            body = {}
+        
+        session_id = body.get("sessionId", "")
+        proof = body.get("proof", "")
+        timestamp_ms = body.get("timestamp", 0)
+        detection_results = body.get("detectionResults", {})
+        
+        # Validate required fields
+        if not session_id or not proof or not timestamp_ms:
+            log.warning(f"AI detection verification: Missing required fields")
+            raise HTTPException(status_code=400, detail="Missing required fields: sessionId, proof, timestamp")
+        
+        # Check timestamp freshness (must be within 10 seconds)
+        current_time_ms = int(time.time() * 1000)
+        time_diff = abs(current_time_ms - timestamp_ms)
+        
+        if time_diff > 10000:  # 10 seconds
+            log.warning(f"AI detection verification: Timestamp too old (diff: {time_diff}ms)")
+            return {
+                "verified": False,
+                "message": "Proof token expired (timestamp too old)",
+                "allowed": False
+            }
+        
+        # Generate expected proof: hash(secret:sessionId:timestamp)
+        proof_data = f"{AI_DETECTION_SECRET}:{session_id}:{timestamp_ms}"
+        expected_proof = hashlib.sha256(proof_data.encode()).hexdigest()
+        
+        # Verify proof matches
+        if proof !== expected_proof:
+            log.warning(f"AI detection verification: Invalid proof token")
+            return {
+                "verified": False,
+                "message": "Invalid proof token",
+                "allowed": False
+            }
+        
+        # Proof is valid - WASM executed with correct secret
+        log.info(f"AI detection WASM verified for session {session_id[:8]}...")
+        
+        # Check detection results
+        detected = detection_results.get("detected", False)
+        reasons = detection_results.get("reasons", [])
+        severity = detection_results.get("severity", 0)
+        
+        if detected:
+            log.warning(f"AI detection found issues: {reasons}")
+            return {
+                "verified": True,
+                "message": "WASM verified, but AI/automation detected",
+                "allowed": False,
+                "detectionResults": {
+                    "detected": True,
+                    "reasons": reasons,
+                    "severity": severity
+                }
+            }
+        
+        # All good - WASM verified and no detection
+        return {
+            "verified": True,
+            "message": "WASM verified successfully, no AI/automation detected",
+            "allowed": True,
+            "detectionResults": {
+                "detected": False,
+                "reasons": [],
+                "severity": 0
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"AI detection verification failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+

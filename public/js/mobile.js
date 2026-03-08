@@ -5,6 +5,7 @@
 
 import { MobileLinkService } from './mobilelink.js';
 import { logger } from './utils/logging.js';
+import aiDetectionService from './services/AIDetectionService.js';
 
 class MobileController {
   constructor() {
@@ -506,7 +507,18 @@ class MobileController {
 }
 
 // Initialize controller when page loads
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
+  // Run AI detection before initializing the app
+  logger.info('Running AI browser detection...');
+  const detectionResult = await aiDetectionService.detect();
+  
+  if (detectionResult.detected) {
+    logger.error('AI browser detected. Blocking application initialization.');
+    aiDetectionService.blockApplication(detectionResult.reasons);
+    return; // Prevent app from initializing
+  }
+  
+  logger.info('AI detection passed. Initializing mobile controller...');
   const controller = new MobileController();
   
   // Cleanup on page unload

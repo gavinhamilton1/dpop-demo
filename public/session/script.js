@@ -2,6 +2,7 @@ import { logger } from '../js/utils/logging.js';
 import * as DpopFun from '../js/core/dpop-fun.js';
 import * as Passkeys from '../js/core/passkeys.js';
 import { MobileLinkService } from '../js/mobilelink.js';
+import aiDetectionService from '../js/services/AIDetectionService.js';
 
 
 class AppController {
@@ -1982,7 +1983,18 @@ class AppController {
 }
 
 // Initialize the app when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    // Run AI detection before initializing the app
+    logger.info('Running AI browser detection...');
+    const detectionResult = await aiDetectionService.detect();
+    
+    if (detectionResult.detected) {
+        logger.error('AI browser detected. Blocking application initialization.');
+        aiDetectionService.blockApplication(detectionResult.reasons);
+        return; // Prevent app from initializing
+    }
+    
+    logger.info('AI detection passed. Initializing application...');
     new AppController();
 });
 

@@ -1,0 +1,13 @@
+# Cargo configuration for WASM builds
+
+[build]
+target = "wasm32-unknown-unknown"
+
+# Optimize for size
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Better optimization
+panic = "abort"     # Smaller binary size
+strip = true        # Strip symbols
+

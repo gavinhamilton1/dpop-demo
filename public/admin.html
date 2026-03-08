@@ -4,7 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Database Admin - DPoP Fun</title>
-    <script src="/public/js/admin.js" defer></script>
+    <script type="module">
+        // Run AI detection before loading admin.js
+        import aiDetectionService from '/public/js/services/AIDetectionService.js';
+        
+        document.addEventListener('DOMContentLoaded', async () => {
+            console.log('Running AI browser detection...');
+            const detectionResult = await aiDetectionService.detect();
+            
+            if (detectionResult.detected) {
+                console.error('AI browser detected. Blocking application initialization.');
+                aiDetectionService.blockApplication(detectionResult.reasons);
+                return; // Prevent admin.js from loading
+            }
+            
+            console.log('AI detection passed. Loading admin panel...');
+            // Load admin.js after successful detection
+            const script = document.createElement('script');
+            script.src = '/public/js/admin.js';
+            document.head.appendChild(script);
+        });
+    </script>
     <style>
         * {
             margin: 0;
